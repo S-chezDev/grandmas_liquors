@@ -1,82 +1,31 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
 import { Plus } from 'lucide-react';
 import { AlertDialog } from '../../AlertDialog';
+import { usuarios as usuariosAPI, roles as rolesAPI } from '../../../services/api';
 
 interface Usuario {
   id: string;
   nombre: string;
   apellido: string;
-  tipoDocumento: 'CC' | 'CE' | 'TI' | 'Pasaporte';
+  tipo_documento: 'CC' | 'CE' | 'TI' | 'Pasaporte';
   documento: string;
   direccion: string;
   email: string;
   telefono: string;
-  rol: string;
+  rol_id?: number;
+  rol?: string;
   estado: 'Activo' | 'Inactivo';
-  fechaCreacion: string;
+  created_at?: string;
 }
 
-const mockUsuarios: Usuario[] = [
-  { 
-    id: '1', 
-    nombre: 'Nubia Amparo', 
-    apellido: 'Acevedo', 
-    tipoDocumento: 'CC',
-    documento: '43123456',
-    direccion: 'Calle 10 #45-67, Medellín',
-    email: 'nubiaamparoacevedo@gmail.com', 
-    telefono: '324 610 2339', 
-    rol: 'Administrador', 
-    estado: 'Activo', 
-    fechaCreacion: '2024-01-15' 
-  },
-  { 
-    id: '2', 
-    nombre: 'Carlos', 
-    apellido: 'Gómez', 
-    tipoDocumento: 'CC',
-    documento: '1020304050',
-    direccion: 'Carrera 50 #30-20, Medellín',
-    email: 'carlos.gomez@gmail.com', 
-    telefono: '300 123 4567', 
-    rol: 'Vendedor', 
-    estado: 'Activo', 
-    fechaCreacion: '2024-03-20' 
-  },
-  { 
-    id: '3', 
-    nombre: 'María', 
-    apellido: 'Rodríguez', 
-    tipoDocumento: 'CC',
-    documento: '39876543',
-    direccion: 'Avenida 80 #100-15, Medellín',
-    email: 'maria.rodriguez@gmail.com', 
-    telefono: '310 987 6543', 
-    rol: 'Vendedor', 
-    estado: 'Activo', 
-    fechaCreacion: '2024-05-10' 
-  },
-  { 
-    id: '4', 
-    nombre: 'Juan', 
-    apellido: 'Pérez', 
-    tipoDocumento: 'CC',
-    documento: '71234567',
-    direccion: 'Calle 33 #70-40, Medellín',
-    email: 'juan.perez@gmail.com', 
-    telefono: '315 456 7890', 
-    rol: 'Bodeguero', 
-    estado: 'Activo', 
-    fechaCreacion: '2024-06-05' 
-  }
-];
-
 export function Usuarios() {
-  const [usuarios, setUsuarios] = useState<Usuario[]>(mockUsuarios);
+  const [usuarios, setUsuarios] = useState<Usuario[]>([]);
+  const [roles, setRoles] = useState<Array<{value: string, label: string}>>([]);
+  const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [selectedUsuario, setSelectedUsuario] = useState<Usuario | null>(null);
@@ -89,14 +38,45 @@ export function Usuarios() {
   const [formData, setFormData] = useState({
     nombre: '',
     apellido: '',
-    tipoDocumento: 'CC' as 'CC' | 'CE' | 'TI' | 'Pasaporte',
+    tipo_documento: 'CC' as 'CC' | 'CE' | 'TI' | 'Pasaporte',
     documento: '',
     direccion: '',
     email: '',
     telefono: '',
-    rol: '',
+    password: '',
+    rol_id: '',
     estado: 'Activo' as 'Activo' | 'Inactivo'
   });
+
+  useEffect(() => {
+    loadUsuarios();
+    loadRoles();
+  }, []);
+
+  const loadUsuarios = async () => {
+    try {
+      setLoading(true);
+      const data = await usuariosAPI.getAll();
+      setUsuarios(data);
+    } catch (error) {
+      console.error('Error cargando usuarios:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadRoles = async () => {
+    try {
+      const data = await rolesAPI.getAll();
+      const rolesOptions = data.map((rol: any) => ({
+        value: rol.id.toString(),
+        label: rol.nombre
+      }));
+      setRoles(rolesOptions);
+    } catch (error) {
+      console.error('Error cargando roles:', error);
+    }
+  };
 
   const columns: Column[] = [
     { 
@@ -123,7 +103,7 @@ export function Usuarios() {
 
   const handleAdd = () => {
     setSelectedUsuario(null);
-    setFormData({ nombre: '', apellido: '', tipoDocumento: 'CC', documento: '', direccion: '', email: '', telefono: '', rol: '', estado: 'Activo' });
+    setFormData({ nombre: '', apellido: '', tipo_documento: 'CC', documento: '', direccion: '', email: '', telefono: '', password: '', rol_id: '', estado: 'Activo' });
     setIsModalOpen(true);
   };
 
@@ -132,12 +112,13 @@ export function Usuarios() {
     setFormData({
       nombre: usuario.nombre,
       apellido: usuario.apellido,
-      tipoDocumento: usuario.tipoDocumento,
+      tipo_documento: usuario.tipo_documento,
       documento: usuario.documento,
       direccion: usuario.direccion,
       email: usuario.email,
       telefono: usuario.telefono,
-      rol: usuario.rol,
+      password: '',
+      rol_id: usuario.rol_id?.toString() || '',
       estado: usuario.estado
     });
     setIsModalOpen(true);
@@ -148,17 +129,27 @@ export function Usuarios() {
       isOpen: true,
       title: 'Confirmar eliminación',
       description: `¿Está seguro de eliminar al usuario "${usuario.nombre} ${usuario.apellido}"? Esta acción no se puede deshacer.`,
-      onConfirm: () => {
-        setUsuarios(usuarios.filter(u => u.id !== usuario.id));
+      onConfirm: async () => {
+        try {
+          await usuariosAPI.delete(usuario.id);
+          await loadUsuarios();
+        } catch (error) {
+          console.error('Error eliminando usuario:', error);
+          alert('Error al eliminar el usuario');
+        }
       }
     });
   };
 
-  const handleChangeState = (usuario: Usuario) => {
-    const newState = usuario.estado === 'Activo' ? 'Inactivo' : 'Activo';
-    setUsuarios(usuarios.map(u => 
-      u.id === usuario.id ? { ...u, estado: newState } : u
-    ));
+  const handleChangeState = async (usuario: Usuario) => {
+    try {
+      const newState = usuario.estado === 'Activo' ? 'Inactivo' : 'Activo';
+      await usuariosAPI.update(usuario.id, { estado: newState });
+      await loadUsuarios();
+    } catch (error) {
+      console.error('Error cambiando estado:', error);
+      alert('Error al cambiar el estado del usuario');
+    }
   };
 
   const handleView = (usuario: Usuario) => {
@@ -166,19 +157,33 @@ export function Usuarios() {
     setIsDetailModalOpen(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (selectedUsuario) {
-      setUsuarios(usuarios.map(u => u.id === selectedUsuario.id ? { ...u, ...formData } : u));
-    } else {
-      const newUsuario: Usuario = {
-        id: (usuarios.length + 1).toString(),
-        ...formData,
-        fechaCreacion: new Date().toISOString().split('T')[0]
+    try {
+      const dataToSend = {
+        nombre: formData.nombre,
+        apellido: formData.apellido,
+        tipo_documento: formData.tipo_documento,
+        documento: formData.documento,
+        direccion: formData.direccion,
+        email: formData.email,
+        telefono: formData.telefono,
+        rol_id: parseInt(formData.rol_id),
+        estado: formData.estado,
+        ...((!selectedUsuario || formData.password) && { password: formData.password })
       };
-      setUsuarios([...usuarios, newUsuario]);
+
+      if (selectedUsuario) {
+        await usuariosAPI.update(selectedUsuario.id, dataToSend);
+      } else {
+        await usuariosAPI.create(dataToSend);
+      }
+      await loadUsuarios();
+      setIsModalOpen(false);
+    } catch (error) {
+      console.error('Error guardando usuario:', error);
+      alert('Error al guardar el usuario');
     }
-    setIsModalOpen(false);
   };
 
   return (
@@ -237,10 +242,10 @@ export function Usuarios() {
           
           <FormField
             label="Tipo de Documento"
-            name="tipoDocumento"
+            name="tipo_documento"
             type="select"
-            value={formData.tipoDocumento}
-            onChange={(value) => setFormData({ ...formData, tipoDocumento: value as 'CC' | 'CE' | 'TI' | 'Pasaporte' })}
+            value={formData.tipo_documento}
+            onChange={(value) => setFormData({ ...formData, tipo_documento: value as 'CC' | 'CE' | 'TI' | 'Pasaporte' })}
             options={[
               { value: 'CC', label: 'Cédula de Ciudadanía' },
               { value: 'CE', label: 'Cédula de Extranjería' },
@@ -288,17 +293,22 @@ export function Usuarios() {
           />
           
           <FormField
+            label="Contraseña"
+            name="password"
+            type="password"
+            value={formData.password}
+            onChange={(value) => setFormData({ ...formData, password: value as string })}
+            placeholder={selectedUsuario ? "Dejar vacío para mantener la actual" : "Contraseña"}
+            required={!selectedUsuario}
+          />
+          
+          <FormField
             label="Rol"
-            name="rol"
+            name="rol_id"
             type="select"
-            value={formData.rol}
-            onChange={(value) => setFormData({ ...formData, rol: value as string })}
-            options={[
-              { value: 'Administrador', label: 'Administrador' },
-              { value: 'Vendedor', label: 'Vendedor' },
-              { value: 'Bodeguero', label: 'Bodeguero' },
-              { value: 'Cajero', label: 'Cajero' }
-            ]}
+            value={formData.rol_id}
+            onChange={(value) => setFormData({ ...formData, rol_id: value as string })}
+            options={roles}
             required
           />
           
@@ -348,7 +358,7 @@ export function Usuarios() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Tipo de Documento</p>
-                <p>{selectedUsuario.tipoDocumento}</p>
+                <p>{selectedUsuario.tipo_documento}</p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Número de Documento</p>
@@ -380,7 +390,7 @@ export function Usuarios() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Fecha de Creación</p>
-                <p>{selectedUsuario.fechaCreacion}</p>
+                <p>{selectedUsuario.created_at ? new Date(selectedUsuario.created_at).toLocaleDateString() : 'N/A'}</p>
               </div>
             </div>
             

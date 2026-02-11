@@ -10,7 +10,7 @@ import { ventas as ventasAPI, clientes as clientesAPI, productos as productosAPI
 interface VentaItem {
   producto: string;
   cantidad: number;
-  precioUnitario: number;
+  precio_unitario: number;
   subtotal: number;
 }
 
@@ -18,20 +18,40 @@ interface Venta {
   id: string;
   numero_venta: string;
   tipo: string;
+  cliente?: string;
   cliente_id: number;
   pedido_id?: number;
   fecha: string;
-  metodo_pago: string;
+  metodopago: string;
   total: number;
   estado: string;
+  items?: VentaItem[];
+}
+
+interface Cliente {
+  id: number;
+  nombre: string;
+  apellido: string;
+  documento: string;
+}
+
+interface Producto {
+  id: number;
+  nombre: string;
+  precio: number;
+  stock: number;
 }
 
 export function Ventas() {
   const [ventas, setVentas] = useState<Venta[]>([]);
+  const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [productos, setProductos] = useState<Producto[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     loadVentas();
+    loadClientes();
+    loadProductos();
   }, []);
 
   const loadVentas = async () => {
@@ -45,6 +65,25 @@ export function Ventas() {
       setLoading(false);
     }
   };
+
+  const loadClientes = async () => {
+    try {
+      const data = await clientesAPI.getAll();
+      setClientes(data);
+    } catch (error) {
+      console.error('Error al cargar clientes:', error);
+    }
+  };
+
+  const loadProductos = async () => {
+    try {
+      const data = await productosAPI.getAll();
+      setProductos(data);
+    } catch (error) {
+      console.error('Error al cargar productos:', error);
+    }
+  };
+
   const [selectedVenta, setSelectedVenta] = useState<Venta | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
@@ -58,16 +97,16 @@ export function Ventas() {
   });
   const [formData, setFormData] = useState({
     tipo: 'Directa' as 'Directa' | 'Por Pedido',
-    cliente: '',
+    cliente_id: '',
     pedido: '',
-    metodoPago: 'Efectivo',
+    metodopago: 'Efectivo',
     items: [] as VentaItem[]
   });
   const [currentItem, setCurrentItem] = useState({
     producto: '',
-    productoId: '',
+    producto_id: '',
     cantidad: 0,
-    precioUnitario: 0
+    precio_unitario: 0
   });
 
   const formatCurrency = (value: number) => {
@@ -79,21 +118,21 @@ export function Ventas() {
   };
 
   const columns: Column[] = [
-    { key: 'id', label: 'ID Venta' },
+    { key: 'numero_venta', label: 'Número Venta' },
     { key: 'tipo', label: 'Tipo' },
     { key: 'cliente', label: 'Cliente' },
     { key: 'fecha', label: 'Fecha' },
     { 
       key: 'items', 
       label: 'Items',
-      render: (items: VentaItem[]) => `${items.length} producto${items.length !== 1 ? 's' : ''}`
+      render: (items: VentaItem[]) => items && items.length > 0 ? `${items.length} producto${items.length !== 1 ? 's' : ''}` : '0 productos'
     },
     { 
       key: 'total', 
       label: 'Total',
       render: (total: number) => formatCurrency(total)
     },
-    { key: 'metodoPago', label: 'Método Pago' },
+    { key: 'metodopago', label: 'Método Pago' },
     { 
       key: 'estado', 
       label: 'Estado',
@@ -114,39 +153,44 @@ export function Ventas() {
     setIsDetailModalOpen(true);
   };
 
-  const handleAnular = (venta: Venta) => {
+  const handleAnular = async (venta: Venta) => {
     setAlertState({
       isOpen: true,
       title: 'Confirmar anulación',
-      description: `¿Está seguro de anular la venta ${venta.id}? Esta acción no se puede deshacer.`,
-      onConfirm: () => {
-        setVentas(ventas.map(v => v.id === venta.id ? { ...v, estado: 'Anulada' as const } : v));
+      description: `¿Está seguro de anular la venta ${venta.numero_venta}? Esta acción no se puede deshacer.`,
+      onConfirm: async () => {
+        try {
+          await ventasAPI.update(venta.id, { estado: 'Anulada' });
+          await loadVentas();
+        } catch (error) {
+          console.error('Error al anular venta:', error);
+        }
       }
     });
   };
 
   const handleGeneratePDF = (venta: Venta) => {
-    const itemsDetail = venta.items.map((item, index) => 
+    const itemsDetail = venta.items && venta.items.length > 0 ? venta.items.map((item, index) => 
       `${index + 1}. ${item.producto}
    Cantidad: ${item.cantidad} unidades
-   Precio Unitario: ${formatCurrency(item.precioUnitario)}
+   Precio Unitario: ${formatCurrency(item.precio_unitario)}
    Subtotal: ${formatCurrency(item.subtotal)}`
-    ).join('\n\n');
+    ).join('\n\n') : 'Sin items';
 
     const content = `
 ╔════════════════════════════════════════════════════════════╗
 ║           GRANDMA'S LIQUEURS - FACTURA DE VENTA           ║
 ╚════════════════════════════════════════════════════════════╝
 
-ID Venta:           ${venta.id}
-Cliente:            ${venta.cliente}
+Número Venta:       ${venta.numero_venta}
+Cliente:            ${venta.cliente || 'N/A'}
 Fecha:              ${venta.fecha}
-Método de Pago:     ${venta.metodoPago}
+Método de Pago:     ${venta.metodopago}
 Estado:             ${venta.estado}
 
 ────────────────────────────────────────────────────────────
 PRODUCTOS VENDIDOS:
-───────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────────
 
 ${itemsDetail}
 
@@ -165,17 +209,17 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
   };
 
   const handleAddItem = () => {
-    if (currentItem.producto && currentItem.cantidad > 0 && currentItem.precioUnitario > 0) {
+    if (currentItem.producto && currentItem.cantidad > 0 && currentItem.precio_unitario > 0) {
       setFormData({
         ...formData,
         items: [...formData.items, { 
           producto: currentItem.producto,
           cantidad: currentItem.cantidad, 
-          precioUnitario: currentItem.precioUnitario,
-          subtotal: currentItem.cantidad * currentItem.precioUnitario 
+          precio_unitario: currentItem.precio_unitario,
+          subtotal: currentItem.cantidad * currentItem.precio_unitario 
         }]
       });
-      setCurrentItem({ producto: '', productoId: '', cantidad: 0, precioUnitario: 0 });
+      setCurrentItem({ producto: '', producto_id: '', cantidad: 0, precio_unitario: 0 });
     }
   };
 
@@ -186,47 +230,53 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
     });
   };
 
-  const handleSaveVenta = () => {
-    if (formData.cliente && formData.items.length > 0) {
-      const newVenta: Venta = {
-        id: `VEN-${(ventas.length + 1).toString().padStart(3, '0')}`,
-        tipo: formData.tipo,
-        cliente: formData.cliente,
-        pedido: formData.pedido,
-        fecha: new Date().toISOString().split('T')[0],
-        items: formData.items,
-        total: formData.items.reduce((acc, item) => acc + item.subtotal, 0),
-        metodoPago: formData.metodoPago,
-        estado: 'Pendiente'
-      };
-      setVentas([...ventas, newVenta]);
-      setIsModalOpen(false);
-      setFormData({
-        tipo: 'Directa' as 'Directa' | 'Por Pedido',
-        cliente: '',
-        pedido: '',
-        metodoPago: 'Efectivo',
-        items: [] as VentaItem[]
-      });
-      setCurrentItem({ producto: '', productoId: '', cantidad: 0, precioUnitario: 0 });
+  const handleSaveVenta = async () => {
+    if (formData.cliente_id && formData.items.length > 0) {
+      try {
+        const newVenta = {
+          numero_venta: `VEN-${Date.now()}`,
+          tipo: formData.tipo,
+          cliente_id: parseInt(formData.cliente_id),
+          pedido_id: formData.pedido ? parseInt(formData.pedido) : null,
+          fecha: new Date().toISOString().split('T')[0],
+          metodopago: formData.metodopago,
+          total: formData.items.reduce((acc, item) => acc + item.subtotal, 0),
+          estado: 'Completada'
+        };
+        await ventasAPI.create(newVenta);
+        await loadVentas();
+        setIsModalOpen(false);
+        setFormData({
+          tipo: 'Directa',
+          cliente_id: '',
+          pedido: '',
+          metodopago: 'Efectivo',
+          items: []
+        });
+      } catch (error) {
+        console.error('Error al guardar venta:', error);
+        alert('Error al guardar la venta');
+      }
+    } else {
+      alert('Debe seleccionar un cliente y agregar al menos un producto');
     }
   };
 
   const handleProductoChange = (productoId: string) => {
-    const productoSeleccionado = mockProductosDisponibles.find(p => p.id === productoId);
+    const productoSeleccionado = productos.find(p => p.id.toString() === productoId);
     if (productoSeleccionado) {
       setCurrentItem({
         ...currentItem,
-        productoId: productoId,
+        producto_id: productoId,
         producto: productoSeleccionado.nombre,
-        precioUnitario: productoSeleccionado.precio
+        precio_unitario: productoSeleccionado.precio
       });
     } else {
       setCurrentItem({
         ...currentItem,
-        productoId: '',
+        producto_id: '',
         producto: '',
-        precioUnitario: 0
+        precio_unitario: 0
       });
     }
   };
@@ -258,7 +308,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
       <Modal
         isOpen={isDetailModalOpen}
         onClose={() => setIsDetailModalOpen(false)}
-        title={`Detalle de Venta ${selectedVenta?.id}`}
+        title={`Detalle de Venta ${selectedVenta?.numero_venta}`}
         size="lg"
       >
         {selectedVenta && (
@@ -266,7 +316,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
             <div className="grid grid-cols-2 gap-4 p-4 bg-accent/50 rounded-lg">
               <div>
                 <p className="text-sm text-muted-foreground">Cliente</p>
-                <p>{selectedVenta.cliente}</p>
+                <p>{selectedVenta.cliente || 'N/A'}</p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Fecha</p>
@@ -274,7 +324,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Método de Pago</p>
-                <p>{selectedVenta.metodoPago}</p>
+                <p>{selectedVenta.metodopago}</p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Estado</p>
@@ -290,6 +340,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
 
             <div>
               <h4 className="mb-2">Productos</h4>
+              {selectedVenta.items && selectedVenta.items.length > 0 ? (
               <table className="w-full border border-border rounded-lg">
                 <thead className="bg-muted">
                   <tr>
@@ -304,7 +355,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                     <tr key={index} className="border-t border-border">
                       <td className="p-3">{item.producto}</td>
                       <td className="p-3 text-right">{item.cantidad}</td>
-                      <td className="p-3 text-right">{formatCurrency(item.precioUnitario)}</td>
+                      <td className="p-3 text-right">{formatCurrency(item.precio_unitario)}</td>
                       <td className="p-3 text-right">{formatCurrency(item.subtotal)}</td>
                     </tr>
                   ))}
@@ -314,6 +365,9 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                   </tr>
                 </tbody>
               </table>
+              ) : (
+                <p className="text-muted-foreground">No hay items en esta venta</p>
+              )}
             </div>
           </div>
         )}
@@ -352,15 +406,15 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
 
           <FormField
             label="Cliente"
-            name="cliente"
+            name="cliente_id"
             type="select"
-            value={formData.cliente}
-            onChange={(value) => setFormData({ ...formData, cliente: value as string })}
+            value={formData.cliente_id}
+            onChange={(value) => setFormData({ ...formData, cliente_id: value as string })}
             options={[
               { value: '', label: 'Seleccionar cliente...' },
-              ...mockClientesDisponibles.map(c => ({
-                value: c.nombre,
-                label: `${c.nombre} (${c.id})`
+              ...clientes.map(c => ({
+                value: c.id.toString(),
+                label: `${c.nombre} ${c.apellido} - ${c.documento}`
               }))
             ]}
             placeholder="Seleccionar cliente"
@@ -380,10 +434,10 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
 
           <FormField
             label="Método de Pago"
-            name="metodoPago"
+            name="metodopago"
             type="select"
-            value={formData.metodoPago}
-            onChange={(value) => setFormData({ ...formData, metodoPago: value as string })}
+            value={formData.metodopago}
+            onChange={(value) => setFormData({ ...formData, metodopago: value as string })}
             options={[
               { value: 'Efectivo', label: 'Efectivo' },
               { value: 'Tarjeta', label: 'Tarjeta' },
@@ -399,13 +453,13 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                 label="Producto"
                 name="producto"
                 type="select"
-                value={currentItem.productoId}
+                value={currentItem.producto_id}
                 onChange={(value) => handleProductoChange(value as string)}
                 options={[
                   { value: '', label: 'Seleccionar producto...' },
-                  ...mockProductosDisponibles.map(p => ({
-                    value: p.id,
-                    label: `${p.nombre} (Stock: ${p.stock})`
+                  ...productos.map(p => ({
+                    value: p.id.toString(),
+                    label: `${p.nombre} (Stock: ${p.stock}) - ${formatCurrency(p.precio)}`
                   }))
                 ]}
                 placeholder="Seleccionar producto"
@@ -422,11 +476,12 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
 
               <FormField
                 label="Precio Unitario"
-                name="precioUnitario"
+                name="precio_unitario"
                 type="number"
-                value={currentItem.precioUnitario}
-                onChange={(value) => setCurrentItem({ ...currentItem, precioUnitario: value as number })}
+                value={currentItem.precio_unitario}
+                onChange={(value) => setCurrentItem({ ...currentItem, precio_unitario: value as number })}
                 placeholder="0"
+                disabled
               />
             </div>
 
@@ -453,7 +508,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                     <tr key={index} className="border-t border-border">
                       <td className="p-3">{item.producto}</td>
                       <td className="p-3 text-right">{item.cantidad}</td>
-                      <td className="p-3 text-right">{formatCurrency(item.precioUnitario)}</td>
+                      <td className="p-3 text-right">{formatCurrency(item.precio_unitario)}</td>
                       <td className="p-3 text-right">{formatCurrency(item.subtotal)}</td>
                       <td className="p-3 text-right">
                         <button

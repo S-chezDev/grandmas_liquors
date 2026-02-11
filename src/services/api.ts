@@ -278,3 +278,39 @@ export const produccion = {
     apiCall(`/api/produccion/${id}`, 'PUT', data),
   delete: (id: number) => apiCall(`/api/produccion/${id}`, 'DELETE'),
 };
+
+// ==================== ROLES ====================
+export const roles = {
+  getAll: () => apiCall('/api/roles'),
+  getById: (id: number) => apiCall(`/api/roles/${id}`),
+  create: (data: {
+    nombre: string;
+    descripcion?: string;
+    permisos?: string[];
+    estado?: string;
+  }) => apiCall('/api/roles', 'POST', data),
+  update: (id: number, data: any) => apiCall(`/api/roles/${id}`, 'PUT', data),
+  delete: (id: number) => apiCall(`/api/roles/${id}`, 'DELETE'),
+};
+
+// ==================== USUARIOS ====================
+export const usuarios = {
+  getAll: () => apiCall('/api/usuarios'),
+  getById: (id: number) => apiCall(`/api/usuarios/${id}`),
+  getByEmail: (email: string) => apiCall(`/api/usuarios/email/${email}`),
+  getByDocumento: (documento: string) => apiCall(`/api/usuarios/documento/${documento}`),
+  create: (data: {
+    nombre: string;
+    apellido: string;
+    tipo_documento: string;
+    documento: string;
+    direccion?: string;
+    email: string;
+    telefono?: string;
+    password_hash?: string;
+    rol_id?: number;
+    estado?: string;
+  }) => apiCall('/api/usuarios', 'POST', data),
+  update: (id: number, data: any) => apiCall(`/api/usuarios/${id}`, 'PUT', data),
+  delete: (id: number) => apiCall(`/api/usuarios/${id}`, 'DELETE'),
+};

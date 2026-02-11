@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Card } from '../../Card';
@@ -6,6 +6,7 @@ import { Button } from '../../Button';
 import { Form, FormField, FormActions } from '../../Form';
 import { Plus, Shield, Check, X } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
+import { roles as rolesAPI } from '../../../services/api';
 
 interface Role {
   id: string;
@@ -65,69 +66,9 @@ const todosLosPermisos = [
   { modulo: 'Ventas', permiso: 'Gestionar Domicilios' },
 ];
 
-const mockRoles: Role[] = [
-  { 
-    id: '1', 
-    nombre: 'Administrador', 
-    descripcion: 'Acceso total al sistema', 
-    permisos: todosLosPermisos.map(p => p.permiso),
-    estado: 'Activo', 
-    usuarios: 2 
-  },
-  { 
-    id: '2', 
-    nombre: 'Asesor', 
-    descripcion: 'Gestión de ventas y clientes', 
-    permisos: [
-      'Ver Dashboard',
-      'Ver Clientes', 'Crear Clientes', 'Editar Clientes',
-      'Ver Ventas', 'Registrar Ventas',
-      'Ver Abonos', 'Registrar Abonos',
-      'Ver Pedidos', 'Crear Pedidos'
-    ],
-    estado: 'Activo', 
-    usuarios: 5 
-  },
-  { 
-    id: '3', 
-    nombre: 'Productor', 
-    descripcion: 'Gestión de producción e insumos', 
-    permisos: [
-      'Ver Dashboard',
-      'Ver Insumos', 'Entregar Insumos',
-      'Ver Producción', 'Registrar Producción',
-      'Ver Productos'
-    ],
-    estado: 'Activo', 
-    usuarios: 3 
-  },
-  { 
-    id: '4', 
-    nombre: 'Repartidor', 
-    descripcion: 'Gestión de domicilios y pedidos', 
-    permisos: [
-      'Ver Pedidos',
-      'Ver Domicilios', 'Gestionar Domicilios',
-      'Ver Clientes'
-    ],
-    estado: 'Activo', 
-    usuarios: 2 
-  },
-  { 
-    id: '5', 
-    nombre: 'Cliente', 
-    descripcion: 'Visualización de pedidos y productos', 
-    permisos: [
-      'Ver Productos',
-      'Ver Pedidos'
-    ],
-    estado: 'Activo', 
-    usuarios: 15 
-  }
-];
-
 export function Roles() {
-  const [roles, setRoles] = useState<Role[]>(mockRoles);
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [loading, setLoading] = useState(true);
   const [isPermissionsModalOpen, setIsPermissionsModalOpen] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -139,6 +80,22 @@ export function Roles() {
     descripcion: ''
   });
   const { showAlert, AlertComponent } = useAlertDialog();
+
+  useEffect(() => {
+    loadRoles();
+  }, []);
+
+  const loadRoles = async () => {
+    try {
+      setLoading(true);
+      const data = await rolesAPI.getAll();
+      setRoles(data);
+    } catch (error) {
+      console.error('Error cargando roles:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const columns: Column[] = [
     { key: 'nombre', label: 'Rol' },
@@ -177,38 +134,83 @@ export function Roles() {
     }
   ];
 
-  const handleEstadoChange = (id: string, nuevoEstado: 'Activo' | 'Inactivo') => {
-    setRoles(roles.map(r => 
-      r.id === id ? { ...r, estado: nuevoEstado } : r
-    ));
+  const handleEstadoChange = async (id: string, nuevoEstado: 'Activo' | 'Inactivo') => {
+    try {
+      await rolesAPI.update(id, { estado: nuevoEstado });
+      await loadRoles();
+    } catch (error) {
+      console.error('Error cambiando estado:', error);
+      showAlert({
+        title: 'Error',
+        description: 'No se pudo cambiar el estado del rol',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
+    }
   };
 
-  const handleCreateRole = (e: React.FormEvent) => {
+  const handleCreateRole = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newRole: Role = {
-      id: `${roles.length + 1}`,
-      nombre: formData.nombre,
-      descripcion: formData.descripcion,
-      permisos: [],
-      estado: 'Activo',
-      usuarios: 0
-    };
-    setRoles([...roles, newRole]);
-    setIsCreateModalOpen(false);
-    setFormData({ nombre: '' as any, descripcion: '' });
+    try {
+      const newRole = {
+        nombre: formData.nombre,
+        descripcion: formData.descripcion,
+        permisos: [],
+        estado: 'Activo'
+      };
+      await rolesAPI.create(newRole);
+      await loadRoles();
+      setIsCreateModalOpen(false);
+      setFormData({ nombre: '' as any, descripcion: '' });
+      showAlert({
+        title: 'Éxito',
+        description: 'Rol creado correctamente',
+        type: 'success',
+        confirmText: 'Aceptar',
+        onConfirm: () => {}
+      });
+    } catch (error) {
+      console.error('Error creando rol:', error);
+      showAlert({
+        title: 'Error',
+        description: 'No se pudo crear el rol',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
+    }
   };
 
-  const handleUpdateRole = (e: React.FormEvent) => {
+  const handleUpdateRole = async (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedRole) {
-      setRoles(roles.map(r => 
-        r.id === selectedRole.id 
-          ? { ...r, nombre: formData.nombre, descripcion: formData.descripcion }
-          : r
-      ));
-      setIsEditModalOpen(false);
-      setSelectedRole(null);
-      setFormData({ nombre: '' as any, descripcion: '' });
+      try {
+        await rolesAPI.update(selectedRole.id, {
+          nombre: formData.nombre,
+          descripcion: formData.descripcion
+        });
+        await loadRoles();
+        setIsEditModalOpen(false);
+        setSelectedRole(null);
+        setFormData({ nombre: '' as any, descripcion: '' });
+        showAlert({
+          title: 'Éxito',
+          description: 'Rol actualizado correctamente',
+          type: 'success',
+          confirmText: 'Aceptar',
+          onConfirm: () => {}
+        });
+      } catch (error) {
+        console.error('Error actualizando rol:', error);
+        showAlert({
+          title: 'Error',
+          description: 'No se pudo actualizar el rol',
+          type: 'warning',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
+      }
     }
   };
 
@@ -235,8 +237,20 @@ export function Roles() {
       type: 'danger',
       confirmText: 'Eliminar',
       cancelText: 'Cancelar',
-      onConfirm: () => {
-        setRoles(roles.filter(r => r.id !== role.id));
+      onConfirm: async () => {
+        try {
+          await rolesAPI.delete(role.id);
+          await loadRoles();
+        } catch (error) {
+          console.error('Error eliminando rol:', error);
+          showAlert({
+            title: 'Error',
+            description: 'No se pudo eliminar el rol',
+            type: 'warning',
+            confirmText: 'Entendido',
+            onConfirm: () => {}
+          });
+        }
       }
     });
   };
@@ -260,14 +274,29 @@ export function Roles() {
     );
   };
 
-  const handleSavePermissions = () => {
+  const handleSavePermissions = async () => {
     if (selectedRole) {
-      setRoles(roles.map(r => 
-        r.id === selectedRole.id 
-          ? { ...r, permisos: selectedPermissions }
-          : r
-      ));
-      setIsPermissionsModalOpen(false);
+      try {
+        await rolesAPI.update(selectedRole.id, { permisos: selectedPermissions });
+        await loadRoles();
+        setIsPermissionsModalOpen(false);
+        showAlert({
+          title: 'Éxito',
+          description: 'Permisos actualizados correctamente',
+          type: 'success',
+          confirmText: 'Aceptar',
+          onConfirm: () => {}
+        });
+      } catch (error) {
+        console.error('Error guardando permisos:', error);
+        showAlert({
+          title: 'Error',
+          description: 'No se pudieron guardar los permisos',
+          type: 'warning',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
+      }
     }
   };
 

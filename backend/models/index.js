@@ -211,20 +211,49 @@ const Pedidos = {
 const Ventas = {
   getAll: async () => {
     const result = await pool.query(`
-      SELECT v.*, c.nombre as cliente_nombre
+      SELECT v.*, 
+             CONCAT(c.nombre, ' ', c.apellido) as cliente,
+             c.nombre as cliente_nombre,
+             c.apellido as cliente_apellido
       FROM ventas v
       LEFT JOIN clientes c ON v.cliente_id = c.id
       ORDER BY v.fecha DESC
     `);
+    
+    // Obtener detalles para cada venta
+    for (let venta of result.rows) {
+      const detalles = await pool.query(`
+        SELECT dv.*, p.nombre as producto
+        FROM detalle_ventas dv
+        JOIN productos p ON dv.producto_id = p.id
+        WHERE dv.venta_id = $1
+      `, [venta.id]);
+      venta.items = detalles.rows;
+    }
+    
     return result.rows;
   },
   getById: async (id) => {
     const result = await pool.query(`
-      SELECT v.*, c.nombre as cliente_nombre
+      SELECT v.*, 
+             CONCAT(c.nombre, ' ', c.apellido) as cliente,
+             c.nombre as cliente_nombre,
+             c.apellido as cliente_apellido
       FROM ventas v
       LEFT JOIN clientes c ON v.cliente_id = c.id
       WHERE v.id = $1
     `, [id]);
+    
+    if (result.rows[0]) {
+      const detalles = await pool.query(`
+        SELECT dv.*, p.nombre as producto
+        FROM detalle_ventas dv
+        JOIN productos p ON dv.producto_id = p.id
+        WHERE dv.venta_id = $1
+      `, [id]);
+      result.rows[0].items = detalles.rows;
+    }
+    
     return result.rows[0];
   },
   getDetalles: async (ventaId) => {
@@ -239,7 +268,7 @@ const Ventas = {
   create: async (data) => {
     const result = await pool.query(
       'INSERT INTO ventas (numero_venta, tipo, cliente_id, pedido_id, fecha, metodopago, total, estado) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
-      [data.numero_venta, data.tipo, data.cliente_id, data.pedido_id, data.fecha, data.metodoPago, data.total, data.estado || 'Completada']
+      [data.numero_venta, data.tipo, data.cliente_id, data.pedido_id, data.fecha, data.metodopago, data.total, data.estado || 'Completada']
     );
     return result.rows[0].id;
   },
@@ -254,7 +283,7 @@ const Ventas = {
   update: async (id, data) => {
     await pool.query(
       'UPDATE ventas SET numero_venta = $1, tipo = $2, cliente_id = $3, pedido_id = $4, fecha = $5, metodopago = $6, total = $7, estado = $8 WHERE id = $9',
-      [data.numero_venta, data.tipo, data.cliente_id, data.pedido_id, data.fecha, data.metodoPago, data.total, data.estado, id]
+      [data.numero_venta, data.tipo, data.cliente_id, data.pedido_id, data.fecha, data.metodopago, data.total, data.estado, id]
     );
     return true;
   },
@@ -504,6 +533,89 @@ const Produccion = {
   }
 };
 
+// ------- ROLES -------
+const Roles = {
+  getAll: async () => {
+    const result = await pool.query(`
+      SELECT r.*, 
+             (SELECT COUNT(*) FROM usuarios WHERE rol_id = r.id) as usuarios
+      FROM roles r 
+      ORDER BY r.nombre
+    `);
+    return result.rows;
+  },
+  getById: async (id) => {
+    const result = await pool.query('SELECT * FROM roles WHERE id = $1', [id]);
+    return result.rows[0];
+  },
+  create: async (data) => {
+    const result = await pool.query(
+      'INSERT INTO roles (nombre, descripcion, permisos, estado) VALUES ($1, $2, $3, $4) RETURNING id',
+      [data.nombre, data.descripcion, data.permisos || [], data.estado || 'Activo']
+    );
+    return result.rows[0].id;
+  },
+  update: async (id, data) => {
+    await pool.query(
+      'UPDATE roles SET nombre = $1, descripcion = $2, permisos = $3, estado = $4 WHERE id = $5',
+      [data.nombre, data.descripcion, data.permisos, data.estado, id]
+    );
+    return true;
+  },
+  delete: async (id) => {
+    await pool.query('DELETE FROM roles WHERE id = $1', [id]);
+    return true;
+  }
+};
+
+// ------- USUARIOS -------
+const Usuarios = {
+  getAll: async () => {
+    const result = await pool.query(`
+      SELECT u.*, r.nombre as rol
+      FROM usuarios u
+      LEFT JOIN roles r ON u.rol_id = r.id
+      ORDER BY u.nombre
+    `);
+    return result.rows;
+  },
+  getById: async (id) => {
+    const result = await pool.query(`
+      SELECT u.*, r.nombre as rol
+      FROM usuarios u
+      LEFT JOIN roles r ON u.rol_id = r.id
+      WHERE u.id = $1
+    `, [id]);
+    return result.rows[0];
+  },
+  getByEmail: async (email) => {
+    const result = await pool.query('SELECT * FROM usuarios WHERE email = $1', [email]);
+    return result.rows[0];
+  },
+  getByDocumento: async (documento) => {
+    const result = await pool.query('SELECT * FROM usuarios WHERE documento = $1', [documento]);
+    return result.rows[0];
+  },
+  create: async (data) => {
+    const result = await pool.query(
+      'INSERT INTO usuarios (nombre, apellido, tipo_documento, documento, direccion, email, telefono, password_hash, rol_id, estado) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
+      [data.nombre, data.apellido, data.tipo_documento, data.documento, data.direccion, data.email, data.telefono, data.password_hash || '$2a$10$DEFAULT', data.rol_id, data.estado || 'Activo']
+    );
+    return result.rows[0].id;
+  },
+  update: async (id, data) => {
+    await pool.query(
+      'UPDATE usuarios SET nombre = $1, apellido = $2, tipo_documento = $3, documento = $4, direccion = $5, email = $6, telefono = $7, rol_id = $8, estado = $9 WHERE id = $10',
+      [data.nombre, data.apellido, data.tipo_documento, data.documento, data.direccion, data.email, data.telefono, data.rol_id, data.estado, id]
+    );
+    return true;
+  },
+  delete: async (id) => {
+    await pool.query('DELETE FROM usuarios WHERE id = $1', [id]);
+    return true;
+  }
+};
+
 // Exportar todos los modelos
 module.exports = {
   Categorias,
@@ -517,5 +629,7 @@ module.exports = {
   Compras,
   Insumos,
   EntregasInsumos,
-  Produccion
+  Produccion,
+  Roles,
+  Usuarios
 };

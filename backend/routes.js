@@ -98,4 +98,20 @@ router.post('/api/produccion', controllers.produccionController.create);
 router.put('/api/produccion/:id', controllers.produccionController.update);
 router.delete('/api/produccion/:id', controllers.produccionController.delete);
 
+// ========== ROLES ==========
+router.get('/api/roles', controllers.rolesController.getAll);
+router.get('/api/roles/:id', controllers.rolesController.getById);
+router.post('/api/roles', controllers.rolesController.create);
+router.put('/api/roles/:id', controllers.rolesController.update);
+router.delete('/api/roles/:id', controllers.rolesController.delete);
+
+// ========== USUARIOS ==========
+router.get('/api/usuarios', controllers.usuariosController.getAll);
+router.get('/api/usuarios/:id', controllers.usuariosController.getById);
+router.get('/api/usuarios/email/:email', controllers.usuariosController.getByEmail);
+router.get('/api/usuarios/documento/:documento', controllers.usuariosController.getByDocumento);
+router.post('/api/usuarios', controllers.usuariosController.create);
+router.put('/api/usuarios/:id', controllers.usuariosController.update);
+router.delete('/api/usuarios/:id', controllers.usuariosController.delete);
+
 module.exports = router;

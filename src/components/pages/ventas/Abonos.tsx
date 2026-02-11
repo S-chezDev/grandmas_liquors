@@ -15,11 +15,12 @@ interface Abono {
   fecha: string;
   metodo_pago: string;
   estado: string;
+  cliente_nombre?: string;
 }
 
 export function Abonos() {
   const [abonos, setAbonos] = useState<Abono[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
     loadAbonos();
@@ -36,11 +37,11 @@ export function Abonos() {
       setLoading(false);
     }
   };
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState<boolean>(false);
   const [selectedAbono, setSelectedAbono] = useState<Abono | null>(null);
-  const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
-  const [pdfContent, setPdfContent] = useState('');
+  const [isPdfModalOpen, setIsPdfModalOpen] = useState<boolean>(false);
+  const [pdfContent, setPdfContent] = useState<string>('');
   const [formData, setFormData] = useState({
     numero_abono: '',
     pedido_id: 0,
@@ -113,16 +114,17 @@ export function Abonos() {
 ╚════════════════════════════════════════════════════════════╝
 
 ID Abono:           ${abono.id}
-Pedido Asociado:    ${abono.pedido}
-Cliente:            ${abono.cliente}
+Número Abono:       ${abono.numero_abono}
+Pedido ID:          ${abono.pedido_id}
+Cliente:            ${abono.cliente_nombre || 'N/A'}
 Monto:              ${formatCurrency(abono.monto)}
 Fecha:              ${abono.fecha}
-Método de Pago:     ${abono.metodoPago}
+Método de Pago:     ${abono.metodo_pago}
 Estado:             ${abono.estado}
 
 ────────────────────────────────────────────────────────────
 Este comprobante certifica el pago parcial del pedido
-${abono.pedido} por un valor de ${formatCurrency(abono.monto)}
+${abono.pedido_id} por un valor de ${formatCurrency(abono.monto)}
 ────────────────────────────────────────────────────────────
 
 Firma Cliente:      _______________________
@@ -195,12 +197,16 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                 <p>{selectedAbono.id}</p>
               </div>
               <div>
-                <p className="text-sm text-muted-foreground">Pedido</p>
-                <p>{selectedAbono.pedido}</p>
+                <p className="text-sm text-muted-foreground">Número Abono</p>
+                <p>{selectedAbono.numero_abono}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Pedido ID</p>
+                <p>{selectedAbono.pedido_id}</p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Cliente</p>
-                <p>{selectedAbono.cliente}</p>
+                <p>{selectedAbono.cliente_nombre || 'N/A'}</p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Monto</p>
@@ -212,7 +218,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Método de Pago</p>
-                <p>{selectedAbono.metodoPago}</p>
+                <p>{selectedAbono.metodo_pago}</p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Estado</p>
@@ -236,25 +242,22 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         <Form onSubmit={handleSubmit}>
           <div className="grid grid-cols-2 gap-4">
             <FormField
-              label="Pedido"
-              name="pedido"
-              type="select"
-              value={formData.pedido}
-              onChange={(value) => setFormData({ ...formData, pedido: value as string })}
-              options={[
-                { value: 'PED-001', label: 'PED-001 - Juan Pérez García' },
-                { value: 'PED-002', label: 'PED-002 - María González López' },
-                { value: 'PED-003', label: 'PED-003 - Carlos Ramírez' }
-              ]}
+              label="Pedido ID"
+              name="pedido_id"
+              type="number"
+              value={formData.pedido_id}
+              onChange={(value) => setFormData({ ...formData, pedido_id: value as number })}
+              placeholder="ID del pedido"
               required
             />
             
             <FormField
-              label="Cliente"
-              name="cliente"
-              value={formData.cliente}
-              onChange={(value) => setFormData({ ...formData, cliente: value as string })}
-              placeholder="Nombre del cliente"
+              label="Cliente ID"
+              name="cliente_id"
+              type="number"
+              value={formData.cliente_id}
+              onChange={(value) => setFormData({ ...formData, cliente_id: value as number })}
+              placeholder="ID del cliente"
               required
             />
             
@@ -270,10 +273,10 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
             
             <FormField
               label="Método de Pago"
-              name="metodoPago"
+              name="metodo_pago"
               type="select"
-              value={formData.metodoPago}
-              onChange={(value) => setFormData({ ...formData, metodoPago: value as string })}
+              value={formData.metodo_pago}
+              onChange={(value) => setFormData({ ...formData, metodo_pago: value as string })}
               options={[
                 { value: 'Efectivo', label: 'Efectivo' },
                 { value: 'Tarjeta', label: 'Tarjeta' },
