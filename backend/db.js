@@ -1,0 +1,27 @@
+const { Pool } = require('pg');
+const config = require('./config');
+
+// Crear el pool de conexiones a la base de datos PostgreSQL
+const pool = new Pool({
+  host: config.db.host,
+  port: config.db.port,
+  user: config.db.user,
+  password: config.db.password,
+  database: config.db.database,
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
+});
+
+// Verificar conexión a la base de datos
+pool.connect()
+  .then((client) => {
+    console.log('✓ Conexión a Base de Datos PostgreSQL exitosa');
+    client.release();
+  })
+  .catch((error) => {
+    console.error('✗ Error al conectar a la Base de Datos:', error.message);
+    process.exit(1);
+  });
+
+module.exports = pool;
