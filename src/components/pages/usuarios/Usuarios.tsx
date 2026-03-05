@@ -33,6 +33,7 @@ export function Usuarios() {
     isOpen: false,
     title: '',
     description: '',
+    type: 'warning' as 'warning' | 'info' | 'success' | 'danger',
     onConfirm: () => {}
   });
   const [formData, setFormData] = useState({
@@ -135,7 +136,13 @@ export function Usuarios() {
           await loadUsuarios();
         } catch (error) {
           console.error('Error eliminando usuario:', error);
-          alert('Error al eliminar el usuario');
+          setAlertState({
+            isOpen: true,
+            title: 'Error',
+            description: 'No fue posible eliminar el usuario.',
+            type: 'danger',
+            onConfirm: () => {},
+          });
         }
       }
     });
@@ -148,7 +155,13 @@ export function Usuarios() {
       await loadUsuarios();
     } catch (error) {
       console.error('Error cambiando estado:', error);
-      alert('Error al cambiar el estado del usuario');
+      setAlertState({
+        isOpen: true,
+        title: 'Error',
+        description: 'No fue posible cambiar el estado del usuario.',
+        type: 'danger',
+        onConfirm: () => {},
+      });
     }
   };
 
@@ -174,6 +187,9 @@ export function Usuarios() {
       };
 
       if (selectedUsuario) {
+        if (selectedUsuario.rol_id !== parseInt(formData.rol_id, 10)) {
+          await usuariosAPI.assignRole(Number(selectedUsuario.id), parseInt(formData.rol_id, 10));
+        }
         await usuariosAPI.update(selectedUsuario.id, dataToSend);
       } else {
         await usuariosAPI.create(dataToSend);
@@ -182,7 +198,13 @@ export function Usuarios() {
       setIsModalOpen(false);
     } catch (error) {
       console.error('Error guardando usuario:', error);
-      alert('Error al guardar el usuario');
+      setAlertState({
+        isOpen: true,
+        title: 'Error',
+        description: 'No fue posible guardar el usuario.',
+        type: 'danger',
+        onConfirm: () => {},
+      });
     }
   };
 
@@ -411,9 +433,10 @@ export function Usuarios() {
 
       <AlertDialog
         isOpen={alertState.isOpen}
-        onClose={() => setAlertState({ isOpen: false, title: '', description: '', onConfirm: () => {} })}
+        onClose={() => setAlertState({ isOpen: false, title: '', description: '', type: 'warning', onConfirm: () => {} })}
         title={alertState.title}
         description={alertState.description}
+        type={alertState.type}
         onConfirm={alertState.onConfirm}
       />
     </div>

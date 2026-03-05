@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { AuthProvider, useAuth } from './components/AuthContext';
+import { useAlertDialog } from './components/AlertDialog';
 
 // Login
 import { Login } from './components/pages/Login';
@@ -87,6 +88,7 @@ const pageTitles: { [key: string]: string } = {
 function AppContent() {
   const [currentPath, setCurrentPath] = useState<string>('');
   const { user, login, logout, hasPermission } = useAuth();
+  const { showAlert, AlertComponent } = useAlertDialog();
 
   // Establecer ruta inicial basada en el rol del usuario
   React.useEffect(() => {
@@ -104,17 +106,24 @@ function AppContent() {
     if (hasPermission(path.substring(1))) { // Quitar el '/' inicial
       setCurrentPath(path);
     } else {
-      alert('No tienes permisos para acceder a esta sección');
+      showAlert({
+        title: 'Acceso denegado',
+        description: 'No tienes permisos para acceder a esta sección.',
+        type: 'warning',
+        onConfirm: () => {},
+        confirmText: 'Entendido',
+        cancelText: 'Cerrar',
+      });
     }
   };
 
-  const handleLogin = (email: string, password: string) => {
-    const success = login(email, password);
+  const handleLogin = async (email: string, password: string): Promise<boolean> => {
+    const success = await login(email, password);
     if (success) {
       console.log('Login exitoso');
-    } else {
-      alert('Credenciales incorrectas');
+      return true;
     }
+    return false;
   };
 
   // Si no está autenticado, mostrar pantalla de login
@@ -136,6 +145,7 @@ function AppContent() {
           <CurrentPage />
         </main>
       </div>
+      {AlertComponent}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
+import { auth } from '../services/api';
 
 export type UserRole = 'Administrador' | 'Asesor' | 'Productor' | 'Repartidor' | 'Cliente';
 
@@ -12,7 +13,7 @@ export interface User {
 
 interface AuthContextType {
   user: User | null;
-  login: (email: string, password: string) => boolean;
+  login: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
   hasPermission: (module: string, action?: string) => boolean;
 }
@@ -70,59 +71,26 @@ const rolePermissions: Record<UserRole, {
   }
 };
 
-// Usuarios predefinidos
-const usuariosPredefinidos: (User & { password: string })[] = [
-  {
-    email: 'admin@grandmas.com',
-    password: 'admin123',
-    rol: 'Administrador',
-    nombre: 'Carlos',
-    apellido: 'Rodríguez'
-  },
-  {
-    email: 'asesor@grandmas.com',
-    password: 'asesor123',
-    rol: 'Asesor',
-    nombre: 'María',
-    apellido: 'González'
-  },
-  {
-    email: 'productor@grandmas.com',
-    password: 'productor123',
-    rol: 'Productor',
-    nombre: 'Juan',
-    apellido: 'Martínez'
-  },
-  {
-    email: 'repartidor@grandmas.com',
-    password: 'repartidor123',
-    rol: 'Repartidor',
-    nombre: 'Pedro',
-    apellido: 'López'
-  },
-  {
-    email: 'cliente@grandmas.com',
-    password: 'cliente123',
-    rol: 'Cliente',
-    nombre: 'Ana',
-    apellido: 'Pérez'
-  }
-];
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
 
-  const login = (email: string, password: string): boolean => {
-    const foundUser = usuariosPredefinidos.find(
-      u => u.email === email && u.password === password
-    );
-
-    if (foundUser) {
-      const { password: _, ...userData } = foundUser;
-      setUser(userData);
-      return true;
+  const login = async (email: string, password: string): Promise<boolean> => {
+    try {
+      const result = await auth.login(email, password);
+      if (result?.id && result?.email) {
+        setUser({
+          email: result.email,
+          nombre: result.nombre,
+          apellido: result.apellido,
+          rol: result.rol as UserRole,
+        });
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Error de login:', error);
+      return false;
     }
-    return false;
   };
 
   const logout = () => {

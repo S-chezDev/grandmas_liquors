@@ -6,7 +6,11 @@
  * y realizar operaciones CRUD en la base de datos PostgreSQL.
  */
 
-const API_BASE_URL = 'http://localhost:5000';
+const API_BASE_URLS = [
+  (import.meta as any).env?.VITE_API_URL,
+  'http://localhost:5000',
+  'http://localhost:3002',
+].filter(Boolean);
 
 /**
  * Función genérica para hacer peticiones HTTP
@@ -27,26 +31,202 @@ export const apiCall = async (
     options.body = JSON.stringify(data);
   }
 
+  let lastError: unknown;
+
+  for (const baseUrl of API_BASE_URLS) {
+    try {
+      const response = await fetch(`${baseUrl}${endpoint}`, options);
+
+      if (!response.ok) {
+        const httpError: any = new Error(`API Error: ${response.status} ${response.statusText}`);
+        httpError.isHttpError = true;
+        throw httpError;
+      }
+
+      const result = await response.json();
+
+      // El backend devuelve { success: true, data: [...] }
+      // Extraemos solo el campo 'data' para los componentes
+      if (result.success && result.data !== undefined) {
+        return result.data;
+      }
+
+      // Si no tiene la estructura esperada, devolver el resultado completo
+      return result;
+    } catch (error) {
+      if ((error as any)?.isHttpError) {
+        throw error;
+      }
+      lastError = error;
+    }
+  }
+
+  console.error(`Error en petición a ${endpoint}:`, lastError);
+  throw lastError;
+};
+
+const toNumberOrUndefined = (value: any): number | undefined => {
+  if (value === null || value === undefined || value === '') return undefined;
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? undefined : parsed;
+};
+
+const toNumberOrZero = (value: any): number => {
+  const parsed = toNumberOrUndefined(value);
+  return parsed ?? 0;
+};
+
+const normalizeClientePayload = (data: any) => ({
+  ...data,
+  tipoDocumento: data?.tipoDocumento ?? data?.tipo_documento,
+  estado: data?.estado ?? 'Activo',
+});
+
+const normalizeProveedorPayload = (data: any) => ({
+  ...data,
+  tipoPersona: data?.tipoPersona ?? data?.tipo_persona,
+  nombreEmpresa: data?.nombreEmpresa ?? data?.nombre_empresa,
+  tipoDocumento: data?.tipoDocumento ?? data?.tipo_documento,
+  numeroDocumento: data?.numeroDocumento ?? data?.numero_documento,
+  estado: data?.estado ?? 'Activo',
+});
+
+const normalizePedidoPayload = (data: any) => ({
+  ...data,
+  numero_pedido: data?.numero_pedido ?? `PED-${Date.now()}`,
+  cliente_id: toNumberOrZero(data?.cliente_id ?? data?.clienteId),
+  fecha: data?.fecha ?? new Date().toISOString().split('T')[0],
+  fecha_entrega: data?.fecha_entrega ?? data?.fechaEntrega ?? null,
+  detalles: data?.detalles ?? null,
+  total: toNumberOrZero(data?.total),
+  estado: data?.estado ?? 'Pendiente',
+});
+
+const normalizeVentaPayload = (data: any) => ({
+  ...data,
+  numero_venta: data?.numero_venta ?? `VEN-${Date.now()}`,
+  tipo: data?.tipo ?? 'Directa',
+  cliente_id: toNumberOrUndefined(data?.cliente_id ?? data?.clienteId) ?? null,
+  pedido_id: toNumberOrUndefined(data?.pedido_id ?? data?.pedidoId) ?? null,
+  fecha: data?.fecha ?? new Date().toISOString().split('T')[0],
+  metodopago: data?.metodopago ?? data?.metodoPago ?? data?.metodo_pago,
+  total: toNumberOrZero(data?.total),
+  estado: data?.estado ?? 'Completada',
+});
+
+const normalizeDomicilioPayload = async (data: any) => {
+  const payload: any = {
+    ...data,
+    numero_domicilio: data?.numero_domicilio ?? `DOM-${Date.now()}`,
+    pedido_id: toNumberOrZero(data?.pedido_id ?? data?.pedidoId),
+    cliente_id: toNumberOrUndefined(data?.cliente_id ?? data?.clienteId),
+    fecha: data?.fecha ?? new Date().toISOString().split('T')[0],
+    estado: data?.estado ?? 'Pendiente',
+    detalle: data?.detalle ?? data?.detalles ?? null,
+  };
+
+  if (!payload.cliente_id && payload.pedido_id) {
+    try {
+      const pedido = await apiCall(`/api/pedidos/${payload.pedido_id}`);
+      payload.cliente_id = toNumberOrZero((pedido as any)?.cliente_id);
+    } catch {
+      // If lookup fails, backend validation will return a precise error.
+    }
+  }
+
+  return payload;
+};
+
+const normalizeCompraPayload = async (data: any) => {
+  const payload: any = {
+    ...data,
+    numero_compra: data?.numero_compra ?? `COM-${Date.now()}`,
+    proveedor_id: toNumberOrUndefined(data?.proveedor_id ?? data?.proveedor),
+    fecha: data?.fecha ?? new Date().toISOString().split('T')[0],
+    subtotal: toNumberOrZero(data?.subtotal),
+    iva: toNumberOrZero(data?.iva),
+    total: toNumberOrZero(data?.total),
+    estado: data?.estado ?? 'Pendiente',
+  };
+
+  if (!payload.proveedor_id && typeof data?.proveedor === 'string' && data.proveedor.trim()) {
+    try {
+      const proveedoresList = await apiCall('/api/proveedores');
+      const matched = Array.isArray(proveedoresList)
+        ? proveedoresList.find((p: any) => {
+            const natural = `${p?.nombre ?? ''} ${p?.apellido ?? ''}`.trim();
+            return p?.nombre_empresa === data.proveedor || natural === data.proveedor;
+          })
+        : null;
+      payload.proveedor_id = toNumberOrUndefined(matched?.id) ?? null;
+    } catch {
+      // Backend response will guide if proveedor_id is still missing.
+    }
+  }
+
+  if (payload.proveedor_id === undefined) payload.proveedor_id = null;
+  return payload;
+};
+
+const normalizeEntregaInsumoPayload = async (data: any) => {
+  const payload: any = {
+    ...data,
+    numero_entrega: data?.numero_entrega ?? `ENT-${Date.now()}`,
+    insumo_id: toNumberOrUndefined(data?.insumo_id),
+    cantidad: toNumberOrZero(data?.cantidad),
+    fecha: data?.fecha ?? new Date().toISOString().split('T')[0],
+  };
+
+  const insumoNombre = data?.insumo;
+  if (!payload.insumo_id && typeof insumoNombre === 'string' && insumoNombre.trim()) {
+    try {
+      const insumosList = await apiCall('/api/insumos');
+      const matched = Array.isArray(insumosList)
+        ? insumosList.find((i: any) => i?.nombre === insumoNombre)
+        : null;
+      payload.insumo_id = toNumberOrUndefined(matched?.id);
+    } catch {
+      // Backend response will guide if insumo_id is still missing.
+    }
+  }
+
+  return payload;
+};
+
+const normalizeProduccionPayload = async (data: any) => {
+  const payload: any = {
+    ...data,
+    numero_produccion: data?.numero_produccion ?? `PROD-${Date.now()}`,
+    producto_id: toNumberOrUndefined(data?.producto_id),
+    cantidad: toNumberOrZero(data?.cantidad),
+    fecha: data?.fecha ?? data?.fechaInicio ?? new Date().toISOString().split('T')[0],
+    responsable: data?.responsable ?? data?.operario,
+    estado: data?.estado ?? 'Pendiente',
+    notes: data?.notes ?? data?.detalle ?? data?.lote ?? null,
+  };
+
+  const productoNombre = data?.producto;
+  if (!payload.producto_id && typeof productoNombre === 'string' && productoNombre.trim()) {
+    try {
+      const productosList = await apiCall('/api/productos');
+      const matched = Array.isArray(productosList)
+        ? productosList.find((p: any) => p?.nombre === productoNombre)
+        : null;
+      payload.producto_id = toNumberOrUndefined(matched?.id);
+    } catch {
+      // Backend response will guide if producto_id is still missing.
+    }
+  }
+
+  return payload;
+};
+
+const mergeWithCurrent = async (endpoint: string, patch: any) => {
   try {
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, options);
-    
-    if (!response.ok) {
-      throw new Error(`API Error: ${response.status} ${response.statusText}`);
-    }
-    
-    const result = await response.json();
-    
-    // El backend devuelve { success: true, data: [...] }
-    // Extraemos solo el campo 'data' para los componentes
-    if (result.success && result.data !== undefined) {
-      return result.data;
-    }
-    
-    // Si no tiene la estructura esperada, devolver el resultado completo
-    return result;
-  } catch (error) {
-    console.error(`Error en petición a ${endpoint}:`, error);
-    throw error;
+    const current = await apiCall(endpoint);
+    return { ...(current as any), ...(patch as any) };
+  } catch {
+    return patch;
   }
 };
 
@@ -98,9 +278,11 @@ export const clientes = {
     direccion?: string;
     foto_url?: string;
     estado?: string;
-  }) => apiCall('/api/clientes', 'POST', data),
-  update: (id: number, data: any) =>
-    apiCall(`/api/clientes/${id}`, 'PUT', data),
+  }) => apiCall('/api/clientes', 'POST', normalizeClientePayload(data)),
+  update: async (id: number, data: any) => {
+    const merged = await mergeWithCurrent(`/api/clientes/${id}`, data);
+    return apiCall(`/api/clientes/${id}`, 'PUT', normalizeClientePayload(merged));
+  },
   delete: (id: number) => apiCall(`/api/clientes/${id}`, 'DELETE'),
 };
 
@@ -120,9 +302,11 @@ export const proveedores = {
     email?: string;
     direccion?: string;
     estado?: string;
-  }) => apiCall('/api/proveedores', 'POST', data),
-  update: (id: number, data: any) =>
-    apiCall(`/api/proveedores/${id}`, 'PUT', data),
+  }) => apiCall('/api/proveedores', 'POST', normalizeProveedorPayload(data)),
+  update: async (id: number, data: any) => {
+    const merged = await mergeWithCurrent(`/api/proveedores/${id}`, data);
+    return apiCall(`/api/proveedores/${id}`, 'PUT', normalizeProveedorPayload(merged));
+  },
   delete: (id: number) => apiCall(`/api/proveedores/${id}`, 'DELETE'),
 };
 
@@ -130,7 +314,12 @@ export const proveedores = {
 export const pedidos = {
   getAll: () => apiCall('/api/pedidos'),
   getById: (id: number) => apiCall(`/api/pedidos/${id}`),
-  getDetalles: (id: number) => apiCall(`/api/pedidos/${id}/detalles`),
+  getDetalles: async (id: number) => {
+    const pedido = await apiCall(`/api/pedidos/${id}`);
+    return Array.isArray((pedido as any)?.detalles)
+      ? (pedido as any).detalles
+      : [];
+  },
   create: (data: {
     numero_pedido: string;
     cliente_id: number;
@@ -138,9 +327,11 @@ export const pedidos = {
     fecha_entrega?: string;
     detalles?: string;
     estado?: string;
-  }) => apiCall('/api/pedidos', 'POST', data),
-  update: (id: number, data: any) =>
-    apiCall(`/api/pedidos/${id}`, 'PUT', data),
+  }) => apiCall('/api/pedidos', 'POST', normalizePedidoPayload(data)),
+  update: async (id: number, data: any) => {
+    const merged = await mergeWithCurrent(`/api/pedidos/${id}`, data);
+    return apiCall(`/api/pedidos/${id}`, 'PUT', normalizePedidoPayload(merged));
+  },
   delete: (id: number) => apiCall(`/api/pedidos/${id}`, 'DELETE'),
 };
 
@@ -148,7 +339,11 @@ export const pedidos = {
 export const ventas = {
   getAll: () => apiCall('/api/ventas'),
   getById: (id: number) => apiCall(`/api/ventas/${id}`),
-  getDetalles: (id: number) => apiCall(`/api/ventas/${id}/detalles`),
+  getDetalles: async (id: number) => {
+    const venta = await apiCall(`/api/ventas/${id}`);
+    if (Array.isArray((venta as any)?.detalles)) return (venta as any).detalles;
+    return Array.isArray((venta as any)?.items) ? (venta as any).items : [];
+  },
   create: (data: {
     numero_venta: string;
     tipo: string;
@@ -158,9 +353,11 @@ export const ventas = {
     metodoPago?: string;
     total?: number;
     estado?: string;
-  }) => apiCall('/api/ventas', 'POST', data),
-  update: (id: number, data: any) =>
-    apiCall(`/api/ventas/${id}`, 'PUT', data),
+  }) => apiCall('/api/ventas', 'POST', normalizeVentaPayload(data)),
+  update: async (id: number, data: any) => {
+    const merged = await mergeWithCurrent(`/api/ventas/${id}`, data);
+    return apiCall(`/api/ventas/${id}`, 'PUT', normalizeVentaPayload(merged));
+  },
   delete: (id: number) => apiCall(`/api/ventas/${id}`, 'DELETE'),
 };
 
@@ -179,8 +376,10 @@ export const abonos = {
     metodo_pago?: string;
     estado?: string;
   }) => apiCall('/api/abonos', 'POST', data),
-  update: (id: number, data: any) =>
-    apiCall(`/api/abonos/${id}`, 'PUT', data),
+  update: async (id: number, data: any) => {
+    const merged = await mergeWithCurrent(`/api/abonos/${id}`, data);
+    return apiCall(`/api/abonos/${id}`, 'PUT', merged);
+  },
   delete: (id: number) => apiCall(`/api/abonos/${id}`, 'DELETE'),
 };
 
@@ -200,9 +399,12 @@ export const domicilios = {
     hora?: string;
     estado?: string;
     detalle?: string;
-  }) => apiCall('/api/domicilios', 'POST', data),
-  update: (id: number, data: any) =>
-    apiCall(`/api/domicilios/${id}`, 'PUT', data),
+  }) => normalizeDomicilioPayload(data).then((payload) => apiCall('/api/domicilios', 'POST', payload)),
+  update: async (id: number, data: any) => {
+    const merged = await mergeWithCurrent(`/api/domicilios/${id}`, data);
+    const payload = await normalizeDomicilioPayload(merged);
+    return apiCall(`/api/domicilios/${id}`, 'PUT', payload);
+  },
   delete: (id: number) => apiCall(`/api/domicilios/${id}`, 'DELETE'),
 };
 
@@ -210,7 +412,12 @@ export const domicilios = {
 export const compras = {
   getAll: () => apiCall('/api/compras'),
   getById: (id: number) => apiCall(`/api/compras/${id}`),
-  getDetalles: (id: number) => apiCall(`/api/compras/${id}/detalles`),
+  getDetalles: async (id: number) => {
+    const compra = await apiCall(`/api/compras/${id}`);
+    return Array.isArray((compra as any)?.detalles)
+      ? (compra as any).detalles
+      : [];
+  },
   create: (data: {
     numero_compra: string;
     proveedor_id: number;
@@ -220,9 +427,12 @@ export const compras = {
     iva?: number;
     total?: number;
     estado?: string;
-  }) => apiCall('/api/compras', 'POST', data),
-  update: (id: number, data: any) =>
-    apiCall(`/api/compras/${id}`, 'PUT', data),
+  }) => normalizeCompraPayload(data).then((payload) => apiCall('/api/compras', 'POST', payload)),
+  update: async (id: number, data: any) => {
+    const merged = await mergeWithCurrent(`/api/compras/${id}`, data);
+    const payload = await normalizeCompraPayload(merged);
+    return apiCall(`/api/compras/${id}`, 'PUT', payload);
+  },
   delete: (id: number) => apiCall(`/api/compras/${id}`, 'DELETE'),
 };
 
@@ -255,9 +465,9 @@ export const entregas_insumos = {
     operario?: string;
     fecha: string;
     hora?: string;
-  }) => apiCall('/api/entregas-insumos', 'POST', data),
+  }) => normalizeEntregaInsumoPayload(data).then((payload) => apiCall('/api/entregas-insumos', 'POST', payload)),
   update: (id: number, data: any) =>
-    apiCall(`/api/entregas-insumos/${id}`, 'PUT', data),
+    normalizeEntregaInsumoPayload(data).then((payload) => apiCall(`/api/entregas-insumos/${id}`, 'PUT', payload)),
   delete: (id: number) => apiCall(`/api/entregas-insumos/${id}`, 'DELETE'),
 };
 
@@ -273,9 +483,12 @@ export const produccion = {
     responsable?: string;
     estado?: string;
     notes?: string;
-  }) => apiCall('/api/produccion', 'POST', data),
-  update: (id: number, data: any) =>
-    apiCall(`/api/produccion/${id}`, 'PUT', data),
+  }) => normalizeProduccionPayload(data).then((payload) => apiCall('/api/produccion', 'POST', payload)),
+  update: async (id: number, data: any) => {
+    const merged = await mergeWithCurrent(`/api/produccion/${id}`, data);
+    const payload = await normalizeProduccionPayload(merged);
+    return apiCall(`/api/produccion/${id}`, 'PUT', payload);
+  },
   delete: (id: number) => apiCall(`/api/produccion/${id}`, 'DELETE'),
 };
 
@@ -289,7 +502,10 @@ export const roles = {
     permisos?: string[];
     estado?: string;
   }) => apiCall('/api/roles', 'POST', data),
-  update: (id: number, data: any) => apiCall(`/api/roles/${id}`, 'PUT', data),
+  update: async (id: number, data: any) => {
+    const merged = await mergeWithCurrent(`/api/roles/${id}`, data);
+    return apiCall(`/api/roles/${id}`, 'PUT', merged);
+  },
   delete: (id: number) => apiCall(`/api/roles/${id}`, 'DELETE'),
 };
 
@@ -312,5 +528,22 @@ export const usuarios = {
     estado?: string;
   }) => apiCall('/api/usuarios', 'POST', data),
   update: (id: number, data: any) => apiCall(`/api/usuarios/${id}`, 'PUT', data),
+  assignRole: (id: number, rol_id: number) => apiCall(`/api/usuarios/${id}/rol`, 'PUT', { rol_id }),
   delete: (id: number) => apiCall(`/api/usuarios/${id}`, 'DELETE'),
+};
+
+// ==================== AUTH ====================
+export const auth = {
+  login: (email: string, password: string) =>
+    apiCall('/api/auth/login', 'POST', { email, password }),
+  registerCliente: (data: {
+    tipoDocumento: 'CC' | 'CE' | 'TI' | 'Pasaporte';
+    numeroDocumento: string;
+    nombre: string;
+    apellido: string;
+    direccion: string;
+    email: string;
+    telefono?: string;
+    password: string;
+  }) => apiCall('/api/auth/register-cliente', 'POST', data),
 };

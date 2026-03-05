@@ -1,12 +1,15 @@
 const { Pool } = require('pg');
 const config = require('./config');
 
+const dbPassword =
+  typeof config.db.password === 'string' ? config.db.password : String(config.db.password || '');
+
 // Crear el pool de conexiones a la base de datos PostgreSQL
 const pool = new Pool({
   host: config.db.host,
   port: config.db.port,
   user: config.db.user,
-  password: config.db.password,
+  password: dbPassword,
   database: config.db.database,
   max: 10,
   idleTimeoutMillis: 30000,

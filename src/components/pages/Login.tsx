@@ -5,49 +5,11 @@ import { Button } from '../Button';
 import { LogIn, UserPlus, Upload, KeyRound } from 'lucide-react';
 import { Modal } from '../Modal';
 import { AlertDialog } from '../AlertDialog';
+import { auth } from '../../services/api';
 
 interface LoginProps {
-  onLogin: (email: string, password: string) => void;
+  onLogin: (email: string, password: string) => Promise<boolean>;
 }
-
-// Usuarios predefinidos con sus credenciales y roles
-const usuariosPredefinidos = [
-  {
-    email: 'admin@grandmas.com',
-    password: 'admin123',
-    rol: 'Administrador',
-    nombre: 'Carlos',
-    apellido: 'Rodríguez'
-  },
-  {
-    email: 'asesor@grandmas.com',
-    password: 'asesor123',
-    rol: 'Asesor',
-    nombre: 'María',
-    apellido: 'González'
-  },
-  {
-    email: 'productor@grandmas.com',
-    password: 'productor123',
-    rol: 'Productor',
-    nombre: 'Juan',
-    apellido: 'Martínez'
-  },
-  {
-    email: 'repartidor@grandmas.com',
-    password: 'repartidor123',
-    rol: 'Repartidor',
-    nombre: 'Pedro',
-    apellido: 'López'
-  },
-  {
-    email: 'cliente@grandmas.com',
-    password: 'cliente123',
-    rol: 'Cliente',
-    nombre: 'Ana',
-    apellido: 'Pérez'
-  }
-];
 
 export function Login({ onLogin }: LoginProps) {
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
@@ -77,27 +39,23 @@ export function Login({ onLogin }: LoginProps) {
   });
   const [fotoPreview, setFotoPreview] = useState<string | null>(null);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Validar credenciales
-    const usuario = usuariosPredefinidos.find(
-      u => u.email === loginData.email && u.password === loginData.password
-    );
-    
-    if (usuario) {
+
+    const success = await onLogin(loginData.email, loginData.password);
+
+    if (success) {
       setAlertState({
         isOpen: true,
         title: 'Bienvenido',
-        description: `Bienvenido ${usuario.nombre} ${usuario.apellido}\nRol: ${usuario.rol}`,
+        description: 'Inicio de sesión exitoso.',
         type: 'success',
         onConfirm: () => {}
       });
       
       // Cerrar alerta y hacer login automáticamente después de 3 segundos
       setTimeout(() => {
-        setAlertState(prev => ({ ...prev, isOpen: false }));
-        onLogin(loginData.email, loginData.password);
+        setAlertState((prev: any) => ({ ...prev, isOpen: false }));
       }, 3000);
     } else {
       setAlertState({
@@ -110,7 +68,7 @@ export function Login({ onLogin }: LoginProps) {
     }
   };
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (registerData.password !== registerData.confirmPassword) {
       setAlertState({
@@ -122,43 +80,48 @@ export function Login({ onLogin }: LoginProps) {
       });
       return;
     }
-    
-    // Verificar si el email ya existe
-    const emailExiste = usuariosPredefinidos.some(u => u.email === registerData.email);
-    if (emailExiste) {
+
+    try {
+      await auth.registerCliente({
+        tipoDocumento: registerData.tipoDocumento,
+        numeroDocumento: registerData.numeroDocumento,
+        nombre: registerData.nombre,
+        apellido: registerData.apellido,
+        direccion: registerData.direccion,
+        email: registerData.email,
+        telefono: '',
+        password: registerData.password,
+      });
+
+      setAlertState({
+        isOpen: true,
+        title: 'Registro exitoso',
+        description: `Registro exitoso para ${registerData.nombre} ${registerData.apellido}\n\nTu cuenta ya fue creada y quedó con rol Cliente.`,
+        type: 'success',
+        onConfirm: () => {}
+      });
+
+      setTimeout(() => {
+        setAlertState((prev: any) => ({ ...prev, isOpen: false }));
+        setActiveTab('login');
+        setLoginData({ email: registerData.email, password: '' });
+      }, 3000);
+    } catch (error) {
       setAlertState({
         isOpen: true,
         title: 'Error en el registro',
-        description: 'Este correo electrónico ya está registrado',
+        description: 'No fue posible registrar el cliente. Verifica correo/documento e intenta nuevamente.',
         type: 'danger',
         onConfirm: () => {}
       });
-      return;
     }
-    
-    setAlertState({
-      isOpen: true,
-      title: 'Registro exitoso',
-      description: `Registro exitoso para ${registerData.nombre} ${registerData.apellido}\n\nTu cuenta será revisada por un administrador quien asignará tu rol y permisos.\nRecibirás un correo de confirmación cuando tu cuenta esté activa.`,
-      type: 'success',
-      onConfirm: () => {}
-    });
-    
-    // Cambiar a tab de login automáticamente después de 3 segundos
-    setTimeout(() => {
-      setAlertState(prev => ({ ...prev, isOpen: false }));
-      setActiveTab('login');
-      setLoginData({ email: registerData.email, password: '' });
-    }, 3000);
   };
 
   const handleResetPassword = (e: React.FormEvent) => {
     e.preventDefault();
     
     // Verificar si el email existe
-    const usuario = usuariosPredefinidos.find(u => u.email === resetEmail);
-    
-    if (usuario) {
+    if (resetEmail.includes('@')) {
       setAlertState({
         isOpen: true,
         title: 'Enlace enviado',
@@ -285,7 +248,7 @@ export function Login({ onLogin }: LoginProps) {
 
             {/* Credenciales de ejemplo */}
             <div className="mt-6 p-4 bg-accent rounded-lg">
-              <p className="text-sm mb-2">Credenciales de prueba:</p>
+              <p className="text-sm mb-2">Credenciales de prueba (si están cargadas en BD):</p>
               <div className="text-xs space-y-1 text-muted-foreground">
                 <p><strong>Administrador:</strong> admin@grandmas.com / admin123</p>
                 <p><strong>Asesor:</strong> asesor@grandmas.com / asesor123</p>

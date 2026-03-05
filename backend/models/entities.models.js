@@ -548,6 +548,10 @@ const Roles = {
     const result = await pool.query('SELECT * FROM roles WHERE id = $1', [id]);
     return result.rows[0];
   },
+  getByNombre: async (nombre) => {
+    const result = await pool.query('SELECT * FROM roles WHERE nombre = $1', [nombre]);
+    return result.rows[0];
+  },
   create: async (data) => {
     const result = await pool.query(
       'INSERT INTO roles (nombre, descripcion, permisos, estado) VALUES ($1, $2, $3, $4) RETURNING id',
@@ -605,8 +609,44 @@ const Usuarios = {
   },
   update: async (id, data) => {
     await pool.query(
-      'UPDATE usuarios SET nombre = $1, apellido = $2, tipo_documento = $3, documento = $4, direccion = $5, email = $6, telefono = $7, rol_id = $8, estado = $9 WHERE id = $10',
-      [data.nombre, data.apellido, data.tipo_documento, data.documento, data.direccion, data.email, data.telefono, data.rol_id, data.estado, id]
+      `UPDATE usuarios
+       SET nombre = COALESCE($1, nombre),
+           apellido = COALESCE($2, apellido),
+           tipo_documento = COALESCE($3, tipo_documento),
+           documento = COALESCE($4, documento),
+           direccion = COALESCE($5, direccion),
+           email = COALESCE($6, email),
+           telefono = COALESCE($7, telefono),
+           rol_id = COALESCE($8, rol_id),
+           estado = COALESCE($9, estado),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $10`,
+      [
+        data.nombre,
+        data.apellido,
+        data.tipo_documento,
+        data.documento,
+        data.direccion,
+        data.email,
+        data.telefono,
+        data.rol_id,
+        data.estado,
+        id,
+      ]
+    );
+    return true;
+  },
+  updatePasswordHash: async (id, passwordHash) => {
+    await pool.query(
+      'UPDATE usuarios SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [passwordHash, id]
+    );
+    return true;
+  },
+  assignRole: async (id, rolId) => {
+    await pool.query(
+      'UPDATE usuarios SET rol_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [rolId, id]
     );
     return true;
   },

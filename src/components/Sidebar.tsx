@@ -419,17 +419,6 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
         </div>
       )}
 
-      {/* Footer */}
-      <div className="p-4 border-t border-sidebar-border">
-        {!isCollapsed && (
-          <div className="text-xs text-sidebar-foreground/70">
-            <p>Calle 104 # 79D – 65</p>
-            <p>Medellín, Laureles</p>
-            <p className="mt-1">Tel: 324 610 2339</p>
-          </div>
-        )}
-      </div>
-
       {/* Modal de Cambio de Contraseña */}
       <Modal
         isOpen={isChangePasswordOpen}
