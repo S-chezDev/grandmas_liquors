@@ -1,7 +1,64 @@
 const models = require('../models/entities.models');
 const pool = require('../../db');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const config = require('../../config');
 const { normalizeAuthRegisterPayload } = require('./normalizador-http');
+
+const getSessionTtlByRole = (roleName) => {
+  return roleName === 'Cliente' ? config.auth.clienteTokenTtlMs : config.auth.staffTokenTtlMs;
+};
+
+const buildCookieOptions = (maxAge) => {
+  const options = {
+    httpOnly: true,
+    secure: config.auth.cookieSecure,
+    sameSite: config.auth.cookieSameSite,
+    path: '/',
+  };
+
+  if (typeof maxAge === 'number') {
+    options.maxAge = maxAge;
+  }
+
+  if (config.auth.cookieDomain) {
+    options.domain = config.auth.cookieDomain;
+  }
+
+  return options;
+};
+
+const mapUserForResponse = (usuario, roleName, clienteId) => ({
+  id: usuario.id,
+  email: usuario.email,
+  nombre: usuario.nombre,
+  apellido: usuario.apellido,
+  rol: roleName,
+  rol_id: usuario.rol_id,
+  cliente_id: clienteId,
+});
+
+const buildSessionMetadata = (sessionExpiresAtMs) => {
+  if (!sessionExpiresAtMs) return {};
+
+  return {
+    session_expires_at: new Date(sessionExpiresAtMs).toISOString(),
+    session_remaining_ms: Math.max(0, sessionExpiresAtMs - Date.now()),
+  };
+};
+
+const resolveUserRoleAndClienteId = async (usuario) => {
+  const rol = usuario.rol_id ? await models.Roles.getById(usuario.rol_id) : null;
+  const roleName = rol?.nombre || usuario.rol || 'Cliente';
+  let clienteId = null;
+
+  if (roleName === 'Cliente') {
+    const cliente = await models.Clientes.getOrCreateByUsuarioId(usuario.id);
+    clienteId = cliente?.id || null;
+  }
+
+  return { roleName, clienteId };
+};
 
 module.exports = {
   login: async (req, res) => {
@@ -26,29 +83,77 @@ module.exports = {
         return res.status(401).json({ success: false, message: 'Credenciales incorrectas' });
       }
 
-      const rol = usuario.rol_id ? await models.Roles.getById(usuario.rol_id) : null;
-      let clienteId = null;
+      const { roleName, clienteId } = await resolveUserRoleAndClienteId(usuario);
+      const sessionTtlMs = getSessionTtlByRole(roleName);
+      const expiresInSeconds = Math.floor(sessionTtlMs / 1000);
+      const sessionExpiresAtMs = Date.now() + sessionTtlMs;
 
-      if (rol?.nombre === 'Cliente') {
-        const cliente = await models.Clientes.getOrCreateByUsuarioId(usuario.id);
-        clienteId = cliente?.id || null;
-      }
+      const token = jwt.sign(
+        {
+          id: usuario.id,
+          rol: roleName,
+          rol_id: usuario.rol_id,
+          cliente_id: clienteId,
+          email: usuario.email,
+        },
+        config.auth.jwtSecret,
+        {
+          algorithm: 'HS256',
+          subject: String(usuario.id),
+          issuer: config.auth.jwtIssuer,
+          audience: config.auth.jwtAudience,
+          expiresIn: expiresInSeconds,
+        }
+      );
+
+      res.cookie(config.auth.cookieName, token, buildCookieOptions(sessionTtlMs));
 
       res.json({
         success: true,
         message: 'Inicio de sesion exitoso',
         data: {
-          id: usuario.id,
-          email: usuario.email,
-          nombre: usuario.nombre,
-          apellido: usuario.apellido,
-          rol: rol?.nombre || 'Cliente',
-          rol_id: usuario.rol_id,
-          cliente_id: clienteId,
+          ...mapUserForResponse(usuario, roleName, clienteId),
+          expires_in_ms: sessionTtlMs,
+          ...buildSessionMetadata(sessionExpiresAtMs),
         },
       });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  me: async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'No autenticado' });
+      }
+
+      const usuario = await models.Usuarios.getById(userId);
+      if (!usuario || usuario.estado !== 'Activo') {
+        return res.status(401).json({ success: false, message: 'Sesion invalida' });
+      }
+
+      const { roleName, clienteId } = await resolveUserRoleAndClienteId(usuario);
+
+      return res.json({
+        success: true,
+        data: {
+          ...mapUserForResponse(usuario, roleName, clienteId),
+          ...buildSessionMetadata(req.user?.session_expires_at_ms),
+        },
+      });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  logout: async (req, res) => {
+    try {
+      res.clearCookie(config.auth.cookieName, buildCookieOptions());
+      return res.json({ success: true, message: 'Sesion cerrada', data: null });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
     }
   },
 

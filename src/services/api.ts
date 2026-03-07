@@ -13,13 +13,19 @@ const API_BASE_URLS = [
 ].filter(Boolean);
 
 type LoadingListener = (isLoading: boolean) => void;
+type UnauthorizedListener = () => void;
 
 let activeApiRequests = 0;
 const loadingListeners = new Set<LoadingListener>();
+const unauthorizedListeners = new Set<UnauthorizedListener>();
 
 const notifyLoadingListeners = () => {
   const isLoading = activeApiRequests > 0;
   loadingListeners.forEach((listener) => listener(isLoading));
+};
+
+const notifyUnauthorizedListeners = () => {
+  unauthorizedListeners.forEach((listener) => listener());
 };
 
 const beginApiRequest = () => {
@@ -41,6 +47,14 @@ export const subscribeApiLoading = (listener: LoadingListener) => {
   };
 };
 
+export const subscribeApiUnauthorized = (listener: UnauthorizedListener) => {
+  unauthorizedListeners.add(listener);
+
+  return () => {
+    unauthorizedListeners.delete(listener);
+  };
+};
+
 /**
  * Función genérica para hacer peticiones HTTP
  */
@@ -53,6 +67,7 @@ export const apiCall = async (
 
   const options: RequestInit = {
     method,
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
     },
@@ -74,6 +89,12 @@ export const apiCall = async (
           httpError.isHttpError = true;
           httpError.status = response.status;
           httpError.statusText = response.statusText;
+
+          // Any protected endpoint returning 401 means auth cookie is invalid or expired.
+          if (response.status === 401) {
+            notifyUnauthorizedListeners();
+          }
+
           throw httpError;
         }
 
@@ -628,6 +649,8 @@ export const usuarios = {
 export const auth = {
   login: (email: string, password: string) =>
     apiCall('/api/auth/login', 'POST', { email, password }),
+  me: () => apiCall('/api/auth/me'),
+  logout: () => apiCall('/api/auth/logout', 'POST'),
   registerCliente: (data: {
     tipoDocumento: 'CC' | 'CE' | 'TI' | 'Pasaporte';
     numeroDocumento: string;

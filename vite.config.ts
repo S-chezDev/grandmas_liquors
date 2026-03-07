@@ -52,14 +52,11 @@
     build: {
       target: 'esnext',
       outDir: 'build',
+      chunkSizeWarningLimit: 700,
       rollupOptions: {
         output: {
           manualChunks(id) {
             if (!id.includes('node_modules')) return;
-
-            if (id.includes('react-dom') || id.includes('react/jsx-runtime') || id.includes('/react/')) {
-              return 'vendor-react';
-            }
 
             if (id.includes('@radix-ui')) {
               return 'vendor-radix';
@@ -77,7 +74,8 @@
               return 'vendor-forms';
             }
 
-            return 'vendor-misc';
+            // Let Rollup auto-split the remaining dependencies to avoid circular chunk graphs.
+            return;
           },
         },
       },

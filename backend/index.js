@@ -1,14 +1,35 @@
 //cambios desde el pc de manolo 1mer commit
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const config = require('./config');
 const db = require('./db');
 const routes = require('./src/routes');
 
 const app = express();
 
+if (config.server.env === 'production') {
+  app.set('trust proxy', 1);
+}
+
+const corsOptions = {
+  credentials: true,
+  origin: (origin, callback) => {
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    if (config.auth.corsOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`Origen no permitido por CORS: ${origin}`));
+  },
+};
+
 // Middleware
-app.use(cors());
+app.use(cors(corsOptions));
+app.use(cookieParser());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 

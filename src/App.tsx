@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { Suspense, lazy, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { AuthProvider, useAuth } from './components/AuthContext';
@@ -8,58 +8,47 @@ import { subscribeApiLoading } from './services/api';
 // Login
 import { Login } from './components/pages/Login';
 
-// Dashboard
-import { Dashboard } from './components/pages/Dashboard';
-
-// Usuarios
-import { Roles } from './components/pages/usuarios/Roles';
-import { Usuarios } from './components/pages/usuarios/Usuarios';
-import { Accesos } from './components/pages/usuarios/Accesos';
-
-// Compras
-import { Proveedores } from './components/pages/compras/Proveedores';
-import { Compras } from './components/pages/compras/Compras';
-import { Productos } from './components/pages/compras/Productos';
-import { Categorias } from './components/pages/compras/Categorias';
-
-// Producción
-import { Insumos } from './components/pages/produccion/Insumos';
-import { Produccion } from './components/pages/produccion/Produccion';
-
-// Ventas
-import { Clientes } from './components/pages/ventas/Clientes';
-import { Ventas } from './components/pages/ventas/Ventas';
-import { Abonos } from './components/pages/ventas/Abonos';
-import { Pedidos } from './components/pages/ventas/Pedidos';
-import { Domicilios } from './components/pages/ventas/Domicilios';
-
-// Cliente
-import { TiendaCliente } from './components/pages/cliente/TiendaCliente';
-import { MisPedidos } from './components/pages/cliente/MisPedidos';
-import { MiPerfil } from './components/pages/cliente/MiPerfil';
+const DashboardPage = lazy(() => import('./components/pages/Dashboard').then((module) => ({ default: module.Dashboard })));
+const RolesPage = lazy(() => import('./components/pages/usuarios/Roles').then((module) => ({ default: module.Roles })));
+const UsuariosPage = lazy(() => import('./components/pages/usuarios/Usuarios').then((module) => ({ default: module.Usuarios })));
+const AccesosPage = lazy(() => import('./components/pages/usuarios/Accesos').then((module) => ({ default: module.Accesos })));
+const ProveedoresPage = lazy(() => import('./components/pages/compras/Proveedores').then((module) => ({ default: module.Proveedores })));
+const ComprasPage = lazy(() => import('./components/pages/compras/Compras').then((module) => ({ default: module.Compras })));
+const ProductosPage = lazy(() => import('./components/pages/compras/Productos').then((module) => ({ default: module.Productos })));
+const CategoriasPage = lazy(() => import('./components/pages/compras/Categorias').then((module) => ({ default: module.Categorias })));
+const InsumosPage = lazy(() => import('./components/pages/produccion/Insumos').then((module) => ({ default: module.Insumos })));
+const ProduccionPage = lazy(() => import('./components/pages/produccion/Produccion').then((module) => ({ default: module.Produccion })));
+const ClientesPage = lazy(() => import('./components/pages/ventas/Clientes').then((module) => ({ default: module.Clientes })));
+const VentasPage = lazy(() => import('./components/pages/ventas/Ventas').then((module) => ({ default: module.Ventas })));
+const AbonosPage = lazy(() => import('./components/pages/ventas/Abonos').then((module) => ({ default: module.Abonos })));
+const PedidosPage = lazy(() => import('./components/pages/ventas/Pedidos').then((module) => ({ default: module.Pedidos })));
+const DomiciliosPage = lazy(() => import('./components/pages/ventas/Domicilios').then((module) => ({ default: module.Domicilios })));
+const TiendaClientePage = lazy(() => import('./components/pages/cliente/TiendaCliente').then((module) => ({ default: module.TiendaCliente })));
+const MisPedidosPage = lazy(() => import('./components/pages/cliente/MisPedidos').then((module) => ({ default: module.MisPedidos })));
+const MiPerfilPage = lazy(() => import('./components/pages/cliente/MiPerfil').then((module) => ({ default: module.MiPerfil })));
 
 const pageComponents: { [key: string]: React.ComponentType } = {
-  '/': Dashboard,
-  '/dashboard': Dashboard,
-  '/medicion': Dashboard,
-  '/usuarios/roles': Roles,
-  '/usuarios/usuarios': Usuarios,
-  '/usuarios/accesos': Accesos,
-  '/compras/proveedores': Proveedores,
-  '/compras/compras': Compras,
-  '/compras/productos': Productos,
-  '/compras/categorias': Categorias,
-  '/produccion/insumos': Insumos,
-  '/produccion/produccion': Produccion,
-  '/ventas/clientes': Clientes,
-  '/ventas/ventas': Ventas,
-  '/ventas/abonos': Abonos,
-  '/ventas/pedidos': Pedidos,
-  '/ventas/domicilios': Domicilios,
-  '/configuracion/roles': Roles,
-  '/cliente/tienda': TiendaCliente,
-  '/cliente/pedidos': MisPedidos,
-  '/cliente/perfil': MiPerfil
+  '/': DashboardPage,
+  '/dashboard': DashboardPage,
+  '/medicion': DashboardPage,
+  '/usuarios/roles': RolesPage,
+  '/usuarios/usuarios': UsuariosPage,
+  '/usuarios/accesos': AccesosPage,
+  '/compras/proveedores': ProveedoresPage,
+  '/compras/compras': ComprasPage,
+  '/compras/productos': ProductosPage,
+  '/compras/categorias': CategoriasPage,
+  '/produccion/insumos': InsumosPage,
+  '/produccion/produccion': ProduccionPage,
+  '/ventas/clientes': ClientesPage,
+  '/ventas/ventas': VentasPage,
+  '/ventas/abonos': AbonosPage,
+  '/ventas/pedidos': PedidosPage,
+  '/ventas/domicilios': DomiciliosPage,
+  '/configuracion/roles': RolesPage,
+  '/cliente/tienda': TiendaClientePage,
+  '/cliente/pedidos': MisPedidosPage,
+  '/cliente/perfil': MiPerfilPage
 };
 
 const pageTitles: { [key: string]: string } = {
@@ -125,6 +114,14 @@ function GlobalLoadingOverlay() {
   );
 }
 
+function PageLoadingFallback() {
+  return (
+    <div className="rounded-xl border border-border bg-white p-6">
+      <p className="text-sm text-muted-foreground">Cargando modulo...</p>
+    </div>
+  );
+}
+
 function AppContent() {
   const [currentPath, setCurrentPath] = useState<string>('');
   const [isApiLoading, setIsApiLoading] = useState(false);
@@ -132,7 +129,7 @@ function AppContent() {
   const showTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const shownAtRef = React.useRef<number | null>(null);
-  const { user, login, logout, hasPermission } = useAuth();
+  const { user, isAuthLoading, sessionWarningVersion, login, logout, hasPermission } = useAuth();
   const { showAlert, AlertComponent } = useAlertDialog();
 
   // Asegura landing consistente al iniciar sesion/cambiar de rol.
@@ -153,6 +150,19 @@ function AppContent() {
 
     return unsubscribe;
   }, []);
+
+  React.useEffect(() => {
+    if (!user || sessionWarningVersion === 0) return;
+
+    showAlert({
+      title: 'Tu sesion cerrara pronto',
+      description: 'Por seguridad, tu sesion expirara en aproximadamente 30 segundos. Guarda cualquier cambio pendiente.',
+      type: 'info',
+      onConfirm: () => {},
+      confirmText: 'Entendido',
+      cancelText: 'Cerrar',
+    });
+  }, [sessionWarningVersion, user?.id, showAlert]);
 
   React.useEffect(() => {
     const showDelayMs = 60;
@@ -230,6 +240,15 @@ function AppContent() {
     return false;
   };
 
+  if (isAuthLoading) {
+    return (
+      <>
+        {AlertComponent}
+        <GlobalLoadingOverlay />
+      </>
+    );
+  }
+
   // Si no está autenticado, mostrar pantalla de login
   if (!user) {
     return (
@@ -241,7 +260,7 @@ function AppContent() {
     );
   }
 
-  const CurrentPage = pageComponents[currentPath] || (user.rol === 'Cliente' ? TiendaCliente : Dashboard);
+  const CurrentPage = pageComponents[currentPath] || (user.rol === 'Cliente' ? TiendaClientePage : DashboardPage);
   const pageTitle = pageTitles[currentPath] || 'Grandma\'s Liqueurs';
 
   return (
@@ -252,7 +271,9 @@ function AppContent() {
         <Header title={pageTitle} userName={`${user.nombre} ${user.apellido}`} userRole={user.rol} onLogout={logout} />
         
         <main className="flex-1 overflow-y-auto p-6">
-          <CurrentPage />
+          <Suspense fallback={<PageLoadingFallback />}>
+            <CurrentPage />
+          </Suspense>
         </main>
       </div>
       {AlertComponent}

@@ -15,23 +15,24 @@ const produccionRoutes = require('./produccion.routes');
 const rolesRoutes = require('./roles.routes');
 const usuariosRoutes = require('./usuarios.routes');
 const authRoutes = require('./auth.routes');
+const { authenticateJWT } = require('../middlewares/auth.middleware');
 
 const router = express.Router();
 
-router.use('/api/categorias', categoriasRoutes);
-router.use('/api/productos', productosRoutes);
-router.use('/api/clientes', clientesRoutes);
-router.use('/api/proveedores', proveedoresRoutes);
-router.use('/api/pedidos', pedidosRoutes);
-router.use('/api/ventas', ventasRoutes);
-router.use('/api/abonos', abonosRoutes);
-router.use('/api/domicilios', domiciliosRoutes);
-router.use('/api/compras', comprasRoutes);
-router.use('/api/insumos', insumosRoutes);
-router.use('/api/entregas-insumos', entregasInsumosRoutes);
-router.use('/api/produccion', produccionRoutes);
-router.use('/api/roles', rolesRoutes);
-router.use('/api/usuarios', usuariosRoutes);
 router.use('/api/auth', authRoutes);
+router.use('/api/categorias', authenticateJWT, categoriasRoutes);
+router.use('/api/productos', authenticateJWT, productosRoutes);
+router.use('/api/clientes', authenticateJWT, clientesRoutes);
+router.use('/api/proveedores', authenticateJWT, proveedoresRoutes);
+router.use('/api/pedidos', authenticateJWT, pedidosRoutes);
+router.use('/api/ventas', authenticateJWT, ventasRoutes);
+router.use('/api/abonos', authenticateJWT, abonosRoutes);
+router.use('/api/domicilios', authenticateJWT, domiciliosRoutes);
+router.use('/api/compras', authenticateJWT, comprasRoutes);
+router.use('/api/insumos', authenticateJWT, insumosRoutes);
+router.use('/api/entregas-insumos', authenticateJWT, entregasInsumosRoutes);
+router.use('/api/produccion', authenticateJWT, produccionRoutes);
+router.use('/api/roles', authenticateJWT, rolesRoutes);
+router.use('/api/usuarios', authenticateJWT, usuariosRoutes);
 
 module.exports = router;
