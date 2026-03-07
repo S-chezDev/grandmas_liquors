@@ -1,5 +1,6 @@
-const models = require('../../models/entities.models');
+const models = require('../models/entities.models');
 const bcrypt = require('bcryptjs');
+const { normalizeUsuarioPayload } = require('./normalizador-http');
 
 module.exports = {
   getAll: async (req, res) => {
@@ -39,23 +40,30 @@ module.exports = {
   },
   create: async (req, res) => {
     try {
-      const existingEmail = await models.Usuarios.getByEmail(req.body.email);
+      const normalized = normalizeUsuarioPayload(req.body);
+      if (normalized.error) {
+        return res.status(400).json({ success: false, message: normalized.error });
+      }
+
+      const payload = normalized.data;
+
+      const existingEmail = await models.Usuarios.getByEmail(payload.email);
       if (existingEmail) {
         return res.status(409).json({ success: false, message: 'El correo ya esta registrado' });
       }
 
-      const existingDoc = await models.Usuarios.getByDocumento(req.body.documento);
+      const existingDoc = await models.Usuarios.getByDocumento(payload.documento);
       if (existingDoc) {
         return res.status(409).json({ success: false, message: 'El documento ya esta registrado' });
       }
 
-      const plainPassword = req.body.password || req.body.password_hash;
+      const plainPassword = payload.password || payload.password_hash;
       if (!plainPassword || typeof plainPassword !== 'string') {
         return res.status(400).json({ success: false, message: 'La contrasena es obligatoria' });
       }
 
       const password_hash = await bcrypt.hash(plainPassword, 10);
-      const id = await models.Usuarios.create({ ...req.body, password_hash });
+      const id = await models.Usuarios.create({ ...payload, password_hash });
       res.status(201).json({ success: true, id, message: 'Usuario creado exitosamente' });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -63,9 +71,14 @@ module.exports = {
   },
   update: async (req, res) => {
     try {
-      await models.Usuarios.update(req.params.id, req.body);
-      if (req.body.password && typeof req.body.password === 'string') {
-        const newHash = await bcrypt.hash(req.body.password, 10);
+      const normalized = normalizeUsuarioPayload(req.body);
+      if (normalized.error) {
+        return res.status(400).json({ success: false, message: normalized.error });
+      }
+
+      await models.Usuarios.update(req.params.id, normalized.data);
+      if (normalized.data.password && typeof normalized.data.password === 'string') {
+        const newHash = await bcrypt.hash(normalized.data.password, 10);
         await models.Usuarios.updatePasswordHash(req.params.id, newHash);
       }
       res.json({ success: true, message: 'Usuario actualizado exitosamente' });
@@ -105,3 +118,4 @@ module.exports = {
     }
   }
 };
+

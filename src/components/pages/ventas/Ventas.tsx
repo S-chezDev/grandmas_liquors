@@ -160,7 +160,7 @@ export function Ventas() {
       description: `¿Está seguro de anular la venta ${venta.numero_venta}? Esta acción no se puede deshacer.`,
       onConfirm: async () => {
         try {
-          await ventasAPI.update(venta.id, { estado: 'Anulada' });
+          await ventasAPI.update(venta.id, { estado: 'Cancelada' });
           await loadVentas();
         } catch (error) {
           console.error('Error al anular venta:', error);
@@ -243,7 +243,30 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
           total: formData.items.reduce((acc, item) => acc + item.subtotal, 0),
           estado: 'Completada'
         };
-        await ventasAPI.create(newVenta);
+
+        const createResult: any = await ventasAPI.create(newVenta);
+        const ventaId = Number(createResult?.id);
+
+        if (!ventaId) {
+          throw new Error('No se obtuvo el id de la venta creada');
+        }
+
+        await Promise.all(
+          formData.items.map((item) => {
+            const productoSeleccionado = productos.find((p) => p.nombre === item.producto);
+            if (!productoSeleccionado) {
+              throw new Error(`No se pudo resolver el producto para el item: ${item.producto}`);
+            }
+
+            return ventasAPI.addProducto({
+              ventaId,
+              productoId: Number(productoSeleccionado.id),
+              cantidad: Number(item.cantidad),
+              precioUnitario: Number(item.precio_unitario),
+            });
+          })
+        );
+
         await loadVentas();
         setIsModalOpen(false);
         setFormData({

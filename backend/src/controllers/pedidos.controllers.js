@@ -1,4 +1,4 @@
-const models = require('../../models/entities.models');
+const models = require('../models/entities.models');
 
 module.exports = {
   getAll: async (req, res) => {
@@ -15,6 +15,14 @@ module.exports = {
       if (!pedido) return res.status(404).json({ success: false, message: 'Pedido no encontrado' });
       const detalles = await models.Pedidos.getDetalles(req.params.id);
       res.json({ success: true, data: { ...pedido, detalles } });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  },
+  getByCliente: async (req, res) => {
+    try {
+      const pedidos = await models.Pedidos.getByCliente(req.params.clienteId);
+      res.json({ success: true, data: pedidos });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
     }
@@ -53,3 +61,4 @@ module.exports = {
     }
   }
 };
+

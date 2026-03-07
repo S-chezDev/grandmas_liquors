@@ -3,6 +3,7 @@ import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { AuthProvider, useAuth } from './components/AuthContext';
 import { useAlertDialog } from './components/AlertDialog';
+import { subscribeApiLoading } from './services/api';
 
 // Login
 import { Login } from './components/pages/Login';
@@ -85,21 +86,124 @@ const pageTitles: { [key: string]: string } = {
   '/cliente/perfil': 'Mi Perfil'
 };
 
+function GlobalLoadingOverlay() {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[#2A0A14]/25 backdrop-blur-[1.5px]"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <div className="flex items-center justify-center rounded-2xl border border-[#7A1F3D]/25 bg-white/95 p-6 shadow-2xl">
+        <div className="relative h-14 w-14" style={{ willChange: 'transform' }}>
+          <div className="absolute inset-0 rounded-full border border-[#7A1F3D]/20" />
+          <div className="absolute inset-[1px] rounded-full border-[3px] border-[#7A1F3D]/18 border-t-[#7A1F3D] animate-spin motion-reduce:animate-none" />
+          <div
+            className="absolute inset-0 rounded-full animate-spin motion-reduce:animate-none"
+            style={{
+              background:
+                'conic-gradient(from 0deg, rgba(122,31,61,0.08) 0deg, rgba(122,31,61,0.25) 200deg, rgba(122,31,61,0.95) 325deg, rgba(122,31,61,0.08) 360deg)',
+              WebkitMask: 'radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 5px))',
+              mask: 'radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 5px))',
+            }}
+          />
+          <div
+            className="absolute inset-[4px] rounded-full motion-reduce:[animation:none]"
+            style={{
+              animation: 'spin 1.8s linear infinite reverse',
+              background:
+                'conic-gradient(from 0deg, rgba(122,31,61,0.06) 0deg, rgba(122,31,61,0.18) 190deg, rgba(122,31,61,0.62) 312deg, rgba(122,31,61,0.06) 360deg)',
+              WebkitMask: 'radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px))',
+              mask: 'radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px))',
+            }}
+          />
+          <div className="absolute inset-[19px] rounded-full bg-[#7A1F3D]/12" />
+        </div>
+        <span className="sr-only">Cargando, por favor espera</span>
+      </div>
+    </div>
+  );
+}
+
 function AppContent() {
   const [currentPath, setCurrentPath] = useState<string>('');
+  const [isApiLoading, setIsApiLoading] = useState(false);
+  const [isGlobalLoadingVisible, setIsGlobalLoadingVisible] = useState(false);
+  const showTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hideTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const shownAtRef = React.useRef<number | null>(null);
   const { user, login, logout, hasPermission } = useAuth();
   const { showAlert, AlertComponent } = useAlertDialog();
 
-  // Establecer ruta inicial basada en el rol del usuario
+  // Asegura landing consistente al iniciar sesion/cambiar de rol.
   React.useEffect(() => {
-    if (user && !currentPath) {
-      if (user.rol === 'Cliente') {
-        setCurrentPath('/cliente/tienda');
-      } else {
-        setCurrentPath('/dashboard');
+    if (!user) {
+      setCurrentPath('');
+      return;
+    }
+
+    const defaultPath = user.rol === 'Cliente' ? '/cliente/tienda' : '/dashboard';
+    setCurrentPath(defaultPath);
+  }, [user?.id, user?.rol]);
+
+  React.useEffect(() => {
+    const unsubscribe = subscribeApiLoading((loading) => {
+      setIsApiLoading(loading);
+    });
+
+    return unsubscribe;
+  }, []);
+
+  React.useEffect(() => {
+    const showDelayMs = 60;
+    const minVisibleMs = 300;
+
+    const clearShowTimer = () => {
+      if (showTimerRef.current) {
+        clearTimeout(showTimerRef.current);
+        showTimerRef.current = null;
+      }
+    };
+
+    const clearHideTimer = () => {
+      if (hideTimerRef.current) {
+        clearTimeout(hideTimerRef.current);
+        hideTimerRef.current = null;
+      }
+    };
+
+    if (isApiLoading) {
+      clearHideTimer();
+
+      if (!isGlobalLoadingVisible && !showTimerRef.current) {
+        showTimerRef.current = setTimeout(() => {
+          shownAtRef.current = Date.now();
+          setIsGlobalLoadingVisible(true);
+          showTimerRef.current = null;
+        }, showDelayMs);
+      }
+    } else {
+      clearShowTimer();
+
+      if (isGlobalLoadingVisible) {
+        const shownAt = shownAtRef.current ?? Date.now();
+        const elapsed = Date.now() - shownAt;
+        const remaining = Math.max(0, minVisibleMs - elapsed);
+
+        clearHideTimer();
+        hideTimerRef.current = setTimeout(() => {
+          setIsGlobalLoadingVisible(false);
+          shownAtRef.current = null;
+          hideTimerRef.current = null;
+        }, remaining);
       }
     }
-  }, [user, currentPath]);
+
+    return () => {
+      clearShowTimer();
+      clearHideTimer();
+    };
+  }, [isApiLoading, isGlobalLoadingVisible]);
 
   const handleNavigate = (path: string) => {
     // Verificar si el usuario tiene permiso para acceder a esta ruta
@@ -128,7 +232,13 @@ function AppContent() {
 
   // Si no está autenticado, mostrar pantalla de login
   if (!user) {
-    return <Login onLogin={handleLogin} />;
+    return (
+      <>
+        <Login onLogin={handleLogin} />
+        {AlertComponent}
+        {isGlobalLoadingVisible && <GlobalLoadingOverlay />}
+      </>
+    );
   }
 
   const CurrentPage = pageComponents[currentPath] || (user.rol === 'Cliente' ? TiendaCliente : Dashboard);
@@ -146,6 +256,8 @@ function AppContent() {
         </main>
       </div>
       {AlertComponent}
+
+      {isGlobalLoadingVisible && <GlobalLoadingOverlay />}
     </div>
   );
 }

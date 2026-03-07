@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   ChevronDown, 
-  ChevronRight, 
   Users, 
   ShoppingCart, 
   Package, 
@@ -152,7 +151,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
-  const [expandedItems, setExpandedItems] = useState<string[]>(['Usuarios', 'Compras', 'Ventas', 'Configuración']);
+  const [expandedItems, setExpandedItems] = useState<string[]>([]);
   const [isCollapsed, setIsCollapsed] = useState(true);
   const [isConfigDropdownOpen, setIsConfigDropdownOpen] = useState(false);
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
@@ -170,6 +169,11 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
     type: 'info' as 'warning' | 'info' | 'success' | 'danger',
     onConfirm: () => {}
   });
+
+  // Al iniciar sesion con cualquier usuario, los menus desplegables deben iniciar cerrados.
+  useEffect(() => {
+    setExpandedItems([]);
+  }, [user?.email]);
 
   const toggleItem = (itemName: string) => {
     setExpandedItems(prev =>
@@ -258,24 +262,25 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
 
   return (
     <div 
-      className={`bg-sidebar text-sidebar-foreground h-screen flex flex-col border-r border-sidebar-border transition-all duration-300 ${
+      className={`bg-sidebar text-sidebar-foreground h-screen flex flex-col border-r border-sidebar-border overflow-hidden transition-[width] ease-[cubic-bezier(0.22,1,0.36,1)] ${
         isCollapsed ? 'w-16' : 'w-64'
       }`}
+      style={{ transitionDuration: '430ms' }}
+      onMouseEnter={() => setIsCollapsed(false)}
+      onMouseLeave={() => setIsCollapsed(true)}
     >
       {/* Header */}
       <div className="p-4 border-b border-sidebar-border">
-        {!isCollapsed && (
+        {isCollapsed ? (
+          <div className="flex flex-col items-center justify-center py-1 select-none">
+            <span className="text-sidebar-foreground text-sm font-extrabold tracking-wide">GL</span>
+          </div>
+        ) : (
           <div className="mb-2">
             <h2 className="text-sidebar-foreground">Grandma's Liqueurs</h2>
             <p className="text-sm text-sidebar-foreground/70">Sistema de Gestión</p>
           </div>
         )}
-        <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="w-full flex items-center justify-center p-2 hover:bg-sidebar-accent rounded-lg transition-colors"
-        >
-          <ChevronRight className={`w-5 h-5 transition-transform ${isCollapsed ? '' : 'rotate-180'}`} />
-        </button>
       </div>
 
       {/* Menu Items */}
@@ -286,10 +291,12 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
               <>
                 <button
                   onClick={() => toggleItem(item.name)}
-                  className="w-full flex items-center gap-3 px-3 py-2 hover:bg-sidebar-accent rounded-lg transition-colors group"
+                  className={`w-full flex items-center px-3 py-2 hover:bg-sidebar-accent rounded-lg transition-colors group ${
+                    isCollapsed ? 'justify-center' : 'justify-start gap-3'
+                  }`}
                   title={isCollapsed ? item.name : ''}
                 >
-                  <span className="text-sidebar-foreground">{item.icon}</span>
+                  <span className="text-sidebar-foreground w-5 h-5 flex items-center justify-center shrink-0">{item.icon}</span>
                   {!isCollapsed && (
                     <>
                       <span className="flex-1 text-left text-sidebar-foreground">{item.name}</span>
@@ -323,14 +330,16 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
             ) : (
               <button
                 onClick={() => item.path && onNavigate(item.path)}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                className={`w-full flex items-center px-3 py-2 rounded-lg transition-colors ${
                   currentPath === item.path
                     ? 'bg-sidebar-primary text-sidebar-primary-foreground'
                     : 'hover:bg-sidebar-accent text-sidebar-foreground'
+                } ${
+                  isCollapsed ? 'justify-center' : 'justify-start gap-3'
                 }`}
                 title={isCollapsed ? item.name : ''}
               >
-                <span>{item.icon}</span>
+                <span className="w-5 h-5 flex items-center justify-center shrink-0">{item.icon}</span>
                 {!isCollapsed && <span>{item.name}</span>}
               </button>
             )}
@@ -344,10 +353,12 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
           <div className="mb-1">
             <button
               onClick={() => toggleItem(configurationItem.name)}
-              className="w-full flex items-center gap-3 px-3 py-2 hover:bg-sidebar-accent rounded-lg transition-colors group"
+              className={`w-full flex items-center px-3 py-2 hover:bg-sidebar-accent rounded-lg transition-colors group ${
+                isCollapsed ? 'justify-center' : 'justify-start gap-3'
+              }`}
               title={isCollapsed ? configurationItem.name : ''}
             >
-              <span className="text-sidebar-foreground">{configurationItem.icon}</span>
+              <span className="text-sidebar-foreground w-5 h-5 flex items-center justify-center shrink-0">{configurationItem.icon}</span>
               {!isCollapsed && (
                 <>
                   <span className="flex-1 text-left text-sidebar-foreground">{configurationItem.name}</span>
@@ -388,10 +399,12 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
             <div className="relative">
               <button
                 onClick={() => setIsConfigDropdownOpen(!isConfigDropdownOpen)}
-                className="w-full flex items-center gap-3 px-3 py-2 hover:bg-sidebar-accent rounded-lg transition-colors group"
+                className={`w-full flex items-center px-3 py-2 hover:bg-sidebar-accent rounded-lg transition-colors group ${
+                  isCollapsed ? 'justify-center' : 'justify-start gap-3'
+                }`}
                 title={isCollapsed ? simpleConfigurationItem.name : ''}
               >
-                <span className="text-sidebar-foreground">{simpleConfigurationItem.icon}</span>
+                <span className="text-sidebar-foreground w-5 h-5 flex items-center justify-center shrink-0">{simpleConfigurationItem.icon}</span>
                 {!isCollapsed && (
                   <span className="flex-1 text-left text-sidebar-foreground">{simpleConfigurationItem.name}</span>
                 )}

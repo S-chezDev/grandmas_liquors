@@ -12,6 +12,35 @@ const API_BASE_URLS = [
   'http://localhost:3002',
 ].filter(Boolean);
 
+type LoadingListener = (isLoading: boolean) => void;
+
+let activeApiRequests = 0;
+const loadingListeners = new Set<LoadingListener>();
+
+const notifyLoadingListeners = () => {
+  const isLoading = activeApiRequests > 0;
+  loadingListeners.forEach((listener) => listener(isLoading));
+};
+
+const beginApiRequest = () => {
+  activeApiRequests += 1;
+  notifyLoadingListeners();
+};
+
+const endApiRequest = () => {
+  activeApiRequests = Math.max(0, activeApiRequests - 1);
+  notifyLoadingListeners();
+};
+
+export const subscribeApiLoading = (listener: LoadingListener) => {
+  loadingListeners.add(listener);
+  listener(activeApiRequests > 0);
+
+  return () => {
+    loadingListeners.delete(listener);
+  };
+};
+
 /**
  * Función genérica para hacer peticiones HTTP
  */
@@ -20,6 +49,8 @@ export const apiCall = async (
   method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET',
   data?: any
 ) => {
+  beginApiRequest();
+
   const options: RequestInit = {
     method,
     headers: {
@@ -33,36 +64,42 @@ export const apiCall = async (
 
   let lastError: unknown;
 
-  for (const baseUrl of API_BASE_URLS) {
-    try {
-      const response = await fetch(`${baseUrl}${endpoint}`, options);
+  try {
+    for (const baseUrl of API_BASE_URLS) {
+      try {
+        const response = await fetch(`${baseUrl}${endpoint}`, options);
 
-      if (!response.ok) {
-        const httpError: any = new Error(`API Error: ${response.status} ${response.statusText}`);
-        httpError.isHttpError = true;
-        throw httpError;
+        if (!response.ok) {
+          const httpError: any = new Error(`API Error: ${response.status} ${response.statusText}`);
+          httpError.isHttpError = true;
+          httpError.status = response.status;
+          httpError.statusText = response.statusText;
+          throw httpError;
+        }
+
+        const result = await response.json();
+
+        // El backend devuelve { success: true, data: [...] }
+        // Extraemos solo el campo 'data' para los componentes
+        if (result.success && result.data !== undefined) {
+          return result.data;
+        }
+
+        // Si no tiene la estructura esperada, devolver el resultado completo
+        return result;
+      } catch (error) {
+        if ((error as any)?.isHttpError) {
+          throw error;
+        }
+        lastError = error;
       }
-
-      const result = await response.json();
-
-      // El backend devuelve { success: true, data: [...] }
-      // Extraemos solo el campo 'data' para los componentes
-      if (result.success && result.data !== undefined) {
-        return result.data;
-      }
-
-      // Si no tiene la estructura esperada, devolver el resultado completo
-      return result;
-    } catch (error) {
-      if ((error as any)?.isHttpError) {
-        throw error;
-      }
-      lastError = error;
     }
-  }
 
-  console.error(`Error en petición a ${endpoint}:`, lastError);
-  throw lastError;
+    console.error(`Error en petición a ${endpoint}:`, lastError);
+    throw lastError;
+  } finally {
+    endApiRequest();
+  }
 };
 
 const toNumberOrUndefined = (value: any): number | undefined => {
@@ -76,9 +113,31 @@ const toNumberOrZero = (value: any): number => {
   return parsed ?? 0;
 };
 
+const normalizeTipoDocumento = (value: any): any => {
+  if (typeof value !== 'string') return value;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'pp' || normalized === 'pasaporte') return 'Pasaporte';
+  return value;
+};
+
+const normalizeVentaEstado = (value: any): any => {
+  if (typeof value !== 'string') return value;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'anulada' || normalized === 'anulado') return 'Cancelada';
+  return value;
+};
+
+const normalizeAbonoEstado = (value: any): any => {
+  if (typeof value !== 'string') return value;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'activo') return 'Registrado';
+  if (normalized === 'anulado' || normalized === 'anulada') return 'Cancelado';
+  return value;
+};
+
 const normalizeClientePayload = (data: any) => ({
   ...data,
-  tipoDocumento: data?.tipoDocumento ?? data?.tipo_documento,
+  tipoDocumento: normalizeTipoDocumento(data?.tipoDocumento ?? data?.tipo_documento),
   estado: data?.estado ?? 'Activo',
 });
 
@@ -111,7 +170,18 @@ const normalizeVentaPayload = (data: any) => ({
   fecha: data?.fecha ?? new Date().toISOString().split('T')[0],
   metodopago: data?.metodopago ?? data?.metodoPago ?? data?.metodo_pago,
   total: toNumberOrZero(data?.total),
-  estado: data?.estado ?? 'Completada',
+  estado: normalizeVentaEstado(data?.estado ?? 'Completada'),
+});
+
+const normalizeAbonoPayload = (data: any) => ({
+  ...data,
+  numero_abono: data?.numero_abono ?? `ABO-${Date.now()}`,
+  pedido_id: toNumberOrZero(data?.pedido_id ?? data?.pedidoId),
+  cliente_id: toNumberOrZero(data?.cliente_id ?? data?.clienteId),
+  monto: toNumberOrZero(data?.monto),
+  fecha: data?.fecha ?? new Date().toISOString().split('T')[0],
+  metodo_pago: data?.metodo_pago ?? data?.metodoPago ?? data?.metodopago,
+  estado: normalizeAbonoEstado(data?.estado ?? 'Registrado'),
 });
 
 const normalizeDomicilioPayload = async (data: any) => {
@@ -266,6 +336,8 @@ export const productos = {
 export const clientes = {
   getAll: () => apiCall('/api/clientes'),
   getById: (id: number) => apiCall(`/api/clientes/${id}`),
+  getByEmail: (email: string) => apiCall(`/api/clientes/email/${encodeURIComponent(email)}`),
+  getByUsuarioId: (usuarioId: number) => apiCall(`/api/clientes/usuario/${usuarioId}`),
   getByDocumento: (documento: string) =>
     apiCall(`/api/clientes/documento/${documento}`),
   create: (data: {
@@ -313,6 +385,7 @@ export const proveedores = {
 // ==================== PEDIDOS ====================
 export const pedidos = {
   getAll: () => apiCall('/api/pedidos'),
+  getByCliente: (clienteId: number) => apiCall(`/api/pedidos/cliente/${clienteId}`),
   getById: (id: number) => apiCall(`/api/pedidos/${id}`),
   getDetalles: async (id: number) => {
     const pedido = await apiCall(`/api/pedidos/${id}`);
@@ -321,13 +394,20 @@ export const pedidos = {
       : [];
   },
   create: (data: {
-    numero_pedido: string;
+    numero_pedido?: string;
     cliente_id: number;
-    fecha: string;
+    fecha?: string;
     fecha_entrega?: string;
     detalles?: string;
+    total?: number;
     estado?: string;
   }) => apiCall('/api/pedidos', 'POST', normalizePedidoPayload(data)),
+  addProducto: (data: {
+    pedidoId: number;
+    productoId: number;
+    cantidad: number;
+    precioUnitario: number;
+  }) => apiCall('/api/pedidos/producto', 'POST', data),
   update: async (id: number, data: any) => {
     const merged = await mergeWithCurrent(`/api/pedidos/${id}`, data);
     return apiCall(`/api/pedidos/${id}`, 'PUT', normalizePedidoPayload(merged));
@@ -354,6 +434,12 @@ export const ventas = {
     total?: number;
     estado?: string;
   }) => apiCall('/api/ventas', 'POST', normalizeVentaPayload(data)),
+  addProducto: (data: {
+    ventaId: number;
+    productoId: number;
+    cantidad: number;
+    precioUnitario: number;
+  }) => apiCall('/api/ventas/producto', 'POST', data),
   update: async (id: number, data: any) => {
     const merged = await mergeWithCurrent(`/api/ventas/${id}`, data);
     return apiCall(`/api/ventas/${id}`, 'PUT', normalizeVentaPayload(merged));
@@ -375,10 +461,10 @@ export const abonos = {
     fecha: string;
     metodo_pago?: string;
     estado?: string;
-  }) => apiCall('/api/abonos', 'POST', data),
+  }) => apiCall('/api/abonos', 'POST', normalizeAbonoPayload(data)),
   update: async (id: number, data: any) => {
     const merged = await mergeWithCurrent(`/api/abonos/${id}`, data);
-    return apiCall(`/api/abonos/${id}`, 'PUT', merged);
+    return apiCall(`/api/abonos/${id}`, 'PUT', normalizeAbonoPayload(merged));
   },
   delete: (id: number) => apiCall(`/api/abonos/${id}`, 'DELETE'),
 };
@@ -428,6 +514,12 @@ export const compras = {
     total?: number;
     estado?: string;
   }) => normalizeCompraPayload(data).then((payload) => apiCall('/api/compras', 'POST', payload)),
+  addProducto: (data: {
+    compraId: number;
+    productoId: number;
+    cantidad: number;
+    precioUnitario: number;
+  }) => apiCall('/api/compras/producto', 'POST', data),
   update: async (id: number, data: any) => {
     const merged = await mergeWithCurrent(`/api/compras/${id}`, data);
     const payload = await normalizeCompraPayload(merged);

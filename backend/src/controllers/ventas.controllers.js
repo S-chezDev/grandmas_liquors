@@ -1,4 +1,5 @@
-const models = require('../../models/entities.models');
+const models = require('../models/entities.models');
+const { normalizeVentaPayload } = require('./normalizador-http');
 
 module.exports = {
   getAll: async (req, res) => {
@@ -21,7 +22,12 @@ module.exports = {
   },
   create: async (req, res) => {
     try {
-      const id = await models.Ventas.create(req.body);
+      const normalized = normalizeVentaPayload(req.body);
+      if (normalized.error) {
+        return res.status(400).json({ success: false, message: normalized.error });
+      }
+
+      const id = await models.Ventas.create(normalized.data);
       res.status(201).json({ success: true, id, message: 'Venta creada exitosamente' });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -38,7 +44,12 @@ module.exports = {
   },
   update: async (req, res) => {
     try {
-      await models.Ventas.update(req.params.id, req.body);
+      const normalized = normalizeVentaPayload(req.body);
+      if (normalized.error) {
+        return res.status(400).json({ success: false, message: normalized.error });
+      }
+
+      await models.Ventas.update(req.params.id, normalized.data);
       res.json({ success: true, message: 'Venta actualizada exitosamente' });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -53,3 +64,4 @@ module.exports = {
     }
   }
 };
+

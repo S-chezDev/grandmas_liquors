@@ -80,6 +80,7 @@ CREATE TABLE productos (
 -- ========================================
 CREATE TABLE clientes (
     id SERIAL PRIMARY KEY,
+    usuario_id INTEGER,
     nombre VARCHAR(100) NOT NULL,
     apellido VARCHAR(100) NOT NULL,
     tipo_documento VARCHAR(20) NOT NULL,
@@ -301,6 +302,10 @@ CREATE TABLE usuarios (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+ALTER TABLE clientes
+ADD CONSTRAINT fk_clientes_usuario
+FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE;
+
 -- ========================================
 -- ÍNDICES PARA MEJORAR RENDIMIENTO
 -- ========================================
@@ -324,6 +329,7 @@ CREATE INDEX idx_productos_estado ON productos(estado);
 CREATE INDEX idx_clientes_documento ON clientes(documento);
 CREATE INDEX idx_clientes_estado ON clientes(estado);
 CREATE UNIQUE INDEX idx_clientes_email_unique ON clientes(LOWER(email)) WHERE email IS NOT NULL;
+CREATE UNIQUE INDEX idx_clientes_usuario_id_unique ON clientes(usuario_id) WHERE usuario_id IS NOT NULL;
 
 -- Índices para pedidos
 CREATE INDEX idx_pedidos_cliente ON pedidos(cliente_id);
@@ -428,7 +434,81 @@ INSERT INTO clientes (nombre, apellido, tipo_documento, documento, telefono, ema
 ('Camila', 'Herrera', 'CC', '52901234', '3154321098', 'camila.herrera@email.com', 'Carrera 100 #15-30, Cali', 'Activo'),
 ('Santiago', 'Rojas', 'CC', '79012345', '3103210987', 'santiago.rojas@email.com', 'Calle 45 #29-50, Bucaramanga', 'Activo'),
 ('Isabella', 'Gómez', 'CC', '1091234567', '3202109876', 'isabella.gomez@email.com', 'Avenida 19 #102-50, Bogotá', 'Activo'),
-('Mateo', 'Silva', 'CC', '1102345678', '3151098765', 'mateo.silva@email.com', 'Carrera 70 #52-40, Medellín', 'Activo');
+('Mateo', 'Silva', 'CC', '1102345678', '3151098765', 'mateo.silva@email.com', 'Carrera 70 #52-40, Medellín', 'Activo'),
+('Ana', 'Pérez', 'CC', '1050567890', '3156543210', 'cliente@grandmas.com', 'Carrera 7 #14-25, Bogotá', 'Activo');
+
+-- Vincular perfiles cliente con usuarios cliente del sistema por correo.
+UPDATE clientes c
+SET usuario_id = u.id
+FROM usuarios u
+JOIN roles r ON r.id = u.rol_id
+WHERE r.nombre = 'Cliente'
+    AND c.email IS NOT NULL
+    AND LOWER(c.email) = LOWER(u.email);
+
+-- Mantener sincronizado el perfil cliente cuando se crea/edita un usuario Cliente.
+CREATE OR REPLACE FUNCTION sync_cliente_from_usuario()
+RETURNS TRIGGER AS $$
+DECLARE
+    cliente_role_id INTEGER;
+BEGIN
+    SELECT id INTO cliente_role_id FROM roles WHERE nombre = 'Cliente' LIMIT 1;
+
+    IF cliente_role_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    IF NEW.rol_id = cliente_role_id THEN
+        UPDATE clientes
+        SET usuario_id = NEW.id,
+                nombre = COALESCE(nombre, NEW.nombre),
+                apellido = COALESCE(apellido, NEW.apellido),
+                tipo_documento = COALESCE(tipo_documento, NEW.tipo_documento),
+                documento = COALESCE(documento, NEW.documento),
+                telefono = COALESCE(NEW.telefono, telefono),
+                direccion = COALESCE(NEW.direccion, direccion),
+                estado = COALESCE(NEW.estado, estado),
+                updated_at = CURRENT_TIMESTAMP
+        WHERE usuario_id IS NULL
+            AND email IS NOT NULL
+            AND LOWER(email) = LOWER(NEW.email);
+
+        IF NOT EXISTS (SELECT 1 FROM clientes WHERE usuario_id = NEW.id) THEN
+            INSERT INTO clientes (
+                usuario_id,
+                nombre,
+                apellido,
+                tipo_documento,
+                documento,
+                telefono,
+                email,
+                direccion,
+                estado
+            ) VALUES (
+                NEW.id,
+                NEW.nombre,
+                NEW.apellido,
+                NEW.tipo_documento,
+                NEW.documento,
+                NEW.telefono,
+                NEW.email,
+                NEW.direccion,
+                COALESCE(NEW.estado, 'Activo')
+            );
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_sync_cliente_from_usuario ON usuarios;
+
+CREATE TRIGGER trg_sync_cliente_from_usuario
+AFTER INSERT OR UPDATE OF rol_id, nombre, apellido, tipo_documento, documento, telefono, email, direccion, estado
+ON usuarios
+FOR EACH ROW
+EXECUTE FUNCTION sync_cliente_from_usuario();
 
 -- Insertar proveedores
 INSERT INTO proveedores (tipo_persona, nombre_empresa, nit, nombre, apellido, tipo_documento, numero_documento, telefono, email, direccion, estado) VALUES

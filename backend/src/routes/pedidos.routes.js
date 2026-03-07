@@ -3,6 +3,7 @@ const controller = require('../controllers/pedidos.controllers');
 
 const router = express.Router();
 router.get('/', controller.getAll);
+router.get('/cliente/:clienteId', controller.getByCliente);
 router.get('/:id', controller.getById);
 router.post('/', controller.create);
 router.post('/producto', controller.addProducto);

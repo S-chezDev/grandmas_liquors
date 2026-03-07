@@ -1,4 +1,5 @@
-const models = require('../../models/entities.models');
+const models = require('../models/entities.models');
+const { normalizeProveedorPayload } = require('./normalizador-http');
 
 module.exports = {
   getAll: async (req, res) => {
@@ -20,7 +21,12 @@ module.exports = {
   },
   create: async (req, res) => {
     try {
-      const id = await models.Proveedores.create(req.body);
+      const normalized = normalizeProveedorPayload(req.body);
+      if (normalized.error) {
+        return res.status(400).json({ success: false, message: normalized.error });
+      }
+
+      const id = await models.Proveedores.create(normalized.data);
       res.status(201).json({ success: true, id, message: 'Proveedor creado exitosamente' });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -28,7 +34,12 @@ module.exports = {
   },
   update: async (req, res) => {
     try {
-      await models.Proveedores.update(req.params.id, req.body);
+      const normalized = normalizeProveedorPayload(req.body);
+      if (normalized.error) {
+        return res.status(400).json({ success: false, message: normalized.error });
+      }
+
+      await models.Proveedores.update(req.params.id, normalized.data);
       res.json({ success: true, message: 'Proveedor actualizado exitosamente' });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -43,3 +54,4 @@ module.exports = {
     }
   }
 };
+

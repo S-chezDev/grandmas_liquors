@@ -214,8 +214,25 @@ export function Pedidos() {
         fecha_entrega: formData.fecha_entrega,
         estado: 'Pendiente' as const
       };
-      
-      await pedidosAPI.create(newPedido);
+
+      const createResult: any = await pedidosAPI.create(newPedido);
+      const pedidoId = Number(createResult?.id);
+
+      if (!pedidoId) {
+        throw new Error('No se obtuvo el id del pedido creado');
+      }
+
+      await Promise.all(
+        productosEnPedido.map((item) =>
+          pedidosAPI.addProducto({
+            pedidoId,
+            productoId: Number(item.producto_id),
+            cantidad: Number(item.cantidad),
+            precioUnitario: Number(item.precio_unitario),
+          })
+        )
+      );
+
       await loadPedidos();
       setIsCreateModalOpen(false);
       

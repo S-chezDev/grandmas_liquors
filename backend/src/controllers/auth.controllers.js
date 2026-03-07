@@ -1,6 +1,7 @@
-const models = require('../../models/entities.models');
+const models = require('../models/entities.models');
 const pool = require('../../db');
 const bcrypt = require('bcryptjs');
+const { normalizeAuthRegisterPayload } = require('./normalizador-http');
 
 module.exports = {
   login: async (req, res) => {
@@ -26,6 +27,12 @@ module.exports = {
       }
 
       const rol = usuario.rol_id ? await models.Roles.getById(usuario.rol_id) : null;
+      let clienteId = null;
+
+      if (rol?.nombre === 'Cliente') {
+        const cliente = await models.Clientes.getOrCreateByUsuarioId(usuario.id);
+        clienteId = cliente?.id || null;
+      }
 
       res.json({
         success: true,
@@ -37,6 +44,7 @@ module.exports = {
           apellido: usuario.apellido,
           rol: rol?.nombre || 'Cliente',
           rol_id: usuario.rol_id,
+          cliente_id: clienteId,
         },
       });
     } catch (error) {
@@ -48,6 +56,11 @@ module.exports = {
     const client = await pool.connect();
 
     try {
+      const normalizedRegister = normalizeAuthRegisterPayload(req.body);
+      if (normalizedRegister.error) {
+        return res.status(400).json({ success: false, message: normalizedRegister.error });
+      }
+
       const {
         tipoDocumento,
         numeroDocumento,
@@ -57,7 +70,7 @@ module.exports = {
         email,
         telefono,
         password,
-      } = req.body;
+      } = normalizedRegister.data;
 
       if (!numeroDocumento || !nombre || !apellido || !direccion || !email || !password) {
         return res.status(400).json({ success: false, message: 'Faltan campos obligatorios para el registro' });
@@ -95,14 +108,6 @@ module.exports = {
         return res.status(500).json({ success: false, message: 'No existe el rol Cliente en la base de datos' });
       }
 
-      const clienteResult = await client.query(
-        `INSERT INTO clientes
-        (nombre, apellido, tipo_documento, documento, telefono, email, direccion, estado)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, 'Activo')
-        RETURNING id`,
-        [nombre, apellido, tipoDocumento || 'CC', numeroDocumento, telefono || null, email, direccion]
-      );
-
       const passwordHash = await bcrypt.hash(password, 10);
 
       const userResult = await client.query(
@@ -113,13 +118,30 @@ module.exports = {
         [
           nombre,
           apellido,
-          tipoDocumento || 'CC',
+          tipoDocumento,
           numeroDocumento,
           direccion,
           email,
           telefono || null,
           passwordHash,
           clienteRole.rows[0].id,
+        ]
+      );
+
+      const clienteResult = await client.query(
+        `INSERT INTO clientes
+        (usuario_id, nombre, apellido, tipo_documento, documento, telefono, email, direccion, estado)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Activo')
+        RETURNING id`,
+        [
+          userResult.rows[0].id,
+          nombre,
+          apellido,
+          tipoDocumento,
+          numeroDocumento,
+          telefono || null,
+          email,
+          direccion,
         ]
       );
 
@@ -141,3 +163,4 @@ module.exports = {
     }
   },
 };
+

@@ -59,7 +59,7 @@ export function Clientes() {
   const [formData, setFormData] = useState({
     nombre: '',
     apellido: '',
-    tipo_documento: 'CC' as 'CC' | 'CE' | 'TI' | 'PP',
+    tipo_documento: 'CC' as 'CC' | 'CE' | 'TI' | 'Pasaporte',
     documento: '',
     telefono: '',
     email: '',
@@ -316,12 +316,12 @@ export function Clientes() {
               name="tipo_documento"
               type="select"
               value={formData.tipo_documento}
-              onChange={(value) => setFormData({ ...formData, tipo_documento: value as 'CC' | 'CE' | 'TI' | 'PP' })}
+              onChange={(value) => setFormData({ ...formData, tipo_documento: value as 'CC' | 'CE' | 'TI' | 'Pasaporte' })}
               options={[
                 { value: 'CC', label: 'Cédula de Ciudadanía (CC)' },
                 { value: 'CE', label: 'Cédula de Extranjería (CE)' },
                 { value: 'TI', label: 'Tarjeta de Identidad (TI)' },
-                { value: 'PP', label: 'Pasaporte (PP)' }
+                { value: 'Pasaporte', label: 'Pasaporte' }
               ]}
               required
             />

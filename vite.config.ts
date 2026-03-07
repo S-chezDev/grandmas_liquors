@@ -52,6 +52,35 @@
     build: {
       target: 'esnext',
       outDir: 'build',
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return;
+
+            if (id.includes('react-dom') || id.includes('react/jsx-runtime') || id.includes('/react/')) {
+              return 'vendor-react';
+            }
+
+            if (id.includes('@radix-ui')) {
+              return 'vendor-radix';
+            }
+
+            if (id.includes('recharts')) {
+              return 'vendor-charts';
+            }
+
+            if (id.includes('lucide-react')) {
+              return 'vendor-icons';
+            }
+
+            if (id.includes('react-hook-form')) {
+              return 'vendor-forms';
+            }
+
+            return 'vendor-misc';
+          },
+        },
+      },
     },
     server: {
       port: 3000,

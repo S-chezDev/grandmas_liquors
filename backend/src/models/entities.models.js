@@ -1,4 +1,4 @@
-const pool = require('../db');
+const pool = require('../../db');
 
 /**
  * FUNCIONES GENÉRICAS PARA CONSULTAS A LA BD POSTGRESQL
@@ -95,17 +95,112 @@ const Clientes = {
     const result = await pool.query('SELECT * FROM clientes WHERE documento = $1', [documento]);
     return result.rows[0];
   },
+  getByEmail: async (email) => {
+    const result = await pool.query('SELECT * FROM clientes WHERE email = $1', [email]);
+    return result.rows[0];
+  },
+  getByUsuarioId: async (usuarioId) => {
+    const result = await pool.query('SELECT * FROM clientes WHERE usuario_id = $1', [usuarioId]);
+    return result.rows[0];
+  },
+  getOrCreateByUsuarioId: async (usuarioId) => {
+    const existing = await pool.query('SELECT * FROM clientes WHERE usuario_id = $1', [usuarioId]);
+    if (existing.rows[0]) return existing.rows[0];
+
+    // Intentar vincular por email si existe un cliente legacy sin usuario_id.
+    const linked = await pool.query(
+      `UPDATE clientes c
+       SET usuario_id = u.id,
+           nombre = COALESCE(c.nombre, u.nombre),
+           apellido = COALESCE(c.apellido, u.apellido),
+           tipo_documento = COALESCE(c.tipo_documento, u.tipo_documento),
+           documento = COALESCE(c.documento, u.documento),
+           telefono = COALESCE(c.telefono, u.telefono),
+           direccion = COALESCE(c.direccion, u.direccion),
+           estado = COALESCE(c.estado, u.estado),
+           updated_at = CURRENT_TIMESTAMP
+       FROM usuarios u
+       JOIN roles r ON r.id = u.rol_id
+       WHERE u.id = $1
+         AND r.nombre = 'Cliente'
+         AND c.usuario_id IS NULL
+         AND c.email IS NOT NULL
+         AND LOWER(c.email) = LOWER(u.email)
+       RETURNING c.*`,
+      [usuarioId]
+    );
+    if (linked.rows[0]) return linked.rows[0];
+
+    // Crear perfil cliente si el usuario existe y su rol es Cliente.
+    const inserted = await pool.query(
+      `INSERT INTO clientes (
+         usuario_id,
+         nombre,
+         apellido,
+         tipo_documento,
+         documento,
+         telefono,
+         email,
+         direccion,
+         estado
+       )
+       SELECT
+         u.id,
+         u.nombre,
+         u.apellido,
+         u.tipo_documento,
+         u.documento,
+         u.telefono,
+         u.email,
+         u.direccion,
+         COALESCE(u.estado, 'Activo')
+       FROM usuarios u
+       JOIN roles r ON r.id = u.rol_id
+       WHERE u.id = $1
+         AND r.nombre = 'Cliente'
+         AND NOT EXISTS (SELECT 1 FROM clientes c WHERE c.usuario_id = u.id)
+       RETURNING *`,
+      [usuarioId]
+    );
+
+    if (inserted.rows[0]) return inserted.rows[0];
+
+    const fallback = await pool.query('SELECT * FROM clientes WHERE usuario_id = $1', [usuarioId]);
+    return fallback.rows[0] || null;
+  },
   create: async (data) => {
     const result = await pool.query(
-      'INSERT INTO clientes (nombre, apellido, tipo_documento, documento, telefono, email, direccion, foto_url, estado) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id',
-      [data.nombre, data.apellido, data.tipoDocumento, data.documento, data.telefono, data.email, data.direccion, data.foto_url, data.estado || 'Activo']
+      'INSERT INTO clientes (usuario_id, nombre, apellido, tipo_documento, documento, telefono, email, direccion, foto_url, estado) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
+      [data.usuario_id || null, data.nombre, data.apellido, data.tipoDocumento, data.documento, data.telefono, data.email, data.direccion, data.foto_url, data.estado || 'Activo']
     );
     return result.rows[0].id;
   },
   update: async (id, data) => {
     await pool.query(
-      'UPDATE clientes SET nombre = $1, apellido = $2, tipo_documento = $3, documento = $4, telefono = $5, email = $6, direccion = $7, estado = $8 WHERE id = $9',
-      [data.nombre, data.apellido, data.tipoDocumento, data.documento, data.telefono, data.email, data.direccion, data.estado, id]
+      `UPDATE clientes
+       SET usuario_id = COALESCE($1, usuario_id),
+           nombre = COALESCE($2, nombre),
+           apellido = COALESCE($3, apellido),
+           tipo_documento = COALESCE($4, tipo_documento),
+           documento = COALESCE($5, documento),
+           telefono = COALESCE($6, telefono),
+           email = COALESCE($7, email),
+           direccion = COALESCE($8, direccion),
+           estado = COALESCE($9, estado),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $10`,
+      [
+        data.usuario_id,
+        data.nombre,
+        data.apellido,
+        data.tipoDocumento,
+        data.documento,
+        data.telefono,
+        data.email,
+        data.direccion,
+        data.estado,
+        id,
+      ]
     );
     return true;
   },
@@ -168,6 +263,18 @@ const Pedidos = {
       WHERE p.id = $1
     `, [id]);
     return result.rows[0];
+  },
+  getByCliente: async (clienteId) => {
+    const result = await pool.query(`
+      SELECT p.*, 
+             CONCAT(c.nombre, ' ', c.apellido) as cliente,
+             c.email
+      FROM pedidos p
+      JOIN clientes c ON p.cliente_id = c.id
+      WHERE p.cliente_id = $1
+      ORDER BY p.fecha DESC, p.id DESC
+    `, [clienteId]);
+    return result.rows;
   },
   getDetalles: async (pedidoId) => {
     const result = await pool.query(`
@@ -673,3 +780,4 @@ module.exports = {
   Roles,
   Usuarios
 };
+

@@ -1,4 +1,4 @@
-const models = require('../../models/entities.models');
+const models = require('../models/entities.models');
 
 module.exports = {
   getAll: async (req, res) => {
@@ -53,3 +53,4 @@ module.exports = {
     }
   }
 };
+

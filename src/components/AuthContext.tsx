@@ -4,6 +4,7 @@ import { auth } from '../services/api';
 export type UserRole = 'Administrador' | 'Asesor' | 'Productor' | 'Repartidor' | 'Cliente';
 
 export interface User {
+  id: number;
   email: string;
   nombre: string;
   apellido: string;
@@ -79,6 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const result = await auth.login(email, password);
       if (result?.id && result?.email) {
         setUser({
+          id: Number(result.id),
           email: result.email,
           nombre: result.nombre,
           apellido: result.apellido,

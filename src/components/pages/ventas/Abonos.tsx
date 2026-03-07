@@ -49,7 +49,7 @@ export function Abonos() {
     monto: 0,
     fecha: new Date().toISOString().split('T')[0],
     metodo_pago: '',
-    estado: 'Activo'
+    estado: 'Registrado'
   });
   
   const formatCurrency = (value: number) => {
@@ -75,7 +75,7 @@ export function Abonos() {
       label: 'Estado',
       render: (estado: string) => (
         <span className={`px-3 py-1 rounded-full text-xs ${
-          estado === 'Activo' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+          estado === 'Registrado' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
         }`}>
           {estado}
         </span>
@@ -91,7 +91,7 @@ export function Abonos() {
       monto: 0, 
       fecha: new Date().toISOString().split('T')[0],
       metodo_pago: 'Efectivo',
-      estado: 'Activo'
+      estado: 'Registrado'
     });
     setIsModalOpen(true);
   };
@@ -99,7 +99,7 @@ export function Abonos() {
   const handleAnular = async (abono: Abono) => {
     if (confirm(`¿Está seguro de anular el abono ${abono.numero_abono}?`)) {
       try {
-        await abonosAPI.update(Number(abono.id), { estado: 'Anulado' });
+        await abonosAPI.update(Number(abono.id), { estado: 'Cancelado' });
         await loadAbonos();
       } catch (error) {
         console.error('Error al anular abono:', error);
