@@ -6,5 +6,6 @@
   Run `npm i` to install the dependencies.
   Run `npm run dev` to start the development server.
 
-  Proyecto de estudio Hecho por el Team #1 J.S.A.M
+  Proyecto de estudio Hecho por el Team #1 Jhonnier hernandez .Santiago sanchez jalvin .juan manuel rendon. pedro alejandro correa 
+  
   

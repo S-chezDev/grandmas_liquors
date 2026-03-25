@@ -8,7 +8,6 @@
 
 const API_BASE_URLS = [
   (import.meta as any).env?.VITE_API_URL,
-  'http://localhost:5000',
   'http://localhost:3002',
 ].filter(Boolean);
 
