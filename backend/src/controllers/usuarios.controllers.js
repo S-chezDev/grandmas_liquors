@@ -1,11 +1,33 @@
 const models = require('../models/entities.models');
 const bcrypt = require('bcryptjs');
+const pool = require('../../db');
 const { normalizeUsuarioPayload } = require('./normalizador-http');
+const { buildUsernameFromEmail, generateTempPassword, isStrongPassword } = require('../utils/credentials');
+const {
+  sendTemporaryPasswordEmail,
+  sendEmailChangeNotification,
+  sendUserStatusChangeNotification,
+} = require('../services/email.service');
 
 module.exports = {
   getAll: async (req, res) => {
     try {
-      const usuarios = await models.Usuarios.getAll();
+      const filters = {
+        includeDeleted: String(req.query?.include_deleted ?? 'true') !== 'false',
+        globalQuery: typeof req.query?.q === 'string' ? req.query.q : '',
+        rolId: req.query?.rol_id ? Number(req.query.rol_id) : null,
+        estados: typeof req.query?.estados === 'string'
+          ? req.query.estados.split(',').map((item) => item.trim()).filter(Boolean)
+          : [],
+        tiposDocumento: typeof req.query?.tipos_documento === 'string'
+          ? req.query.tipos_documento.split(',').map((item) => item.trim()).filter(Boolean)
+          : [],
+        fechaDesde: typeof req.query?.fecha_desde === 'string' ? req.query.fecha_desde : null,
+        fechaHasta: typeof req.query?.fecha_hasta === 'string' ? req.query.fecha_hasta : null,
+        limit: req.query?.limit ? Number(req.query.limit) : undefined,
+      };
+
+      const usuarios = await models.Usuarios.getAll(filters);
       res.json({ success: true, data: usuarios });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -38,6 +60,45 @@ module.exports = {
       res.status(500).json({ success: false, message: error.message });
     }
   },
+  getActivityById: async (req, res) => {
+    try {
+      const usuario = await models.Usuarios.getById(req.params.id);
+      if (!usuario) {
+        return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
+      }
+
+      const limit = Number(req.query?.limit || 80);
+      const activity = await models.Usuarios.getActivityById(req.params.id, limit);
+      return res.json({ success: true, data: activity });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  },
+  getFullDetailById: async (req, res) => {
+    try {
+      const limit = Number(req.query?.limit || 120);
+      const detail = await models.Usuarios.getFullDetailById(req.params.id, { limit });
+      if (!detail) {
+        return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
+      }
+
+      return res.json({ success: true, data: detail });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  },
+  getDeleteImpactById: async (req, res) => {
+    try {
+      const detail = await models.Usuarios.getDeletionImpact(req.params.id);
+      if (!detail) {
+        return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
+      }
+
+      return res.json({ success: true, data: detail });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  },
   create: async (req, res) => {
     try {
       const normalized = normalizeUsuarioPayload(req.body);
@@ -57,14 +118,43 @@ module.exports = {
         return res.status(409).json({ success: false, message: 'El documento ya esta registrado' });
       }
 
-      const plainPassword = payload.password || payload.password_hash;
-      if (!plainPassword || typeof plainPassword !== 'string') {
-        return res.status(400).json({ success: false, message: 'La contrasena es obligatoria' });
+      const username = await buildUsernameFromEmail(pool, payload.email);
+      const rawPassword = typeof payload.password === 'string' ? payload.password.trim() : '';
+      const useManualPassword = Boolean(rawPassword);
+
+      if (useManualPassword && !isStrongPassword(rawPassword)) {
+        return res.status(400).json({
+          success: false,
+          message: 'La contrasena debe tener minimo 8 caracteres, una mayuscula, una minuscula, un numero y un caracter especial',
+        });
       }
 
-      const password_hash = await bcrypt.hash(plainPassword, 10);
-      const id = await models.Usuarios.create({ ...payload, password_hash });
-      res.status(201).json({ success: true, id, message: 'Usuario creado exitosamente' });
+      const tempPassword = useManualPassword ? null : generateTempPassword();
+      const passwordToHash = useManualPassword ? rawPassword : tempPassword;
+      const password_hash = await bcrypt.hash(passwordToHash, 10);
+      const id = await models.Usuarios.create({ ...payload, username, password_hash, actor_id: req.user?.id || null });
+
+      if (!useManualPassword && tempPassword) {
+        void sendTemporaryPasswordEmail({
+          to: payload.email,
+          name: `${payload.nombre} ${payload.apellido}`.trim(),
+          username,
+          tempPassword,
+        }).catch((error) => {
+          console.error('Error enviando contraseña temporal:', error);
+        });
+      }
+
+      res.status(201).json({
+        success: true,
+        id,
+        message: useManualPassword
+          ? 'Usuario creado exitosamente con contrasena personalizada.'
+          : 'Usuario creado exitosamente. Se envio una contrasena temporal al correo registrado.',
+        data: {
+          username,
+        },
+      });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
     }
@@ -76,14 +166,127 @@ module.exports = {
         return res.status(400).json({ success: false, message: normalized.error });
       }
 
-      await models.Usuarios.update(req.params.id, normalized.data);
+      const currentUsuario = await models.Usuarios.getById(req.params.id);
+      if (!currentUsuario) {
+        return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
+      }
+
+      const previousEmail = currentUsuario.email;
+      const normalizedEmail =
+        typeof normalized.data.email === 'string' ? normalized.data.email.trim().toLowerCase() : null;
+      const emailChanged =
+        typeof normalized.data.email === 'string' &&
+        normalized.data.email.trim() &&
+        normalized.data.email.trim().toLowerCase() !== String(previousEmail || '').trim().toLowerCase();
+
+      if (normalizedEmail) {
+        const existingEmail = await pool.query(
+          'SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1) AND id <> $2 LIMIT 1',
+          [normalizedEmail, Number(req.params.id)]
+        );
+        if (existingEmail.rows.length > 0) {
+          return res.status(409).json({ success: false, message: 'El correo ya esta registrado' });
+        }
+      }
+
+      if (typeof normalized.data.documento === 'string' && normalized.data.documento.trim()) {
+        const existingDoc = await pool.query(
+          'SELECT id FROM usuarios WHERE documento = $1 AND id <> $2 LIMIT 1',
+          [normalized.data.documento.trim(), Number(req.params.id)]
+        );
+        if (existingDoc.rows.length > 0) {
+          return res.status(409).json({ success: false, message: 'El documento ya esta registrado' });
+        }
+      }
+
+      if (emailChanged) {
+        normalized.data.username = await buildUsernameFromEmail(pool, normalized.data.email, req.params.id);
+      }
+
+      if (normalized.data.estado && normalized.data.estado !== currentUsuario.estado) {
+        return res.status(400).json({
+          success: false,
+          message: 'El cambio de estado debe realizarse desde la opcion Cambiar Estado',
+        });
+      }
+
+      await models.Usuarios.update(req.params.id, { ...normalized.data, actor_id: req.user?.id || null });
       if (normalized.data.password && typeof normalized.data.password === 'string') {
         const newHash = await bcrypt.hash(normalized.data.password, 10);
         await models.Usuarios.updatePasswordHash(req.params.id, newHash);
       }
+
+      if (emailChanged) {
+        void sendEmailChangeNotification({
+          to: normalized.data.email,
+          name: `${normalized.data.nombre || currentUsuario.nombre || ''} ${normalized.data.apellido || currentUsuario.apellido || ''}`.trim(),
+          username: normalized.data.username || currentUsuario.username,
+          previousEmail,
+          currentEmail: normalized.data.email,
+        }).catch((error) => {
+          console.error('Error notificando cambio de correo:', error);
+        });
+      }
+
       res.json({ success: true, message: 'Usuario actualizado exitosamente' });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
+    }
+  },
+  updateStatus: async (req, res) => {
+    try {
+      const estado = typeof req.body?.estado === 'string' ? req.body.estado.trim() : '';
+      if (!['Activo', 'Inactivo'].includes(estado)) {
+        return res.status(400).json({ success: false, message: 'Estado invalido. Valores permitidos: Activo, Inactivo' });
+      }
+
+      const usuario = await models.Usuarios.getById(req.params.id);
+      if (!usuario) {
+        return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
+      }
+
+      const notificar = req.body?.notificar === true || req.body?.notificar === 'true';
+      if (!notificar) {
+        return res.status(400).json({
+          success: false,
+          message: 'La notificacion al usuario es obligatoria para cambiar estado',
+        });
+      }
+
+      if (!usuario.email) {
+        return res.status(400).json({
+          success: false,
+          message: 'El usuario no tiene correo configurado para recibir notificacion',
+        });
+      }
+
+      const updatedUser = await models.Usuarios.updateStatus(req.params.id, {
+        estado,
+        force: req.body?.force,
+        motivo: req.body?.motivo,
+        actor_id: req.user?.id || null,
+      });
+
+      await sendUserStatusChangeNotification({
+        to: updatedUser.email,
+        name: `${updatedUser.nombre || ''} ${updatedUser.apellido || ''}`.trim(),
+        username: updatedUser.username,
+        estado,
+        motivo: typeof req.body?.motivo === 'string' ? req.body.motivo.trim() : '',
+        changedBy: req.user?.email || null,
+      });
+
+      return res.json({
+        success: true,
+        message: 'Estado del usuario actualizado exitosamente',
+        data: updatedUser,
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        message: error.message,
+        details: error.details,
+      });
     }
   },
   assignRole: async (req, res) => {
@@ -111,10 +314,58 @@ module.exports = {
   },
   delete: async (req, res) => {
     try {
-      await models.Usuarios.delete(req.params.id);
-      res.json({ success: true, message: 'Usuario eliminado exitosamente' });
+      const motivo = typeof req.body?.motivo === 'string' ? req.body.motivo.trim() : '';
+      if (!motivo || motivo.length < 10) {
+        return res.status(400).json({
+          success: false,
+          message: 'El motivo de eliminacion es obligatorio y debe tener al menos 10 caracteres',
+        });
+      }
+
+      const result = await models.Usuarios.delete(req.params.id, {
+        actor_id: req.user?.id || null,
+        reason: motivo,
+        mode: req.body?.mode === 'physical' ? 'physical' : 'logical',
+        omit_validaciones: req.body?.omit_validaciones,
+      });
+      const message = result?.mode === 'physical'
+        ? 'Usuario eliminado fisicamente y respaldado exitosamente'
+        : 'Usuario eliminado logicamente exitosamente';
+      res.json({ success: true, message, data: result });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      res.status(error.statusCode || 500).json({
+        success: false,
+        message: error.message,
+        details: error.details,
+      });
+    }
+  },
+  forceResetPassword: async (req, res) => {
+    try {
+      const reason = typeof req.body?.motivo === 'string' ? req.body.motivo.trim() : 'Reset forzado por administrador';
+      const result = await models.Usuarios.forceResetPassword(req.params.id, {
+        actor_id: req.user?.id || null,
+        reason,
+      });
+
+      if (result?.user?.email) {
+        await sendTemporaryPasswordEmail({
+          to: result.user.email,
+          name: `${result.user.nombre || ''} ${result.user.apellido || ''}`.trim(),
+          username: result.user.username,
+          tempPassword: result.tempPassword,
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: 'Contraseña reseteada de forma forzada y enviada al correo del usuario',
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        message: error.message,
+      });
     }
   }
 };

@@ -37,6 +37,7 @@ const authenticateJWT = (req, res, next) => {
       rol_id: payload.rol_id,
       cliente_id: payload.cliente_id || null,
       email: payload.email,
+      session_jti: payload.jti || null,
       session_expires_at_ms: typeof payload.exp === 'number' ? payload.exp * 1000 : null,
     };
 

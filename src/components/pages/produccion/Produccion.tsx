@@ -4,6 +4,7 @@ import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
 import { Plus, Factory, FileText, X } from 'lucide-react';
+import { useAlertDialog } from '../../AlertDialog';
 import { produccion as produccionAPI } from '../../../services/api';
 
 interface OrdenProduccion {
@@ -20,6 +21,7 @@ interface OrdenProduccion {
 export function Produccion() {
   const [produccion, setProduccion] = useState<OrdenProduccion[]>([]);
   const [loading, setLoading] = useState(true);
+  const { showAlert, AlertComponent } = useAlertDialog();
 
   useEffect(() => {
     loadProduccion();
@@ -106,22 +108,41 @@ export function Produccion() {
 
   const handleCancelar = async (orden: OrdenProduccion) => {
     if (orden.estado === 'Cancelada') {
-      alert('Esta orden ya está cancelada.');
+      showAlert({
+        title: 'Orden ya cancelada',
+        description: 'Esta orden ya está cancelada.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
       return;
     }
-    if (confirm(`¿Está seguro de cancelar la orden ${orden.numero_produccion}?`)) {
-      try {
-        await produccionAPI.update(Number(orden.id), { estado: 'Cancelada' });
-        await loadProduccion();
-      } catch (error) {
-        console.error('Error:', error);
+    showAlert({
+      title: 'Confirmar cancelación',
+      description: `¿Está seguro de cancelar la orden ${orden.numero_produccion}? Esta acción no se puede deshacer.`,
+      type: 'danger',
+      confirmText: 'Cancelar orden',
+      cancelText: 'Cerrar',
+      onConfirm: async () => {
+        try {
+          await produccionAPI.update(Number(orden.id), { estado: 'Cancelada' });
+          await loadProduccion();
+        } catch (error) {
+          console.error('Error:', error);
+        }
       }
-    }
+    });
   };
 
   const handleChangeState = async (orden: OrdenProduccion) => {
     if (orden.estado === 'Cancelada') {
-      alert('No se puede cambiar el estado de una orden cancelada.');
+      showAlert({
+        title: 'Acción no permitida',
+        description: 'No se puede cambiar el estado de una orden cancelada.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
       return;
     }
     
@@ -181,12 +202,19 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
       setIsModalOpen(false);
     } catch (error) {
       console.error('Error al guardar orden:', error);
-      alert('Error al guardar la orden de producción');
+      showAlert({
+        title: 'Error',
+        description: 'No se pudo guardar la orden de producción.',
+        type: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
     }
   };
 
   return (
     <div className="space-y-6">
+      {AlertComponent}
       <div className="flex items-center justify-between">
         <div>
           <h2>Gestión de Producción</h2>

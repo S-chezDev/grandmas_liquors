@@ -44,6 +44,14 @@ const config = {
     staffTokenTtlMs: parseInt(process.env.JWT_STAFF_TTL_MS || `${3 * 60 * 60 * 1000}`, 10),
     corsOrigins: configuredCorsOrigins.length > 0 ? configuredCorsOrigins : defaultCorsOrigins,
   },
+  mail: {
+    host: process.env.MAIL_HOST || '',
+    port: parseInt(process.env.MAIL_PORT || '587', 10),
+    secure: String(process.env.MAIL_SECURE || 'false').toLowerCase() === 'true',
+    user: process.env.MAIL_USER || '',
+    password: process.env.MAIL_PASSWORD || '',
+    from: process.env.MAIL_FROM || process.env.MAIL_USER || 'no-reply@grandmas-liquors.local',
+  },
 };
 
 module.exports = config;

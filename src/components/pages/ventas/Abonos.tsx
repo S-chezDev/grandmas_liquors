@@ -4,6 +4,7 @@ import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
 import { Plus } from 'lucide-react';
+import { useAlertDialog } from '../../AlertDialog';
 import { abonos as abonosAPI, pedidos as pedidosAPI } from '../../../services/api';
 
 interface Abono {
@@ -21,6 +22,7 @@ interface Abono {
 export function Abonos() {
   const [abonos, setAbonos] = useState<Abono[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const { showAlert, AlertComponent } = useAlertDialog();
 
   useEffect(() => {
     loadAbonos();
@@ -97,14 +99,28 @@ export function Abonos() {
   };
 
   const handleAnular = async (abono: Abono) => {
-    if (confirm(`¿Está seguro de anular el abono ${abono.numero_abono}?`)) {
-      try {
-        await abonosAPI.update(Number(abono.id), { estado: 'Cancelado' });
-        await loadAbonos();
-      } catch (error) {
-        console.error('Error al anular abono:', error);
+    showAlert({
+      title: 'Confirmar anulación',
+      description: `¿Está seguro de anular el abono ${abono.numero_abono}? Esta acción no se puede deshacer.`,
+      type: 'danger',
+      confirmText: 'Anular abono',
+      cancelText: 'Cancelar',
+      onConfirm: async () => {
+        try {
+          await abonosAPI.update(Number(abono.id), { estado: 'Cancelado' });
+          await loadAbonos();
+        } catch (error) {
+          console.error('Error al anular abono:', error);
+          showAlert({
+            title: 'Error',
+            description: 'No se pudo anular el abono.',
+            type: 'danger',
+            confirmText: 'Entendido',
+            onConfirm: () => {}
+          });
+        }
       }
-    }
+    });
   };
 
   const handleGeneratePDF = (abono: Abono) => {
@@ -145,14 +161,28 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
       await abonosAPI.create(formData);
       await loadAbonos();
       setIsModalOpen(false);
+      showAlert({
+        title: 'Éxito',
+        description: 'Abono registrado correctamente.',
+        type: 'success',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
     } catch (error) {
       console.error('Error al crear abono:', error);
-      alert('Error al crear el abono');
+      showAlert({
+        title: 'Error',
+        description: 'No se pudo crear el abono.',
+        type: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
     }
   };
 
   return (
     <div className="space-y-6">
+      {AlertComponent}
       <div className="flex items-center justify-between">
         <div>
           <h2>Gestión de Abonos</h2>

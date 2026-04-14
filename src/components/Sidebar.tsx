@@ -242,23 +242,29 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
     });
   };
 
-  // Filtrar los items del menú según los permisos del usuario y rol
-  const filteredMenuItems = menuItems.filter(item => {
-    // Si el item especifica roles, verificar que el usuario tenga uno de ellos
-    if (item.roles && user && !item.roles.includes(user.rol)) {
-      return false;
-    }
-    
-    if (item.module && !hasPermission(item.module)) {
-      return false;
-    }
-    if (item.subItems) {
-      // Filtrar sub-items según permisos
-      item.subItems = item.subItems.filter(subItem => hasPermission(subItem.module));
-      return item.subItems.length > 0;
-    }
-    return true;
-  });
+  // Filtrar los items del menú según permisos reales del rol en la BD.
+  const filteredMenuItems = menuItems
+    .map((item) => {
+      const subItems = item.subItems?.filter((subItem) => hasPermission(subItem.module)) ?? [];
+      return {
+        ...item,
+        subItems: subItems.length > 0 ? subItems : undefined,
+      };
+    })
+    .filter((item) => {
+      if (!user) return false;
+
+      if (item.module && !hasPermission(item.module)) {
+        return false;
+      }
+
+      if (item.subItems) {
+        return item.subItems.length > 0;
+      }
+
+      // Items simples como Configuración para roles no admin dependen del permiso del módulo.
+      return Boolean(item.module);
+    });
 
   return (
     <div 
@@ -348,7 +354,7 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
       </nav>
 
       {/* Configuration at bottom - Para Administrador con submenú */}
-      {user && user.rol === 'Administrador' && configurationItem.roles?.includes(user.rol) && hasPermission(configurationItem.module!) && (
+      {user && hasPermission(configurationItem.module!) && (
         <div className="p-2 border-t border-sidebar-border">
           <div className="mb-1">
             <button
@@ -393,7 +399,7 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
       )}
 
       {/* Configuration at bottom - Para otros roles (simple) */}
-      {user && user.rol !== 'Administrador' && simpleConfigurationItem.roles?.includes(user.rol) && (
+      {user && user.rol !== 'Administrador' && hasPermission('configuracion') && (
         <div className="p-2 border-t border-sidebar-border">
           <div className="mb-1" ref={configDropdownRef}>
             <div className="relative">

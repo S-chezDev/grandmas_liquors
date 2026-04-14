@@ -163,8 +163,8 @@ function AppContent() {
     }
   };
 
-  const handleLogin = async (email: string, password: string): Promise<boolean> => {
-    const success = await login(email, password);
+  const handleLogin = async (email: string, password: string, rememberMe = false): Promise<boolean> => {
+    const success = await login(email, password, rememberMe);
     if (success) {
       console.log('Login exitoso');
       return true;

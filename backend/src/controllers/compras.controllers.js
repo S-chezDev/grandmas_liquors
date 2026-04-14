@@ -24,16 +24,19 @@ module.exports = {
       const id = await models.Compras.create(req.body);
       res.status(201).json({ success: true, id, message: 'Compra creada exitosamente' });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      res.status(error.statusCode || 500).json({ success: false, message: error.message, details: error.details });
     }
   },
   addProducto: async (req, res) => {
     try {
-      const { compraId, productoId, cantidad, precioUnitario } = req.body;
-      await models.Compras.addDetalle(compraId, productoId, cantidad, precioUnitario);
+      const { compraId, productoId, cantidad, precioUnitario, permisoExtraordinario, motivoPermiso } = req.body;
+      await models.Compras.addDetalle(compraId, productoId, cantidad, precioUnitario, {
+        permisoExtraordinario,
+        motivoPermiso,
+      });
       res.status(201).json({ success: true, message: 'Producto agregado a la compra' });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      res.status(error.statusCode || 500).json({ success: false, message: error.message, details: error.details });
     }
   },
   update: async (req, res) => {
@@ -41,7 +44,7 @@ module.exports = {
       await models.Compras.update(req.params.id, req.body);
       res.json({ success: true, message: 'Compra actualizada exitosamente' });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      res.status(error.statusCode || 500).json({ success: false, message: error.message, details: error.details });
     }
   },
   delete: async (req, res) => {
@@ -49,7 +52,7 @@ module.exports = {
       await models.Compras.delete(req.params.id);
       res.json({ success: true, message: 'Compra eliminada exitosamente' });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      res.status(error.statusCode || 500).json({ success: false, message: error.message, details: error.details });
     }
   }
 };

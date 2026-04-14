@@ -4,7 +4,7 @@ import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
 import { Plus, ShoppingBag, Trash2 } from 'lucide-react';
-import { AlertDialog } from '../../AlertDialog';
+import { useAlertDialog } from '../../AlertDialog';
 import { ventas as ventasAPI, clientes as clientesAPI, productos as productosAPI } from '../../../services/api';
 
 interface VentaItem {
@@ -89,12 +89,7 @@ export function Ventas() {
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
   const [pdfContent, setPdfContent] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [alertState, setAlertState] = useState({
-    isOpen: false,
-    title: '',
-    description: '',
-    onConfirm: () => {}
-  });
+  const { showAlert, AlertComponent } = useAlertDialog();
   const [formData, setFormData] = useState({
     tipo: 'Directa' as 'Directa' | 'Por Pedido',
     cliente_id: '',
@@ -154,16 +149,25 @@ export function Ventas() {
   };
 
   const handleAnular = async (venta: Venta) => {
-    setAlertState({
-      isOpen: true,
+    showAlert({
       title: 'Confirmar anulación',
       description: `¿Está seguro de anular la venta ${venta.numero_venta}? Esta acción no se puede deshacer.`,
+      type: 'danger',
+      confirmText: 'Anular venta',
+      cancelText: 'Cancelar',
       onConfirm: async () => {
         try {
           await ventasAPI.update(venta.id, { estado: 'Cancelada' });
           await loadVentas();
         } catch (error) {
           console.error('Error al anular venta:', error);
+          showAlert({
+            title: 'Error',
+            description: 'No se pudo anular la venta.',
+            type: 'danger',
+            confirmText: 'Entendido',
+            onConfirm: () => {}
+          });
         }
       }
     });
@@ -276,12 +280,31 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
           metodopago: 'Efectivo',
           items: []
         });
+        showAlert({
+          title: 'Éxito',
+          description: 'Venta guardada correctamente.',
+          type: 'success',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
       } catch (error) {
         console.error('Error al guardar venta:', error);
-        alert('Error al guardar la venta');
+        showAlert({
+          title: 'Error',
+          description: 'No se pudo guardar la venta.',
+          type: 'danger',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
       }
     } else {
-      alert('Debe seleccionar un cliente y agregar al menos un producto');
+        showAlert({
+          title: 'Datos incompletos',
+          description: 'Debe seleccionar un cliente y agregar al menos un producto.',
+          type: 'warning',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
     }
   };
 
@@ -306,6 +329,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
 
   return (
     <div className="space-y-6">
+      {AlertComponent}
       <div className="flex items-center justify-between">
         <div>
           <h2>Gestión de Ventas</h2>
@@ -565,14 +589,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         </div>
       </Modal>
 
-      <AlertDialog
-        isOpen={alertState.isOpen}
-        onClose={() => setAlertState({ isOpen: false, title: '', description: '', onConfirm: () => {} })}
-        title={alertState.title}
-        description={alertState.description}
-        onConfirm={alertState.onConfirm}
-        type="warning"
-      />
     </div>
   );
 }

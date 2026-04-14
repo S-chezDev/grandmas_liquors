@@ -6,11 +6,16 @@ interface FormFieldProps {
   type?: 'text' | 'email' | 'password' | 'number' | 'date' | 'time' | 'textarea' | 'select' | 'file';
   value?: string | number;
   onChange?: (value: string | number) => void;
+  onBlur?: () => void;
+  disabled?: boolean;
+  readOnly?: boolean;
   placeholder?: string;
   required?: boolean;
   options?: { value: string | number; label: string }[];
   rows?: number;
   accept?: string;
+  error?: string;
+  helperText?: string;
 }
 
 export function FormField({
@@ -19,13 +24,20 @@ export function FormField({
   type = 'text',
   value,
   onChange,
+  onBlur,
+  disabled = false,
+  readOnly = false,
   placeholder,
   required = false,
   options = [],
   rows = 4,
-  accept
+  accept,
+  error,
+  helperText
 }: FormFieldProps) {
-  const baseInputClasses = "w-full px-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring";
+  const baseInputClasses = `w-full px-4 py-2 bg-input-background border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring ${
+    error ? 'border-destructive focus:ring-destructive' : 'border-border'
+  }`;
 
   return (
     <div className="space-y-2">
@@ -39,9 +51,14 @@ export function FormField({
           name={name}
           value={value}
           onChange={(e) => onChange?.(e.target.value)}
+          onBlur={onBlur}
+          disabled={disabled}
+          readOnly={readOnly}
           placeholder={placeholder}
           required={required}
           rows={rows}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? `${name}-error` : helperText ? `${name}-helper` : undefined}
           className={baseInputClasses}
         />
       ) : type === 'select' ? (
@@ -50,7 +67,12 @@ export function FormField({
           name={name}
           value={value}
           onChange={(e) => onChange?.(e.target.value)}
+          onBlur={onBlur}
+          disabled={disabled}
+          readOnly={readOnly}
           required={required}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? `${name}-error` : helperText ? `${name}-helper` : undefined}
           className={baseInputClasses}
         >
           <option value="">Seleccionar...</option>
@@ -72,8 +94,13 @@ export function FormField({
               onChange(event);
             }
           }}
+          onBlur={onBlur}
           accept={accept}
+          disabled={disabled}
+          readOnly={readOnly}
           required={required}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? `${name}-error` : helperText ? `${name}-helper` : undefined}
           className={baseInputClasses}
         />
       ) : (
@@ -83,11 +110,28 @@ export function FormField({
           type={type}
           value={value}
           onChange={(e) => onChange?.(type === 'number' ? parseFloat(e.target.value) || 0 : e.target.value)}
+          onBlur={onBlur}
+          disabled={disabled}
+          readOnly={readOnly}
           placeholder={placeholder}
           required={required}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? `${name}-error` : helperText ? `${name}-helper` : undefined}
           className={baseInputClasses}
         />
       )}
+
+      {helperText && !error ? (
+        <p id={`${name}-helper`} className="text-xs text-muted-foreground">
+          {helperText}
+        </p>
+      ) : null}
+
+      {error ? (
+        <p id={`${name}-error`} className="text-xs text-destructive">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }

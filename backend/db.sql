@@ -110,6 +110,9 @@ CREATE TABLE proveedores (
     email VARCHAR(100),
     direccion TEXT,
     estado VARCHAR(20) DEFAULT 'Activo',
+    preferente BOOLEAN DEFAULT FALSE,
+    rating NUMERIC(3,2),
+    observaciones TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -219,6 +222,10 @@ CREATE TABLE compras (
     subtotal DECIMAL(10, 2) DEFAULT 0,
     iva DECIMAL(10, 2) DEFAULT 0,
     total DECIMAL(10, 2) NOT NULL,
+    observaciones TEXT,
+    requiere_aprobacion BOOLEAN DEFAULT FALSE,
+    aprobacion_extraordinaria BOOLEAN DEFAULT FALSE,
+    motivo_aprobacion TEXT,
     estado VARCHAR(20) DEFAULT 'Pendiente', -- Pendiente, Recibida, Cancelada
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -288,6 +295,7 @@ CREATE TABLE produccion (
 -- ========================================
 CREATE TABLE usuarios (
     id SERIAL PRIMARY KEY,
+    username VARCHAR(120) UNIQUE NOT NULL,
     nombre VARCHAR(100) NOT NULL,
     apellido VARCHAR(100) NOT NULL,
     tipo_documento VARCHAR(20) NOT NULL,

@@ -4,6 +4,7 @@ import { Modal } from '../../Modal';
 import { Button } from '../../Button';
 import { Form, FormField, FormActions } from '../../Form';
 import { Plus, Eye, Trash2, Minus, DollarSign } from 'lucide-react';
+import { useAlertDialog } from '../../AlertDialog';
 import { pedidos as pedidosAPI, clientes as clientesAPI, productos as productosAPI } from '../../../services/api';
 
 interface Pedido {
@@ -46,6 +47,7 @@ export function Pedidos() {
   const [pedidoParaAbonos, setPedidoParaAbonos] = useState<Pedido | null>(null);
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
   const [pdfContent, setPdfContent] = useState('');
+  const { showAlert, AlertComponent } = useAlertDialog();
   
   // Form data para crear/editar
   const [formData, setFormData] = useState({
@@ -197,12 +199,24 @@ export function Pedidos() {
     e.preventDefault();
     
     if (productosEnPedido.length === 0) {
-      alert('Debe agregar al menos un producto al pedido');
+      showAlert({
+        title: 'Pedido sin productos',
+        description: 'Debe agregar al menos un producto al pedido.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
       return;
     }
     
     if (productosEnPedido.some(p => !p.producto_id)) {
-      alert('Debe seleccionar un producto para cada fila');
+      showAlert({
+        title: 'Producto faltante',
+        description: 'Debe seleccionar un producto para cada fila.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
       return;
     }
     
@@ -243,9 +257,22 @@ export function Pedidos() {
         fecha_entrega: new Date().toISOString().split('T')[0],
       });
       setProductosEnPedido([]);
+      showAlert({
+        title: 'Éxito',
+        description: 'Pedido creado correctamente.',
+        type: 'success',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
     } catch (error) {
       console.error('Error creando pedido:', error);
-      alert('Error al crear el pedido');
+      showAlert({
+        title: 'Error',
+        description: 'No se pudo crear el pedido.',
+        type: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
     }
   };
 
@@ -287,12 +314,24 @@ export function Pedidos() {
     e.preventDefault();
     
     if (productosEnPedido.length === 0) {
-      alert('Debe agregar al menos un producto al pedido');
+      showAlert({
+        title: 'Pedido sin productos',
+        description: 'Debe agregar al menos un producto al pedido.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
       return;
     }
     
     if (productosEnPedido.some(p => !p.producto_id)) {
-      alert('Debe seleccionar un producto para cada fila');
+      showAlert({
+        title: 'Producto faltante',
+        description: 'Debe seleccionar un producto para cada fila.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
       return;
     }
     
@@ -309,24 +348,52 @@ export function Pedidos() {
         setIsEditModalOpen(false);
         setSelectedPedido(null);
         setProductosEnPedido([]);
+        showAlert({
+          title: 'Éxito',
+          description: 'Pedido actualizado correctamente.',
+          type: 'success',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
       } catch (error) {
         console.error('Error actualizando pedido:', error);
-        alert('Error al actualizar el pedido');
+        showAlert({
+          title: 'Error',
+          description: 'No se pudo actualizar el pedido.',
+          type: 'danger',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
       }
     }
   };
 
   const handleCancelar = async () => {
-    if (selectedPedido && confirm(`¿Está seguro de cancelar el pedido ${selectedPedido.numero_pedido || selectedPedido.id}?`)) {
-      try {
-        await pedidosAPI.update(Number(selectedPedido.id), { estado: 'Cancelado' });
-        await loadPedidos();
-        setIsEditModalOpen(false);
-      } catch (error) {
-        console.error('Error cancelando pedido:', error);
-        alert('Error al cancelar el pedido');
+    if (!selectedPedido) return;
+
+    showAlert({
+      title: 'Confirmar cancelación',
+      description: `¿Está seguro de cancelar el pedido ${selectedPedido.numero_pedido || selectedPedido.id}? Esta acción no se puede deshacer.`,
+      type: 'danger',
+      confirmText: 'Cancelar pedido',
+      cancelText: 'Cerrar',
+      onConfirm: async () => {
+        try {
+          await pedidosAPI.update(Number(selectedPedido.id), { estado: 'Cancelado' });
+          await loadPedidos();
+          setIsEditModalOpen(false);
+        } catch (error) {
+          console.error('Error cancelando pedido:', error);
+          showAlert({
+            title: 'Error',
+            description: 'No se pudo cancelar el pedido.',
+            type: 'danger',
+            confirmText: 'Entendido',
+            onConfirm: () => {}
+          });
+        }
       }
-    }
+    });
   };
 
   const handleVerAbonos = (pedido: Pedido) => {
@@ -393,6 +460,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
 
   return (
     <div className="space-y-6">
+      {AlertComponent}
       <div className="flex items-center justify-between">
         <div>
           <h2>Gestión de Pedidos</h2>
@@ -420,14 +488,28 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
           commonActions.edit(handleEdit),
           commonActions.pdf(handleGeneratePDF),
           commonActions.cancel(async (pedido) => {
-            if (confirm(`¿Cancelar pedido ${pedido.numero_pedido || pedido.id}?`)) {
-              try {
-                await pedidosAPI.update(Number(pedido.id), { estado: 'Cancelado' });
-                await loadPedidos();
-              } catch (error) {
-                console.error('Error:', error);
+            showAlert({
+              title: 'Confirmar cancelación',
+              description: `¿Está seguro de cancelar el pedido ${pedido.numero_pedido || pedido.id}? Esta acción no se puede deshacer.`,
+              type: 'danger',
+              confirmText: 'Cancelar pedido',
+              cancelText: 'Cerrar',
+              onConfirm: async () => {
+                try {
+                  await pedidosAPI.update(Number(pedido.id), { estado: 'Cancelado' });
+                  await loadPedidos();
+                } catch (error) {
+                  console.error('Error:', error);
+                  showAlert({
+                    title: 'Error',
+                    description: 'No se pudo cancelar el pedido.',
+                    type: 'danger',
+                    confirmText: 'Entendido',
+                    onConfirm: () => {}
+                  });
+                }
               }
-            }
+            });
           })
         ]}
         onSearch={(query) => console.log('Searching:', query)}

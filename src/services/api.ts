@@ -67,6 +67,7 @@ export const apiCall = async (
   const options: RequestInit = {
     method,
     credentials: 'include',
+    cache: 'no-store',
     headers: {
       'Content-Type': 'application/json',
     },
@@ -84,10 +85,22 @@ export const apiCall = async (
         const response = await fetch(`${baseUrl}${endpoint}`, options);
 
         if (!response.ok) {
-          const httpError: any = new Error(`API Error: ${response.status} ${response.statusText}`);
+          let errorMessage = `API Error: ${response.status} ${response.statusText}`;
+
+          try {
+            const errorBody = await response.json();
+            if (errorBody?.message) {
+              errorMessage = errorBody.message;
+            }
+          } catch {
+            // Si el backend no devuelve JSON, conservamos el mensaje HTTP por defecto.
+          }
+
+          const httpError: any = new Error(errorMessage);
           httpError.isHttpError = true;
           httpError.status = response.status;
           httpError.statusText = response.statusText;
+          httpError.message = errorMessage;
 
           // Any protected endpoint returning 401 means auth cookie is invalid or expired.
           if (response.status === 401) {
@@ -168,6 +181,9 @@ const normalizeProveedorPayload = (data: any) => ({
   tipoDocumento: data?.tipoDocumento ?? data?.tipo_documento,
   numeroDocumento: data?.numeroDocumento ?? data?.numero_documento,
   estado: data?.estado ?? 'Activo',
+  preferente: data?.preferente ?? false,
+  rating: data?.rating,
+  observaciones: data?.observaciones,
 });
 
 const normalizePedidoPayload = (data: any) => ({
@@ -382,6 +398,8 @@ export const clientes = {
 export const proveedores = {
   getAll: () => apiCall('/api/proveedores'),
   getById: (id: number) => apiCall(`/api/proveedores/${id}`),
+  getHistory: (id: number) => apiCall(`/api/proveedores/${id}/historial`),
+  getPendingPurchases: (id: number) => apiCall(`/api/proveedores/${id}/pendientes`),
   create: (data: {
     tipoPersona: string;
     nombreEmpresa?: string;
@@ -394,12 +412,17 @@ export const proveedores = {
     email?: string;
     direccion?: string;
     estado?: string;
+    preferente?: boolean;
+    rating?: number;
+    observaciones?: string;
   }) => apiCall('/api/proveedores', 'POST', normalizeProveedorPayload(data)),
   update: async (id: number, data: any) => {
     const merged = await mergeWithCurrent(`/api/proveedores/${id}`, data);
     return apiCall(`/api/proveedores/${id}`, 'PUT', normalizeProveedorPayload(merged));
   },
-  delete: (id: number) => apiCall(`/api/proveedores/${id}`, 'DELETE'),
+  updateStatus: (id: number, data: { estado: string; motivo: string }) =>
+    apiCall(`/api/proveedores/${id}/estado`, 'PUT', data),
+  delete: (id: number, data?: { motivo?: string }) => apiCall(`/api/proveedores/${id}`, 'DELETE', data),
 };
 
 // ==================== PEDIDOS ====================
@@ -533,12 +556,17 @@ export const compras = {
     iva?: number;
     total?: number;
     estado?: string;
+    observaciones?: string;
+    aprobacion_extraordinaria?: boolean;
+    motivo_aprobacion?: string;
   }) => normalizeCompraPayload(data).then((payload) => apiCall('/api/compras', 'POST', payload)),
   addProducto: (data: {
     compraId: number;
     productoId: number;
     cantidad: number;
     precioUnitario: number;
+    permisoExtraordinario?: boolean;
+    motivoPermiso?: string;
   }) => apiCall('/api/compras/producto', 'POST', data),
   update: async (id: number, data: any) => {
     const merged = await mergeWithCurrent(`/api/compras/${id}`, data);
@@ -608,6 +636,7 @@ export const produccion = {
 export const roles = {
   getAll: () => apiCall('/api/roles'),
   getById: (id: number) => apiCall(`/api/roles/${id}`),
+  getAuditById: (id: number) => apiCall(`/api/roles/${id}/auditoria`),
   create: (data: {
     nombre: string;
     descripcion?: string;
@@ -618,14 +647,43 @@ export const roles = {
     const merged = await mergeWithCurrent(`/api/roles/${id}`, data);
     return apiCall(`/api/roles/${id}`, 'PUT', merged);
   },
-  delete: (id: number) => apiCall(`/api/roles/${id}`, 'DELETE'),
+  delete: (id: number, data?: { motivo?: string }) => apiCall(`/api/roles/${id}`, 'DELETE', data),
 };
 
 // ==================== USUARIOS ====================
 export const usuarios = {
-  getAll: () => apiCall('/api/usuarios'),
+  getAll: (params?: {
+    q?: string;
+    estados?: string[];
+    rol_id?: number;
+    tipos_documento?: string[];
+    fecha_desde?: string;
+    fecha_hasta?: string;
+    include_deleted?: boolean;
+    limit?: number;
+  }) => {
+    if (!params) return apiCall('/api/usuarios');
+
+    const query = new URLSearchParams();
+    if (params.q) query.set('q', params.q);
+    if (Array.isArray(params.estados) && params.estados.length > 0) query.set('estados', params.estados.join(','));
+    if (params.rol_id) query.set('rol_id', String(params.rol_id));
+    if (Array.isArray(params.tipos_documento) && params.tipos_documento.length > 0) {
+      query.set('tipos_documento', params.tipos_documento.join(','));
+    }
+    if (params.fecha_desde) query.set('fecha_desde', params.fecha_desde);
+    if (params.fecha_hasta) query.set('fecha_hasta', params.fecha_hasta);
+    if (typeof params.include_deleted === 'boolean') query.set('include_deleted', String(params.include_deleted));
+    if (params.limit) query.set('limit', String(params.limit));
+
+    const queryString = query.toString();
+    return apiCall(`/api/usuarios${queryString ? `?${queryString}` : ''}`);
+  },
   getById: (id: number) => apiCall(`/api/usuarios/${id}`),
-  getByEmail: (email: string) => apiCall(`/api/usuarios/email/${email}`),
+  getFullDetail: (id: number, limit = 120) => apiCall(`/api/usuarios/${id}/detalle-completo?limit=${limit}`),
+  getActivity: (id: number, limit = 80) => apiCall(`/api/usuarios/${id}/historial?limit=${limit}`),
+  getDeleteImpact: (id: number) => apiCall(`/api/usuarios/${id}/impacto-eliminacion`),
+  getByEmail: (email: string) => apiCall(`/api/usuarios/email/${encodeURIComponent(email)}`),
   getByDocumento: (documento: string) => apiCall(`/api/usuarios/documento/${documento}`),
   create: (data: {
     nombre: string;
@@ -640,16 +698,37 @@ export const usuarios = {
     estado?: string;
   }) => apiCall('/api/usuarios', 'POST', data),
   update: (id: number, data: any) => apiCall(`/api/usuarios/${id}`, 'PUT', data),
+  updateStatus: (
+    id: number,
+    data: {
+      estado: 'Activo' | 'Inactivo';
+      force?: boolean;
+      motivo?: string;
+      notificar: boolean;
+      verificacion?: boolean;
+    }
+  ) => apiCall(`/api/usuarios/${id}/estado`, 'PUT', data),
   assignRole: (id: number, rol_id: number) => apiCall(`/api/usuarios/${id}/rol`, 'PUT', { rol_id }),
-  delete: (id: number) => apiCall(`/api/usuarios/${id}`, 'DELETE'),
+  forceResetPassword: (id: number, data?: { motivo?: string }) =>
+    apiCall(`/api/usuarios/${id}/reset-password-forzado`, 'POST', data),
+  delete: (
+    id: number,
+    data?: { motivo?: string; mode?: 'logical' | 'physical'; omit_validaciones?: boolean }
+  ) => apiCall(`/api/usuarios/${id}`, 'DELETE', data),
 };
 
 // ==================== AUTH ====================
 export const auth = {
-  login: (email: string, password: string) =>
-    apiCall('/api/auth/login', 'POST', { email, password }),
+  login: (email: string, password: string, rememberMe = false) =>
+    apiCall('/api/auth/login', 'POST', { email, password, rememberMe }),
   me: () => apiCall('/api/auth/me'),
-  logout: () => apiCall('/api/auth/logout', 'POST'),
+  logout: () => apiCall('/api/auth/logout', 'POST', {}),
+  logoutAll: () => apiCall('/api/auth/logout-all', 'POST', {}),
+  changePassword: (data: { currentPassword: string; newPassword: string; confirmPassword: string }) =>
+    apiCall('/api/auth/change-password', 'POST', data),
+  requestPasswordReset: (email: string) => apiCall('/api/auth/password-reset-request', 'POST', { email }),
+  confirmPasswordReset: (data: { email: string; token: string; newPassword: string }) =>
+    apiCall('/api/auth/password-reset-confirm', 'POST', data),
   registerCliente: (data: {
     tipoDocumento: 'CC' | 'CE' | 'TI' | 'Pasaporte';
     numeroDocumento: string;

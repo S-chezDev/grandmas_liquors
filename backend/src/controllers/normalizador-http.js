@@ -38,6 +38,17 @@ const TIPO_PERSONA_MAP = {
   'jurídica': 'Juridica',
 };
 
+const parseBooleanValue = (value) => {
+  if (value === true || value === 'true' || value === 1 || value === '1') return true;
+  return false;
+};
+
+const parseNumberValue = (value) => {
+  if (value === undefined || value === null || value === '') return undefined;
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
 const METODO_PAGO_MAP = {
   efectivo: 'Efectivo',
   tarjeta: 'Tarjeta',
@@ -170,6 +181,16 @@ const normalizeUsuarioPayload = (payload = {}) => {
     data.estado = estado;
   }
 
+  if (payload.telefono !== undefined) {
+    const telefono = String(payload.telefono).replace(/\D/g, '');
+    if (telefono.length < 7 || telefono.length > 15) {
+      return {
+        error: 'Telefono invalido. Debe tener entre 7 y 15 digitos numericos.',
+      };
+    }
+    data.telefono = telefono;
+  }
+
   return { data };
 };
 
@@ -206,6 +227,34 @@ const normalizeProveedorPayload = (payload = {}) => {
       };
     }
     data.estado = estado;
+  }
+
+  if (payload.telefono !== undefined) {
+    const telefono = String(payload.telefono).replace(/\D/g, '');
+    if (telefono.length < 7 || telefono.length > 15) {
+      return {
+        error: 'Telefono invalido. Debe tener entre 7 y 15 digitos numericos.',
+      };
+    }
+    data.telefono = telefono;
+  }
+
+  if (payload.preferente !== undefined) {
+    data.preferente = parseBooleanValue(payload.preferente);
+  }
+
+  if (payload.rating !== undefined) {
+    const rating = parseNumberValue(payload.rating);
+    if (rating === null || rating < 0 || rating > 5) {
+      return {
+        error: 'Rating invalido. Debe ser un numero entre 0 y 5.',
+      };
+    }
+    data.rating = rating;
+  }
+
+  if (payload.observaciones !== undefined) {
+    data.observaciones = String(payload.observaciones).trim();
   }
 
   return { data };

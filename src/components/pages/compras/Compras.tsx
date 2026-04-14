@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
 import { Plus, ShoppingCart, Trash2 } from 'lucide-react';
+import { useAlertDialog } from '../../AlertDialog';
 import { compras as comprasAPI, productos as productosAPI, proveedores as proveedoresAPI } from '../../../services/api';
 
 interface CompraItem {
@@ -12,17 +13,21 @@ interface CompraItem {
   cantidad: number;
   precioUnitario: number;
   subtotal: number;
+  permisoExtraordinario?: boolean;
+  motivoPermiso?: string;
 }
 
 interface ProductoOption {
   id: number;
   nombre: string;
   precio: number;
+  estado?: string;
 }
 
 interface ProveedorOption {
   id: number;
   label: string;
+  estado?: string;
 }
 
 interface Compra {
@@ -38,6 +43,7 @@ interface Compra {
   iva: number;
   total: number;
   estado: string;
+  observaciones?: string;
 }
 
 export function Compras() {
@@ -45,6 +51,7 @@ export function Compras() {
   const [productosDisponibles, setProductosDisponibles] = useState<ProductoOption[]>([]);
   const [proveedoresDisponibles, setProveedoresDisponibles] = useState<ProveedorOption[]>([]);
   const [loading, setLoading] = useState(true);
+  const { showAlert, AlertComponent } = useAlertDialog();
 
   useEffect(() => {
     loadCompras();
@@ -62,12 +69,16 @@ export function Compras() {
         id: Number(p.id),
         nombre: String(p.nombre || ''),
         precio: Number(p.precio || 0),
-      }));
+        estado: String(p.estado || 'Activo'),
+      })).filter((p) => p.estado === 'Activo');
 
-      const proveedoresMapeados = (Array.isArray(proveedoresData) ? proveedoresData : []).map((p: any) => ({
-        id: Number(p.id),
-        label: String(p.nombre_empresa || `${p.nombre || ''} ${p.apellido || ''}`.trim() || `Proveedor ${p.id}`),
-      }));
+      const proveedoresMapeados = (Array.isArray(proveedoresData) ? proveedoresData : [])
+        .map((p: any) => ({
+          id: Number(p.id),
+          label: String(p.nombre_empresa || `${p.nombre || ''} ${p.apellido || ''}`.trim() || `Proveedor ${p.id}`),
+          estado: String(p.estado || 'Activo'),
+        }))
+        .filter((p) => p.estado === 'Activo');
 
       setProductosDisponibles(productosMapeados);
       setProveedoresDisponibles(proveedoresMapeados);
@@ -92,7 +103,8 @@ export function Compras() {
         subtotal: Number(compra.subtotal || 0),
         iva: Number(compra.iva || 0),
         total: Number(compra.total || 0),
-        estado: compra.estado || 'Pendiente'
+        estado: compra.estado || 'Pendiente',
+        observaciones: compra.observaciones || '',
       }));
 
       setCompras(normalizedCompras);
@@ -111,14 +123,26 @@ export function Compras() {
   const [formData, setFormData] = useState({
     proveedor: '',
     fecha: new Date().toISOString().split('T')[0],
-    items: [] as CompraItem[]
+    items: [] as CompraItem[],
+    observaciones: '',
+    aprobacionExtraordinaria: false,
+    motivoAprobacion: ''
   });
 
   const [currentItem, setCurrentItem] = useState({
     productoId: '',
     cantidad: 0,
-    precioUnitario: 0
+    precioUnitario: 0,
+    permisoExtraordinario: false,
+    motivoPermiso: ''
   });
+
+  const subtotalCalculado = useMemo(
+    () => formData.items.reduce((sum, item) => sum + item.subtotal, 0),
+    [formData.items]
+  );
+  const ivaCalculado = useMemo(() => subtotalCalculado * 0.19, [subtotalCalculado]);
+  const totalCalculado = useMemo(() => subtotalCalculado + ivaCalculado, [subtotalCalculado, ivaCalculado]);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('es-CO', {
@@ -162,20 +186,53 @@ export function Compras() {
     setFormData({ 
       proveedor: '', 
       fecha: new Date().toISOString().split('T')[0], 
-      items: [] 
+      items: [],
+      observaciones: '',
+      aprobacionExtraordinaria: false,
+      motivoAprobacion: ''
     });
+    setCurrentItem({ productoId: '', cantidad: 0, precioUnitario: 0, permisoExtraordinario: false, motivoPermiso: '' });
     setIsModalOpen(true);
   };
 
-  const handleView = (compra: Compra) => {
-    setSelectedCompra(compra);
+  const handleView = async (compra: Compra) => {
+    try {
+      const detalle = await comprasAPI.getById(Number(compra.id));
+      const detalleItems = Array.isArray((detalle as any)?.detalles)
+        ? (detalle as any).detalles.map((item: any) => ({
+            productoId: Number(item.producto_id || 0),
+            producto: String(item.producto_nombre || item.producto || ''),
+            cantidad: Number(item.cantidad || 0),
+            precioUnitario: Number(item.precio_unitario || 0),
+            subtotal: Number(item.subtotal || 0),
+          }))
+        : compra.items;
+
+      setSelectedCompra({
+        ...compra,
+        items: detalleItems,
+        subtotal: Number((detalle as any)?.subtotal ?? compra.subtotal),
+        iva: Number((detalle as any)?.iva ?? compra.iva),
+        total: Number((detalle as any)?.total ?? compra.total),
+        observaciones: String((detalle as any)?.observaciones || compra.observaciones || ''),
+      });
+    } catch {
+      setSelectedCompra(compra);
+    }
     setIsDetailModalOpen(true);
   };
 
   const handleAnular = (compra: Compra) => {
-    if (confirm(`¿Está seguro de anular la compra ${compra.id}?`)) {
-      setCompras(compras.map(c => c.id === compra.id ? { ...c, estado: 'Anulada' as const } : c));
-    }
+    showAlert({
+      title: 'Confirmar anulación',
+      description: `¿Está seguro de anular la compra ${compra.id}? Esta acción no se puede deshacer.`,
+      type: 'danger',
+      confirmText: 'Anular',
+      cancelText: 'Cancelar',
+      onConfirm: () => {
+        setCompras(compras.map(c => c.id === compra.id ? { ...c, estado: 'Anulada' as const } : c));
+      }
+    });
   };
 
   const handleGeneratePDF = (compra: Compra) => {
@@ -223,7 +280,35 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
 
   const handleAddItem = () => {
     if (!currentItem.productoId || currentItem.cantidad <= 0 || currentItem.precioUnitario <= 0) {
-      alert('Complete todos los campos del producto');
+      showAlert({
+        title: 'Campos incompletos',
+        description: 'Complete todos los campos del producto.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
+      return;
+    }
+
+    if (formData.items.length >= 50) {
+      showAlert({
+        title: 'Limite alcanzado',
+        description: 'No se pueden registrar mas de 50 productos por compra.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
+      return;
+    }
+
+    if (currentItem.cantidad > 50 && (!currentItem.permisoExtraordinario || currentItem.motivoPermiso.trim().length < 10)) {
+      showAlert({
+        title: 'Permiso extraordinario requerido',
+        description: 'Cantidades mayores a 50 requieren permiso extraordinario y un motivo de al menos 10 caracteres.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
       return;
     }
 
@@ -232,7 +317,13 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
     );
 
     if (!productoSeleccionado) {
-      alert('Producto no valido');
+      showAlert({
+        title: 'Producto no válido',
+        description: 'Seleccione un producto válido antes de continuar.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
       return;
     }
     
@@ -241,7 +332,9 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
       producto: productoSeleccionado.nombre,
       cantidad: currentItem.cantidad,
       precioUnitario: currentItem.precioUnitario,
-      subtotal: currentItem.cantidad * currentItem.precioUnitario
+      subtotal: currentItem.cantidad * currentItem.precioUnitario,
+      permisoExtraordinario: currentItem.permisoExtraordinario,
+      motivoPermiso: currentItem.motivoPermiso.trim()
     };
     
     setFormData({
@@ -249,7 +342,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
       items: [...formData.items, newItem]
     });
     
-    setCurrentItem({ productoId: '', cantidad: 0, precioUnitario: 0 });
+    setCurrentItem({ productoId: '', cantidad: 0, precioUnitario: 0, permisoExtraordinario: false, motivoPermiso: '' });
   };
 
   const handleRemoveItem = (index: number) => {
@@ -261,23 +354,61 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!formData.proveedor) {
+      showAlert({
+        title: 'Proveedor requerido',
+        description: 'Debe seleccionar un proveedor activo para la compra.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
+      return;
+    }
+
     if (formData.items.length === 0) {
-      alert('Debe agregar al menos un producto');
+      showAlert({
+        title: 'Compra sin productos',
+        description: 'Debe agregar al menos un producto para guardar la compra.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
+      return;
+    }
+
+    if (formData.items.some((item) => item.cantidad <= 0 || item.precioUnitario <= 0)) {
+      showAlert({
+        title: 'Valores invalidos',
+        description: 'Todas las cantidades deben ser mayores a 0 y los precios unitarios validos.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
+      return;
+    }
+
+    if (totalCalculado >= 10000 && (!formData.aprobacionExtraordinaria || formData.motivoAprobacion.trim().length < 10)) {
+      showAlert({
+        title: 'Aprobacion requerida',
+        description: 'Compras por total mayor o igual a $10,000 requieren aprobacion extraordinaria y motivo valido.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
       return;
     }
 
     try {
-      const subtotal = formData.items.reduce((sum, item) => sum + item.subtotal, 0);
-      const iva = subtotal * 0.19;
-      const total = subtotal + iva;
-
       const createResult: any = await comprasAPI.create({
         proveedor: formData.proveedor,
         fecha: formData.fecha,
-        subtotal,
-        iva,
-        total,
+        subtotal: subtotalCalculado,
+        iva: ivaCalculado,
+        total: totalCalculado,
         estado: 'Pendiente',
+        observaciones: formData.observaciones,
+        aprobacion_extraordinaria: formData.aprobacionExtraordinaria,
+        motivo_aprobacion: formData.motivoAprobacion.trim() || undefined,
       });
 
       const compraId = Number(createResult?.id);
@@ -292,6 +423,8 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
             productoId: Number(item.productoId),
             cantidad: Number(item.cantidad),
             precioUnitario: Number(item.precioUnitario),
+            permisoExtraordinario: Boolean(item.permisoExtraordinario),
+            motivoPermiso: item.motivoPermiso,
           })
         )
       );
@@ -302,16 +435,33 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         proveedor: '',
         fecha: new Date().toISOString().split('T')[0],
         items: [],
+        observaciones: '',
+        aprobacionExtraordinaria: false,
+        motivoAprobacion: '',
       });
-      setCurrentItem({ productoId: '', cantidad: 0, precioUnitario: 0 });
+      setCurrentItem({ productoId: '', cantidad: 0, precioUnitario: 0, permisoExtraordinario: false, motivoPermiso: '' });
+      showAlert({
+        title: 'Éxito',
+        description: 'Compra guardada correctamente.',
+        type: 'success',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
     } catch (error) {
       console.error('Error creando compra:', error);
-      alert('Error al guardar la compra');
+      showAlert({
+        title: 'Error',
+        description: 'No se pudo guardar la compra.',
+        type: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
     }
   };
 
   return (
     <div className="space-y-6">
+      {AlertComponent}
       <div className="flex items-center justify-between">
         <div>
           <h2>Gestión de Compras</h2>
@@ -350,7 +500,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
               value={formData.proveedor}
               onChange={(value) => setFormData({ ...formData, proveedor: value as string })}
               options={proveedoresDisponibles.map((p) => ({
-                value: p.label,
+                value: p.id.toString(),
                 label: p.label,
               }))}
               required
@@ -387,7 +537,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                 }}
                 options={productosDisponibles.map((p) => ({
                   value: p.id.toString(),
-                  label: `${p.nombre} - ${formatCurrency(p.precio)}`,
+                  label: `COD-${p.id} | ${p.nombre} - ${formatCurrency(p.precio)}`,
                 }))}
               />
               
@@ -405,6 +555,8 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                 type="number"
                 value={currentItem.precioUnitario}
                 onChange={(value) => setCurrentItem({ ...currentItem, precioUnitario: value as number })}
+                readOnly
+                helperText="Precio cargado automaticamente segun el producto seleccionado."
               />
               
               <div className="flex items-end">
@@ -412,6 +564,36 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                   Agregar
                 </Button>
               </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 mb-3">
+              <div className="rounded-lg border border-border p-3 bg-accent/20">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={currentItem.permisoExtraordinario}
+                    onChange={(event) =>
+                      setCurrentItem({
+                        ...currentItem,
+                        permisoExtraordinario: event.target.checked,
+                        motivoPermiso: event.target.checked ? currentItem.motivoPermiso : '',
+                      })
+                    }
+                    className="h-4 w-4 accent-primary"
+                  />
+                  Solicitar permiso extraordinario para cantidad mayor a 50
+                </label>
+              </div>
+              <FormField
+                label="Motivo permiso"
+                name="motivoPermiso"
+                type="textarea"
+                value={currentItem.motivoPermiso}
+                onChange={(value) => setCurrentItem({ ...currentItem, motivoPermiso: value as string })}
+                rows={2}
+                disabled={!currentItem.permisoExtraordinario}
+                placeholder="Justifique la compra extraordinaria"
+              />
             </div>
           </div>
 
@@ -421,6 +603,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
               <table className="w-full">
                 <thead className="text-sm bg-muted">
                   <tr>
+                    <th className="p-2 text-left">Codigo</th>
                     <th className="p-2 text-left">Producto</th>
                     <th className="p-2 text-right">Cantidad</th>
                     <th className="p-2 text-right">Precio Unit.</th>
@@ -431,6 +614,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                 <tbody>
                   {formData.items.map((item, index) => (
                     <tr key={index} className="border-t border-border">
+                      <td className="p-2">COD-{item.productoId}</td>
                       <td className="p-2">{item.producto}</td>
                       <td className="p-2 text-right">{item.cantidad}</td>
                       <td className="p-2 text-right">{formatCurrency(item.precioUnitario)}</td>
@@ -447,9 +631,9 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                     </tr>
                   ))}
                   <tr className="border-t-2 border-border">
-                    <td colSpan={3} className="p-2 text-right">Total:</td>
+                    <td colSpan={4} className="p-2 text-right">Total:</td>
                     <td className="p-2 text-right">
-                      {formatCurrency(formData.items.reduce((sum, item) => sum + item.subtotal, 0))}
+                      {formatCurrency(subtotalCalculado)}
                     </td>
                     <td></td>
                   </tr>
@@ -457,6 +641,52 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
               </table>
             </div>
           )}
+
+          <div className="grid grid-cols-3 gap-4 p-4 rounded-lg border border-border bg-accent/20">
+            <div>
+              <p className="text-sm text-muted-foreground">Subtotal</p>
+              <p className="font-medium">{formatCurrency(subtotalCalculado)}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">IVA (19%)</p>
+              <p className="font-medium">{formatCurrency(ivaCalculado)}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Total</p>
+              <p className="font-medium">{formatCurrency(totalCalculado)}</p>
+            </div>
+          </div>
+
+          <FormField
+            label="Observaciones"
+            name="observaciones"
+            type="textarea"
+            value={formData.observaciones}
+            onChange={(value) => setFormData({ ...formData, observaciones: value as string })}
+            rows={3}
+            placeholder="Notas de la compra"
+          />
+
+          <div className="rounded-lg border border-border p-3 bg-accent/20 space-y-3">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={formData.aprobacionExtraordinaria}
+                onChange={(event) => setFormData({ ...formData, aprobacionExtraordinaria: event.target.checked })}
+                className="h-4 w-4 accent-primary"
+              />
+              Aprobacion extraordinaria
+            </label>
+            <FormField
+              label="Motivo aprobacion"
+              name="motivoAprobacion"
+              type="textarea"
+              value={formData.motivoAprobacion}
+              onChange={(value) => setFormData({ ...formData, motivoAprobacion: value as string })}
+              rows={2}
+              placeholder="Obligatorio si el total es mayor o igual a $10,000"
+            />
+          </div>
 
           <FormActions>
             <Button variant="outline" onClick={() => setIsModalOpen(false)}>
@@ -512,6 +742,10 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
               <div>
                 <p className="text-sm text-muted-foreground">Total</p>
                 <p>{formatCurrency(selectedCompra.total)}</p>
+              </div>
+              <div className="col-span-2">
+                <p className="text-sm text-muted-foreground">Observaciones</p>
+                <p>{selectedCompra.observaciones || 'Sin observaciones'}</p>
               </div>
             </div>
 
