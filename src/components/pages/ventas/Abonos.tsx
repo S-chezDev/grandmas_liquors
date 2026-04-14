@@ -19,6 +19,12 @@ interface Abono {
   cliente_nombre?: string;
 }
 
+interface StateChangeRequest {
+  abono: Abono;
+  from: string;
+  to: string;
+}
+
 export function Abonos() {
   const [abonos, setAbonos] = useState<Abono[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -42,6 +48,9 @@ export function Abonos() {
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState<boolean>(false);
   const [selectedAbono, setSelectedAbono] = useState<Abono | null>(null);
+  const [pendingStateChange, setPendingStateChange] = useState<StateChangeRequest | null>(null);
+  const [stateChangeReason, setStateChangeReason] = useState('');
+  const [stateChangeSaving, setStateChangeSaving] = useState(false);
   const [isPdfModalOpen, setIsPdfModalOpen] = useState<boolean>(false);
   const [pdfContent, setPdfContent] = useState<string>('');
   const [formData, setFormData] = useState({
@@ -75,12 +84,18 @@ export function Abonos() {
     { 
       key: 'estado', 
       label: 'Estado',
-      render: (estado: string) => (
-        <span className={`px-3 py-1 rounded-full text-xs ${
-          estado === 'Registrado' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-        }`}>
-          {estado}
-        </span>
+      render: (estado: string, abono: Abono) => (
+        <select
+          value={estado}
+          onChange={(event) => handleEstadoChangeRequest(abono, event.target.value)}
+          disabled={stateChangeSaving}
+          className={`px-3 py-1 rounded-full text-xs border-0 cursor-pointer ${
+            estado === 'Registrado' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+          }`}
+        >
+          <option value="Registrado">Registrado</option>
+          <option value="Cancelado">Cancelado</option>
+        </select>
       )
     }
   ];
@@ -98,29 +113,54 @@ export function Abonos() {
     setIsModalOpen(true);
   };
 
-  const handleAnular = async (abono: Abono) => {
-    showAlert({
-      title: 'Confirmar anulación',
-      description: `¿Está seguro de anular el abono ${abono.numero_abono}? Esta acción no se puede deshacer.`,
-      type: 'danger',
-      confirmText: 'Anular abono',
-      cancelText: 'Cancelar',
-      onConfirm: async () => {
-        try {
-          await abonosAPI.update(Number(abono.id), { estado: 'Cancelado' });
-          await loadAbonos();
-        } catch (error) {
-          console.error('Error al anular abono:', error);
-          showAlert({
-            title: 'Error',
-            description: 'No se pudo anular el abono.',
-            type: 'danger',
-            confirmText: 'Entendido',
-            onConfirm: () => {}
-          });
-        }
-      }
+  const handleEstadoChangeRequest = (abono: Abono, nuevoEstado: string) => {
+    if (abono.estado === nuevoEstado) return;
+
+    setPendingStateChange({
+      abono,
+      from: abono.estado,
+      to: nuevoEstado,
     });
+    setStateChangeReason('');
+  };
+
+  const handleConfirmEstadoChange = async () => {
+    if (!pendingStateChange) return;
+
+    if (pendingStateChange.to === 'Cancelado' && stateChangeReason.trim().length < 10) {
+      showAlert({
+        title: 'Motivo requerido',
+        description: 'Para cancelar el abono debes indicar un motivo de al menos 10 caracteres.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
+    try {
+      setStateChangeSaving(true);
+      await abonosAPI.update(Number(pendingStateChange.abono.id), { estado: pendingStateChange.to });
+      await loadAbonos();
+      setPendingStateChange(null);
+      setStateChangeReason('');
+    } catch (error) {
+      console.error('Error actualizando estado de abono:', error);
+      showAlert({
+        title: 'Error',
+        description: 'No se pudo actualizar el estado del abono.',
+        type: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+    } finally {
+      setStateChangeSaving(false);
+    }
+  };
+
+  const handleCancelEstadoChange = () => {
+    setPendingStateChange(null);
+    setStateChangeReason('');
   };
 
   const handleGeneratePDF = (abono: Abono) => {
@@ -205,12 +245,47 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
               setIsDetailModalOpen(true);
             }),
             commonActions.pdf(handleGeneratePDF),
-            commonActions.cancel(handleAnular)
           ]}
           onSearch={(query) => console.log('Searching:', query)}
           searchPlaceholder="Buscar abonos..."
         />
       )}
+
+      <Modal
+        isOpen={Boolean(pendingStateChange)}
+        onClose={handleCancelEstadoChange}
+        title={`Cambiar estado - Abono ${pendingStateChange?.abono.numero_abono || ''}`}
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-accent/30 p-4 space-y-1">
+            <p className="text-sm text-muted-foreground">Estado actual: {pendingStateChange?.from || 'N/A'}</p>
+            <p className="text-sm text-muted-foreground">Nuevo estado: {pendingStateChange?.to || 'N/A'}</p>
+          </div>
+
+          {pendingStateChange?.to === 'Cancelado' ? (
+            <FormField
+              label="Motivo del cambio"
+              name="motivo-cambio-abono"
+              type="textarea"
+              value={stateChangeReason}
+              onChange={(value) => setStateChangeReason(String(value))}
+              rows={3}
+              required
+              placeholder="Explica por qué se cancela el abono (mínimo 10 caracteres)"
+            />
+          ) : null}
+
+          <FormActions>
+            <Button variant="outline" onClick={handleCancelEstadoChange} disabled={stateChangeSaving}>
+              Cancelar
+            </Button>
+            <Button onClick={handleConfirmEstadoChange} disabled={stateChangeSaving}>
+              {stateChangeSaving ? 'Guardando...' : 'Confirmar'}
+            </Button>
+          </FormActions>
+        </div>
+      </Modal>
 
       {/* Detail Modal */}
       <Modal 

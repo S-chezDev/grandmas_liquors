@@ -47,6 +47,30 @@ module.exports = {
       res.status(error.statusCode || 500).json({ success: false, message: error.message, details: error.details });
     }
   },
+  updateStatus: async (req, res) => {
+    try {
+      const rol = String(req.user?.rol || '');
+      if (!['Administrador', 'Asesor', 'Productor'].includes(rol)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Solo administradores, asesores o productores pueden cambiar el estado de la compra',
+        });
+      }
+
+      const updatedCompra = await models.Compras.updateStatus(req.params.id, req.body);
+      return res.json({
+        success: true,
+        data: updatedCompra,
+        message: 'Estado de compra actualizado exitosamente',
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        message: error.message,
+        details: error.details,
+      });
+    }
+  },
   delete: async (req, res) => {
     try {
       await models.Compras.delete(req.params.id);

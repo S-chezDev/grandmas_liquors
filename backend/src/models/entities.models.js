@@ -2,6 +2,20 @@ const pool = require('../../db');
 const bcrypt = require('bcryptjs');
 const { generateTempPassword } = require('../utils/credentials');
 
+let productoImageColumnReady = null;
+
+const ensureProductoImageColumn = async () => {
+  if (!productoImageColumnReady) {
+    productoImageColumnReady = pool.query('ALTER TABLE productos ALTER COLUMN imagen_url TYPE TEXT');
+  }
+
+  try {
+    await productoImageColumnReady;
+  } catch (error) {
+    // Ignore if table/column is not ready yet; create/update queries will still report precise errors.
+  }
+};
+
 /**
  * FUNCIONES GENÉRICAS PARA CONSULTAS A LA BD POSTGRESQL
  */
@@ -17,18 +31,93 @@ const Categorias = {
     return result.rows[0];
   },
   create: async (data) => {
+    await ensureProductoImageColumn();
+
+    const nombre = String(data?.nombre || '').trim();
+    const descripcion = String(data?.descripcion || '').trim();
+
+    if (!nombre) {
+      const error = new Error('El nombre de la categoría es obligatorio');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const duplicate = await pool.query(
+      'SELECT id, estado FROM categorias WHERE LOWER(TRIM(nombre)) = LOWER(TRIM($1)) LIMIT 1',
+      [nombre]
+    );
+    if (duplicate.rows[0]) {
+      const error = new Error('Ya existe una categoría con ese nombre');
+      error.statusCode = 409;
+      throw error;
+    }
+
     const result = await pool.query(
       'INSERT INTO categorias (nombre, descripcion, estado) VALUES ($1, $2, $3) RETURNING id',
-      [data.nombre, data.descripcion, data.estado || 'Activo']
+      [nombre, descripcion || null, 'Activo']
     );
     return result.rows[0].id;
   },
   update: async (id, data) => {
+    await ensureProductoImageColumn();
+
+    const nombre = String(data?.nombre || '').trim();
+    const descripcion = String(data?.descripcion || '').trim();
+
+    if (!nombre) {
+      const error = new Error('El nombre de la categoría es obligatorio');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const duplicate = await pool.query(
+      'SELECT id FROM categorias WHERE LOWER(TRIM(nombre)) = LOWER(TRIM($1)) AND id <> $2 LIMIT 1',
+      [nombre, id]
+    );
+    if (duplicate.rows[0]) {
+      const error = new Error('Ya existe una categoría con ese nombre');
+      error.statusCode = 409;
+      throw error;
+    }
+
     await pool.query(
-      'UPDATE categorias SET nombre = $1, descripcion = $2, estado = $3 WHERE id = $4',
-      [data.nombre, data.descripcion, data.estado, id]
+      'UPDATE categorias SET nombre = $1, descripcion = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3',
+      [nombre, descripcion || null, id]
     );
     return true;
+  },
+  updateStatus: async (id, data = {}) => {
+    const current = await Categorias.getById(id);
+    if (!current) {
+      const error = new Error('Categoria no encontrada');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const estado = String(data?.estado || '').trim();
+    if (!['Activo', 'Inactivo'].includes(estado)) {
+      const error = new Error('Estado invalido. Valores permitidos: Activo, Inactivo');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const motivo = typeof data?.motivo === 'string' ? data.motivo.trim() : '';
+    if (!motivo || motivo.length < 10) {
+      const error = new Error('El motivo de cambio de estado es obligatorio y debe tener al menos 10 caracteres');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (current.estado === estado) {
+      return current;
+    }
+
+    await pool.query(
+      'UPDATE categorias SET estado = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [estado, id]
+    );
+
+    return Categorias.getById(id);
   },
   delete: async (id) => {
     await pool.query('DELETE FROM categorias WHERE id = $1', [id]);
@@ -64,18 +153,103 @@ const Productos = {
     return result.rows;
   },
   create: async (data) => {
+    const nombre = String(data?.nombre || '').trim();
+    if (!nombre) {
+      const error = new Error('El nombre del producto es obligatorio');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const duplicate = await pool.query(
+      'SELECT id, estado FROM productos WHERE LOWER(TRIM(nombre)) = LOWER(TRIM($1)) LIMIT 1',
+      [nombre]
+    );
+    if (duplicate.rows[0]) {
+      const error = new Error('Ya existe un producto con ese nombre');
+      error.statusCode = 409;
+      throw error;
+    }
+
     const result = await pool.query(
       'INSERT INTO productos (nombre, categoria_id, descripcion, precio, stock, stock_minimo, imagen_url, estado) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
-      [data.nombre, data.categoria_id, data.descripcion, data.precio, data.stock || 0, data.stock_minimo || 10, data.imagen_url, data.estado || 'Activo']
+      [
+        nombre,
+        data.categoria_id,
+        data.descripcion,
+        data.precio,
+        data.stock || 0,
+        data.stock_minimo || 10,
+        data.imagen_url,
+        'Activo',
+      ]
     );
     return result.rows[0].id;
   },
   update: async (id, data) => {
+    const nombre = String(data?.nombre || '').trim();
+    if (!nombre) {
+      const error = new Error('El nombre del producto es obligatorio');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const duplicate = await pool.query(
+      'SELECT id FROM productos WHERE LOWER(TRIM(nombre)) = LOWER(TRIM($1)) AND id <> $2 LIMIT 1',
+      [nombre, id]
+    );
+    if (duplicate.rows[0]) {
+      const error = new Error('Ya existe un producto con ese nombre');
+      error.statusCode = 409;
+      throw error;
+    }
+
     await pool.query(
-      'UPDATE productos SET nombre = $1, categoria_id = $2, descripcion = $3, precio = $4, stock = $5, stock_minimo = $6, imagen_url = $7, estado = $8 WHERE id = $9',
-      [data.nombre, data.categoria_id, data.descripcion, data.precio, data.stock, data.stock_minimo, data.imagen_url, data.estado, id]
+      `UPDATE productos
+       SET nombre = $1,
+           categoria_id = $2,
+           descripcion = $3,
+           precio = $4,
+           stock = $5,
+           stock_minimo = $6,
+           imagen_url = $7,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $8`,
+      [nombre, data.categoria_id, data.descripcion, data.precio, data.stock, data.stock_minimo, data.imagen_url, id]
     );
     return true;
+  },
+  updateStatus: async (id, data = {}) => {
+    const current = await Productos.getById(id);
+    if (!current) {
+      const error = new Error('Producto no encontrado');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const estado = String(data?.estado || '').trim();
+    if (!['Activo', 'Inactivo'].includes(estado)) {
+      const error = new Error('Estado invalido. Valores permitidos: Activo, Inactivo');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const motivo = typeof data?.motivo === 'string' ? data.motivo.trim() : '';
+    if (!motivo || motivo.length < 10) {
+      const error = new Error('El motivo de cambio de estado es obligatorio y debe tener al menos 10 caracteres');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (current.estado === estado) {
+      return current;
+    }
+
+    await pool.query(
+      'UPDATE productos SET estado = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [estado, id]
+    );
+
+    return Productos.getById(id);
   },
   delete: async (id) => {
     await pool.query('DELETE FROM productos WHERE id = $1', [id]);
@@ -337,6 +511,42 @@ const findProveedorByIdentifier = async ({ nit, numeroDocumento, excludeId = nul
   return result.rows[0] || null;
 };
 
+const findProveedorByEmail = async ({ email, excludeId = null }) => {
+  const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  if (!normalizedEmail) return null;
+
+  const values = [normalizedEmail];
+  let query = 'SELECT * FROM proveedores WHERE LOWER(COALESCE(email, \'\')) = $1';
+  if (excludeId !== null && excludeId !== undefined) {
+    values.push(excludeId);
+    query += ` AND id <> $${values.length}`;
+  }
+
+  query += ' ORDER BY CASE WHEN estado = \'Activo\' THEN 0 ELSE 1 END, id ASC LIMIT 1';
+  const result = await pool.query(query, values);
+  return result.rows[0] || null;
+};
+
+const findProveedorByTelefono = async ({ telefono, excludeId = null }) => {
+  const normalizedTelefono = typeof telefono === 'string' ? telefono.replace(/\D/g, '') : '';
+  if (!normalizedTelefono) return null;
+
+  const values = [normalizedTelefono];
+  let query = `
+    SELECT *
+    FROM proveedores
+    WHERE regexp_replace(COALESCE(telefono, ''), '\\D', '', 'g') = $1
+  `;
+  if (excludeId !== null && excludeId !== undefined) {
+    values.push(excludeId);
+    query += ` AND id <> $${values.length}`;
+  }
+
+  query += ' ORDER BY CASE WHEN estado = \'Activo\' THEN 0 ELSE 1 END, id ASC LIMIT 1';
+  const result = await pool.query(query, values);
+  return result.rows[0] || null;
+};
+
 const getPendingComprasByProveedor = async (id) => {
   const result = await pool.query(
     `SELECT COUNT(*)::int AS total
@@ -367,6 +577,48 @@ const Proveedores = {
     const result = await pool.query('SELECT * FROM proveedores WHERE id = $1', [id]);
     return result.rows[0];
   },
+  getByNitOrDocumento: async (identifier) => {
+    await ensureProveedorSchema();
+    const normalized = String(identifier || '').trim();
+    if (!normalized) return null;
+
+    const result = await pool.query(
+      `SELECT *
+       FROM proveedores
+       WHERE nit = $1 OR numero_documento = $1
+       ORDER BY CASE WHEN estado = 'Activo' THEN 0 ELSE 1 END, id ASC
+       LIMIT 1`,
+      [normalized]
+    );
+    return result.rows[0] || null;
+  },
+  getByEmail: async (email) => {
+    await ensureProveedorSchema();
+    const result = await pool.query(
+      `SELECT *
+       FROM proveedores
+       WHERE LOWER(COALESCE(email, '')) = LOWER($1)
+       ORDER BY CASE WHEN estado = 'Activo' THEN 0 ELSE 1 END, id ASC
+       LIMIT 1`,
+      [email]
+    );
+    return result.rows[0] || null;
+  },
+  getByTelefono: async (telefono) => {
+    await ensureProveedorSchema();
+    const normalized = String(telefono || '').replace(/\D/g, '');
+    if (!normalized) return null;
+
+    const result = await pool.query(
+      `SELECT *
+       FROM proveedores
+       WHERE regexp_replace(COALESCE(telefono, ''), '\\D', '', 'g') = $1
+       ORDER BY CASE WHEN estado = 'Activo' THEN 0 ELSE 1 END, id ASC
+       LIMIT 1`,
+      [normalized]
+    );
+    return result.rows[0] || null;
+  },
   getPendingPurchases: async (id) => {
     await ensureProveedorSchema();
     return getPendingComprasByProveedor(id);
@@ -396,6 +648,22 @@ const Proveedores = {
       );
       error.statusCode = 409;
       error.details = { proveedorId: duplicate.id, estado: duplicate.estado };
+      throw error;
+    }
+
+    const duplicateEmail = await findProveedorByEmail({ email: data.email });
+    if (duplicateEmail) {
+      const error = new Error('El correo ya existe para otro proveedor');
+      error.statusCode = 409;
+      error.details = { field: 'email', proveedorId: duplicateEmail.id, estado: duplicateEmail.estado };
+      throw error;
+    }
+
+    const duplicatePhone = await findProveedorByTelefono({ telefono: data.telefono });
+    if (duplicatePhone) {
+      const error = new Error('El telefono ya existe para otro proveedor');
+      error.statusCode = 409;
+      error.details = { field: 'telefono', proveedorId: duplicatePhone.id, estado: duplicatePhone.estado };
       throw error;
     }
 
@@ -467,6 +735,34 @@ const Proveedores = {
     const nextPreferente = data.preferente !== undefined ? toBooleanValue(data.preferente) : toBooleanValue(currentProveedor.preferente);
     const nextRating = data.rating !== undefined ? data.rating : currentProveedor.rating;
     const nextObservaciones = data.observaciones !== undefined ? data.observaciones : currentProveedor.observaciones;
+
+    const duplicateIdentifier = await findProveedorByIdentifier({
+      nit: nextNit,
+      numeroDocumento: nextNumeroDocumento,
+      excludeId: Number(id),
+    });
+    if (duplicateIdentifier) {
+      const error = new Error('El RUC ya existe para otro proveedor');
+      error.statusCode = 409;
+      error.details = { field: 'nit', proveedorId: duplicateIdentifier.id, estado: duplicateIdentifier.estado };
+      throw error;
+    }
+
+    const duplicateEmail = await findProveedorByEmail({ email: nextEmail, excludeId: Number(id) });
+    if (duplicateEmail) {
+      const error = new Error('El correo ya existe para otro proveedor');
+      error.statusCode = 409;
+      error.details = { field: 'email', proveedorId: duplicateEmail.id, estado: duplicateEmail.estado };
+      throw error;
+    }
+
+    const duplicatePhone = await findProveedorByTelefono({ telefono: nextTelefono, excludeId: Number(id) });
+    if (duplicatePhone) {
+      const error = new Error('El telefono ya existe para otro proveedor');
+      error.statusCode = 409;
+      error.details = { field: 'telefono', proveedorId: duplicatePhone.id, estado: duplicatePhone.estado };
+      throw error;
+    }
 
     await pool.query(
       `UPDATE proveedores
@@ -911,6 +1207,7 @@ const Compras = {
       FROM detalle_compras dc
       JOIN productos pr ON dc.producto_id = pr.id
       WHERE dc.compra_id = $1
+      ORDER BY dc.id ASC
     `, [compraId]);
     return result.rows;
   },
@@ -959,7 +1256,7 @@ const Compras = {
         data.subtotal,
         data.iva,
         data.total,
-        data.estado || 'Pendiente',
+        'Pendiente',
         data.observaciones ?? null,
         requiereAprobacion,
         aprobacionExtraordinaria,
@@ -1024,11 +1321,6 @@ const Compras = {
       await client.query('BEGIN');
 
       await client.query(
-        'UPDATE productos SET stock = COALESCE(stock, 0) + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-        [parsedCantidad, productoId]
-      );
-
-      await client.query(
         'INSERT INTO detalle_compras (compra_id, producto_id, cantidad, precio_unitario, subtotal) VALUES ($1, $2, $3, $4, $5)',
         [compraId, productoId, parsedCantidad, parsedPrecio, subtotal]
       );
@@ -1060,6 +1352,105 @@ const Compras = {
       [data.numero_compra, data.proveedor_id, data.fecha, data.subtotal, data.iva, data.total, data.estado, data.observaciones ?? null, data.aprobacion_extraordinaria ?? false, data.motivo_aprobacion ?? null, id]
     );
     return true;
+  },
+  updateStatus: async (id, data = {}) => {
+    await ensureComprasSchema();
+
+    const client = await pool.connect();
+
+    const normalizeStatus = (value) => {
+      const normalized = String(value || '').trim().toLowerCase();
+      if (normalized === 'pendiente') return 'Pendiente';
+      if (normalized === 'recibida' || normalized === 'completada') return 'Recibida';
+      if (normalized === 'cancelada' || normalized === 'cancelado' || normalized === 'anulada') return 'Cancelada';
+      return null;
+    };
+
+    const applyReceiptStock = async (compraId) => {
+      const detalleResult = await client.query(
+        `SELECT producto_id, SUM(cantidad)::int AS cantidad
+         FROM detalle_compras
+         WHERE compra_id = $1
+         GROUP BY producto_id`,
+        [compraId]
+      );
+
+      if (!detalleResult.rows.length) {
+        const error = new Error('La compra no tiene productos para recibir');
+        error.statusCode = 409;
+        throw error;
+      }
+
+      for (const detalle of detalleResult.rows) {
+        await client.query(
+          'UPDATE productos SET stock = COALESCE(stock, 0) + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+          [Number(detalle.cantidad || 0), detalle.producto_id]
+        );
+      }
+    };
+
+    try {
+      await client.query('BEGIN');
+
+      const compraResult = await client.query('SELECT * FROM compras WHERE id = $1 FOR UPDATE', [id]);
+      const compra = compraResult.rows[0];
+      if (!compra) {
+        const error = new Error('Compra no encontrada');
+        error.statusCode = 404;
+        throw error;
+      }
+
+      const requestedStatus = normalizeStatus(data.estado);
+      if (!requestedStatus) {
+        const error = new Error('Estado invalido. Valores permitidos: Pendiente, Recibida, Cancelada');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      if (normalizeStatus(compra.estado) === 'Recibida') {
+        const error = new Error('La compra ya fue recibida y no puede modificarse');
+        error.statusCode = 409;
+        throw error;
+      }
+
+      const motivoCancelacion = typeof data.motivo_cancelacion === 'string' ? data.motivo_cancelacion.trim() : '';
+
+      if (requestedStatus === 'Cancelada' && (!motivoCancelacion || motivoCancelacion.length < 10)) {
+        const error = new Error('El motivo de cancelación es obligatorio y debe tener mínimo 10 caracteres');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      const nextObservaciones = (() => {
+        if (!motivoCancelacion || requestedStatus !== 'Cancelada') return compra.observaciones;
+        const marker = 'Motivo cancelación';
+        const previous = typeof compra.observaciones === 'string' ? compra.observaciones.trim() : '';
+        const entry = `${marker}: ${motivoCancelacion}`;
+        return previous ? `${previous}\n${entry}` : entry;
+      })();
+
+      if (requestedStatus === 'Recibida') {
+        await applyReceiptStock(id);
+      }
+
+      await client.query(
+        `UPDATE compras
+         SET estado = $1,
+             observaciones = $2,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $3`,
+        [requestedStatus, nextObservaciones ?? null, id]
+      );
+
+      const updated = await client.query('SELECT * FROM compras WHERE id = $1', [id]);
+      await client.query('COMMIT');
+      return updated.rows[0];
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   },
   delete: async (id) => {
     await ensureComprasSchema();
@@ -1135,6 +1526,18 @@ const EntregasInsumos = {
 };
 
 // ------- PRODUCCIÓN -------
+const normalizeProduccionStatus = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === 'orden recibida' || normalized === 'pendiente') return 'Orden Recibida';
+  if (normalized === 'orden en preparacion' || normalized === 'en proceso' || normalized === 'en preparación') {
+    return 'Orden en preparacion';
+  }
+  if (normalized === 'orden lista' || normalized === 'completada' || normalized === 'lista') return 'Orden Lista';
+  if (normalized === 'cancelada' || normalized === 'cancelado') return 'Cancelada';
+  return null;
+};
+
 const Produccion = {
   getAll: async () => {
     const result = await pool.query(`
@@ -1150,9 +1553,10 @@ const Produccion = {
     return result.rows[0];
   },
   create: async (data) => {
+    const estadoInicial = normalizeProduccionStatus(data.estado) || 'Orden Recibida';
     const result = await pool.query(
       'INSERT INTO produccion (numero_produccion, producto_id, cantidad, fecha, responsable, estado, notes) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
-      [data.numero_produccion, data.producto_id, data.cantidad, data.fecha, data.responsable, data.estado || 'Pendiente', data.notes]
+      [data.numero_produccion, data.producto_id, data.cantidad, data.fecha, data.responsable, estadoInicial, data.notes]
     );
     return result.rows[0].id;
   },
@@ -1166,6 +1570,90 @@ const Produccion = {
   delete: async (id) => {
     await pool.query('DELETE FROM produccion WHERE id = $1', [id]);
     return true;
+  },
+  updateStatus: async (id, data = {}) => {
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      const currentResult = await client.query('SELECT * FROM produccion WHERE id = $1 FOR UPDATE', [id]);
+      const current = currentResult.rows[0];
+
+      if (!current) {
+        const error = new Error('Registro de produccion no encontrado');
+        error.statusCode = 404;
+        throw error;
+      }
+
+      const currentStatus = normalizeProduccionStatus(current.estado);
+      const nextStatus = normalizeProduccionStatus(data.estado);
+
+      if (!nextStatus) {
+        const error = new Error(
+          'Estado invalido. Valores permitidos: Orden Recibida, Orden en preparacion, Orden Lista, Cancelada'
+        );
+        error.statusCode = 400;
+        throw error;
+      }
+
+      if (currentStatus === 'Orden Lista') {
+        const error = new Error('La orden ya esta en estado Orden Lista y no puede modificarse');
+        error.statusCode = 409;
+        throw error;
+      }
+
+      if (currentStatus === 'Cancelada') {
+        const error = new Error('La orden cancelada no puede modificarse');
+        error.statusCode = 409;
+        throw error;
+      }
+
+      if (currentStatus === nextStatus) {
+        await client.query('COMMIT');
+        return current;
+      }
+
+      const allowedTransitions = {
+        'Orden Recibida': ['Orden en preparacion', 'Cancelada'],
+        'Orden en preparacion': ['Orden Lista', 'Cancelada'],
+      };
+
+      if (!allowedTransitions[currentStatus]?.includes(nextStatus)) {
+        const error = new Error('Transicion de estado no permitida para la orden de produccion');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      const cancelReason = typeof data.motivo_cancelacion === 'string' ? data.motivo_cancelacion.trim() : '';
+      if (nextStatus === 'Cancelada' && cancelReason.length < 10) {
+        const error = new Error('El motivo de cancelacion es obligatorio y debe tener al menos 10 caracteres');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      const nextNotes = (() => {
+        if (nextStatus !== 'Cancelada') return current.notes;
+        const marker = 'Motivo cancelacion';
+        const previous = typeof current.notes === 'string' ? current.notes.trim() : '';
+        const entry = `${marker}: ${cancelReason}`;
+        return previous ? `${previous}\n${entry}` : entry;
+      })();
+
+      await client.query(
+        'UPDATE produccion SET estado = $1, notes = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3',
+        [nextStatus, nextNotes ?? null, id]
+      );
+
+      const updatedResult = await client.query('SELECT * FROM produccion WHERE id = $1', [id]);
+      await client.query('COMMIT');
+      return updatedResult.rows[0];
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 };
 
@@ -1535,7 +2023,6 @@ const buildUserFilterQuery = (filters = {}) => {
       LOWER(COALESCE(u.nombre, '')) LIKE ${placeholder}
       OR LOWER(COALESCE(u.apellido, '')) LIKE ${placeholder}
       OR LOWER(COALESCE(u.email, '')) LIKE ${placeholder}
-      OR LOWER(COALESCE(u.username, '')) LIKE ${placeholder}
       OR LOWER(COALESCE(u.documento, '')) LIKE ${placeholder}
       OR LOWER(COALESCE(u.telefono, '')) LIKE ${placeholder}
       OR LOWER(COALESCE(u.direccion, '')) LIKE ${placeholder}
@@ -1596,7 +2083,6 @@ const toUserSnapshot = (user) => ({
   documento: user?.documento ?? null,
   direccion: user?.direccion ?? null,
   email: user?.email ?? null,
-  username: user?.username ?? null,
   telefono: user?.telefono ?? null,
   rol_id: user?.rol_id ?? null,
   estado: user?.estado ?? null,
@@ -1605,7 +2091,7 @@ const toUserSnapshot = (user) => ({
 
 const getUserChanges = (before, after) => {
   const changed = {};
-  const fields = ['nombre', 'apellido', 'tipo_documento', 'documento', 'direccion', 'email', 'username', 'telefono', 'rol_id', 'estado'];
+  const fields = ['nombre', 'apellido', 'tipo_documento', 'documento', 'direccion', 'email', 'telefono', 'rol_id', 'estado'];
 
   fields.forEach((field) => {
     const previous = before?.[field];
@@ -1870,7 +2356,7 @@ const Usuarios = {
       FROM usuarios u
       LEFT JOIN roles r ON u.rol_id = r.id
       ${whereClause}
-      ORDER BY u.created_at DESC, u.id DESC
+      ORDER BY u.id ASC
       ${querySuffix}
     `, values);
     return result.rows;
@@ -1892,15 +2378,14 @@ const Usuarios = {
     const result = await pool.query('SELECT * FROM usuarios WHERE documento = $1', [documento]);
     return result.rows[0];
   },
-  getByUsername: async (username) => {
-    const result = await pool.query('SELECT * FROM usuarios WHERE LOWER(username) = LOWER($1)', [username]);
+  getByTelefono: async (telefono) => {
+    const result = await pool.query('SELECT * FROM usuarios WHERE telefono = $1', [telefono]);
     return result.rows[0];
   },
-  getByEmailOrUsername: async (identifier) => {
+  getByEmailLogin: async (identifier) => {
     const result = await pool.query(
       `SELECT * FROM usuarios
        WHERE LOWER(email) = LOWER($1)
-          OR LOWER(username) = LOWER($1)
        LIMIT 1`,
       [identifier]
     );
@@ -1959,8 +2444,8 @@ const Usuarios = {
   },
   create: async (data) => {
     const result = await pool.query(
-      'INSERT INTO usuarios (username, nombre, apellido, tipo_documento, documento, direccion, email, telefono, password_hash, rol_id, estado) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id',
-      [data.username, data.nombre, data.apellido, data.tipo_documento, data.documento, data.direccion, data.email, data.telefono, data.password_hash || '$2a$10$DEFAULT', data.rol_id, data.estado || 'Activo']
+      'INSERT INTO usuarios (nombre, apellido, tipo_documento, documento, direccion, email, telefono, password_hash, rol_id, estado) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
+      [data.nombre, data.apellido, data.tipo_documento, data.documento, data.direccion, data.email, data.telefono, data.password_hash || '$2a$10$DEFAULT', data.rol_id, data.estado || 'Activo']
     );
     const createdUser = await Usuarios.getById(result.rows[0].id);
     await registerUserAudit({
@@ -1984,12 +2469,11 @@ const Usuarios = {
            documento = COALESCE($4, documento),
            direccion = COALESCE($5, direccion),
            email = COALESCE($6, email),
-           username = COALESCE($7, username),
-           telefono = COALESCE($8, telefono),
-           rol_id = COALESCE($9, rol_id),
-           estado = COALESCE($10, estado),
+           telefono = COALESCE($7, telefono),
+           rol_id = COALESCE($8, rol_id),
+           estado = COALESCE($9, estado),
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $11`,
+         WHERE id = $10`,
       [
         data.nombre,
         data.apellido,
@@ -1997,7 +2481,6 @@ const Usuarios = {
         data.documento,
         data.direccion,
         data.email,
-        data.username,
         data.telefono,
         data.rol_id,
         data.estado,

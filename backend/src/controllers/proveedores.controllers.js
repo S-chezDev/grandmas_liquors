@@ -19,6 +19,36 @@ module.exports = {
       res.status(500).json({ success: false, message: error.message });
     }
   },
+  getByNit: async (req, res) => {
+    try {
+      const nit = String(req.params.nit || '').trim();
+      const proveedor = await models.Proveedores.getByNitOrDocumento(nit);
+      if (!proveedor) return res.status(404).json({ success: false, message: 'Proveedor no encontrado' });
+      res.json({ success: true, data: proveedor });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  },
+  getByEmail: async (req, res) => {
+    try {
+      const email = String(req.params.email || '').trim().toLowerCase();
+      const proveedor = await models.Proveedores.getByEmail(email);
+      if (!proveedor) return res.status(404).json({ success: false, message: 'Proveedor no encontrado' });
+      res.json({ success: true, data: proveedor });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  },
+  getByTelefono: async (req, res) => {
+    try {
+      const telefono = String(req.params.telefono || '').replace(/\D/g, '');
+      const proveedor = await models.Proveedores.getByTelefono(telefono);
+      if (!proveedor) return res.status(404).json({ success: false, message: 'Proveedor no encontrado' });
+      res.json({ success: true, data: proveedor });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  },
   create: async (req, res) => {
     try {
       const normalized = normalizeProveedorPayload(req.body);

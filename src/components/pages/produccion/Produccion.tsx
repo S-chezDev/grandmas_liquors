@@ -3,7 +3,7 @@ import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, Factory, FileText, X } from 'lucide-react';
+import { Plus, FileText } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
 import { produccion as produccionAPI } from '../../../services/api';
 
@@ -18,6 +18,37 @@ interface OrdenProduccion {
   notes: string;
 }
 
+interface StateChangeRequest {
+  orden: OrdenProduccion;
+  from: string;
+  to: string;
+}
+
+const normalizeEstadoProduccion = (value: unknown): 'Orden Recibida' | 'Orden en preparacion' | 'Orden Lista' | 'Cancelada' => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'orden recibida' || normalized === 'pendiente') return 'Orden Recibida';
+  if (normalized === 'orden en preparacion' || normalized === 'en proceso' || normalized === 'en preparación') {
+    return 'Orden en preparacion';
+  }
+  if (normalized === 'orden lista' || normalized === 'completada' || normalized === 'lista') return 'Orden Lista';
+  return 'Cancelada';
+};
+
+const toDateOnly = (value: unknown): string => {
+  if (!value) return '';
+  const raw = String(value).trim();
+  if (!raw) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (raw.includes('T')) return raw.split('T')[0];
+
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().split('T')[0];
+  }
+
+  return raw;
+};
+
 export function Produccion() {
   const [produccion, setProduccion] = useState<OrdenProduccion[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,7 +62,11 @@ export function Produccion() {
     try {
       setLoading(true);
       const data = await produccionAPI.getAll();
-      setProduccion(data);
+      const normalized = (Array.isArray(data) ? data : []).map((orden: any) => ({
+        ...orden,
+        fecha: toDateOnly(orden?.fecha),
+      }));
+      setProduccion(normalized);
     } catch (error) {
       console.error('Error al cargar producción:', error);
     } finally {
@@ -41,6 +76,9 @@ export function Produccion() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
+  const [pendingStateChange, setPendingStateChange] = useState<StateChangeRequest | null>(null);
+  const [stateChangeReason, setStateChangeReason] = useState('');
+  const [stateChangeSaving, setStateChangeSaving] = useState(false);
   const [pdfContent, setPdfContent] = useState('');
   const [selectedOrden, setSelectedOrden] = useState<OrdenProduccion | null>(null);
   const [formData, setFormData] = useState({
@@ -49,7 +87,7 @@ export function Produccion() {
     cantidad: 0,
     fecha: new Date().toISOString().split('T')[0],
     responsable: '',
-    estado: 'En Proceso',
+    estado: 'Orden Recibida',
     notes: ''
   });
 
@@ -62,18 +100,44 @@ export function Produccion() {
       render: (cantidad: number) => `${cantidad} unidades`
     },
     { key: 'responsable', label: 'Responsable' },
-    { key: 'fecha', label: 'Fecha' },
+    {
+      key: 'fecha',
+      label: 'Fecha',
+      render: (fecha: string) => toDateOnly(fecha),
+    },
     { 
       key: 'estado', 
       label: 'Estado',
-      render: (estado: string) => (
-        <span className={`px-3 py-1 rounded-full text-xs ${
-          estado === 'Completada' ? 'bg-green-100 text-green-700' :
-          estado === 'En Proceso' ? 'bg-blue-100 text-blue-700' :
-          'bg-red-100 text-red-700'
-        }`}>
-          {estado}
-        </span>
+      render: (estado: string, orden: OrdenProduccion) => (
+        <select
+          value={normalizeEstadoProduccion(estado)}
+          onChange={(event) =>
+            handleEstadoChangeRequest(
+              orden,
+              event.target.value as 'Orden Recibida' | 'Orden en preparacion' | 'Orden Lista' | 'Cancelada'
+            )
+          }
+          disabled={
+            stateChangeSaving ||
+            normalizeEstadoProduccion(estado) === 'Cancelada' ||
+            normalizeEstadoProduccion(estado) === 'Orden Lista'
+          }
+          className={`px-3 py-1 rounded-full text-xs border-0 cursor-pointer ${
+            normalizeEstadoProduccion(estado) === 'Orden Lista' ? 'bg-green-100 text-green-700' :
+            normalizeEstadoProduccion(estado) === 'Orden en preparacion' ? 'bg-blue-100 text-blue-700' :
+            normalizeEstadoProduccion(estado) === 'Orden Recibida' ? 'bg-amber-100 text-amber-700' :
+            'bg-red-100 text-red-700'
+          } ${
+            normalizeEstadoProduccion(estado) === 'Cancelada' || normalizeEstadoProduccion(estado) === 'Orden Lista'
+              ? 'opacity-70 cursor-not-allowed'
+              : ''
+          }`}
+        >
+          <option value="Orden Recibida">Orden Recibida</option>
+          <option value="Orden en preparacion">Orden en preparacion</option>
+          <option value="Orden Lista">Orden Lista</option>
+          <option value="Cancelada">Cancelada</option>
+        </select>
       )
     }
   ];
@@ -86,7 +150,7 @@ export function Produccion() {
       cantidad: 0,
       fecha: new Date().toISOString().split('T')[0],
       responsable: '',
-      estado: 'En Proceso',
+      estado: 'Orden Recibida',
       notes: ''
     });
     setIsModalOpen(true);
@@ -98,7 +162,7 @@ export function Produccion() {
       numero_produccion: orden.numero_produccion,
       producto_id: orden.producto_id,
       cantidad: orden.cantidad,
-      fecha: orden.fecha,
+      fecha: toDateOnly(orden.fecha),
       responsable: orden.responsable,
       estado: orden.estado,
       notes: orden.notes
@@ -106,36 +170,13 @@ export function Produccion() {
     setIsModalOpen(true);
   };
 
-  const handleCancelar = async (orden: OrdenProduccion) => {
-    if (orden.estado === 'Cancelada') {
-      showAlert({
-        title: 'Orden ya cancelada',
-        description: 'Esta orden ya está cancelada.',
-        type: 'warning',
-        confirmText: 'Entendido',
-        onConfirm: () => {}
-      });
-      return;
-    }
-    showAlert({
-      title: 'Confirmar cancelación',
-      description: `¿Está seguro de cancelar la orden ${orden.numero_produccion}? Esta acción no se puede deshacer.`,
-      type: 'danger',
-      confirmText: 'Cancelar orden',
-      cancelText: 'Cerrar',
-      onConfirm: async () => {
-        try {
-          await produccionAPI.update(Number(orden.id), { estado: 'Cancelada' });
-          await loadProduccion();
-        } catch (error) {
-          console.error('Error:', error);
-        }
-      }
-    });
-  };
+  const handleEstadoChangeRequest = async (
+    orden: OrdenProduccion,
+    targetState: 'Orden Recibida' | 'Orden en preparacion' | 'Orden Lista' | 'Cancelada'
+  ) => {
+    const estadoActual = normalizeEstadoProduccion(orden.estado);
 
-  const handleChangeState = async (orden: OrdenProduccion) => {
-    if (orden.estado === 'Cancelada') {
+    if (estadoActual === 'Cancelada') {
       showAlert({
         title: 'Acción no permitida',
         description: 'No se puede cambiar el estado de una orden cancelada.',
@@ -145,14 +186,117 @@ export function Produccion() {
       });
       return;
     }
-    
-    const newState = orden.estado === 'En Proceso' ? 'Completada' : 'En Proceso';
+
+    if (estadoActual === 'Orden Lista') {
+      showAlert({
+        title: 'Orden lista',
+        description: 'Esta orden ya está en estado Orden Lista y no puede modificarse.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
+      return;
+    }
+
+    if (estadoActual === targetState) return;
+
+    if (estadoActual === 'Orden Recibida' && targetState === 'Orden en preparacion') {
+      try {
+        setStateChangeSaving(true);
+        try {
+          await produccionAPI.updateStatus(Number(orden.id), {
+            estado: 'Orden en preparacion',
+          });
+        } catch (error: any) {
+          // Fallback for environments where backend status route is not yet reloaded.
+          if (error?.status === 404 || String(error?.message || '').includes('/estado')) {
+            await produccionAPI.update(Number(orden.id), {
+              estado: 'Orden en preparacion',
+            });
+          } else {
+            throw error;
+          }
+        }
+        await loadProduccion();
+      } catch (error) {
+        showAlert({
+          title: 'Error',
+          description: (error as any)?.message || 'No se pudo actualizar el estado de la orden de producción.',
+          type: 'danger',
+          confirmText: 'Entendido',
+          onConfirm: () => {},
+        });
+      } finally {
+        setStateChangeSaving(false);
+      }
+      return;
+    }
+
+    setPendingStateChange({
+      orden,
+      from: estadoActual,
+      to: targetState,
+    });
+    setStateChangeReason('');
+  };
+
+  const handleConfirmStateChange = async () => {
+    if (!pendingStateChange) return;
+
+    const targetState = pendingStateChange.to;
+
+    if (pendingStateChange.to === 'Cancelada' && stateChangeReason.trim().length < 10) {
+      showAlert({
+        title: 'Motivo requerido',
+        description: 'Para cancelar la orden debes indicar un motivo de al menos 10 caracteres.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
     try {
-      await produccionAPI.update(Number(orden.id), { estado: newState });
+      setStateChangeSaving(true);
+      await produccionAPI.updateStatus(Number(pendingStateChange.orden.id), {
+        estado: targetState,
+        motivo_cancelacion: stateChangeReason.trim() || undefined,
+      });
       await loadProduccion();
+      setPendingStateChange(null);
+      setStateChangeReason('');
+
+      if (targetState !== 'Orden en preparacion') {
+        showAlert({
+          title: 'Estado actualizado',
+          description:
+            targetState === 'Orden Lista'
+              ? 'La orden pasó a Orden Lista. El estado quedó bloqueado y no podrá modificarse nuevamente.'
+              : targetState === 'Cancelada'
+              ? 'La orden de producción fue cancelada correctamente.'
+              : 'Estado actualizado correctamente.',
+          type: 'success',
+          confirmText: 'Entendido',
+          onConfirm: () => {},
+        });
+      }
     } catch (error) {
       console.error('Error:', error);
+      showAlert({
+        title: 'Error',
+        description: (error as any)?.message || 'No se pudo actualizar el estado de la orden de producción.',
+        type: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+    } finally {
+      setStateChangeSaving(false);
     }
+  };
+
+  const handleCancelStateChange = () => {
+    setPendingStateChange(null);
+    setStateChangeReason('');
   };
 
   const handleViewDetail = (orden: OrdenProduccion) => {
@@ -230,18 +374,53 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         data={produccion}
         actions={[
           commonActions.view(handleViewDetail),
-          {
-            label: 'Cambiar Estado',
-            icon: <span className="text-xs">🔄</span>,
-            onClick: handleChangeState,
-            variant: 'primary'
-          },
           commonActions.pdf(handleGeneratePDF),
-          commonActions.cancel(handleCancelar)
         ]}
         onSearch={(query) => console.log('Searching:', query)}
         searchPlaceholder="Buscar órdenes..."
       />
+
+      <Modal
+        isOpen={Boolean(pendingStateChange)}
+        onClose={handleCancelStateChange}
+        title={`Cambiar estado - Orden ${pendingStateChange?.orden.numero_produccion || ''}`}
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-accent/30 p-4 space-y-1">
+            <p className="text-sm text-muted-foreground">Estado actual: {pendingStateChange?.from || 'N/A'}</p>
+            <p className="text-sm text-muted-foreground">Nuevo estado: {pendingStateChange?.to || 'N/A'}</p>
+          </div>
+
+          {pendingStateChange?.to === 'Orden Lista' ? (
+            <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-900">
+              Al confirmar, la orden cambiará a estado Orden Lista y este estado no podrá volver a modificarse.
+            </div>
+          ) : null}
+
+          {pendingStateChange?.to === 'Cancelada' ? (
+            <FormField
+              label="Motivo de cancelación"
+              name="motivo-cambio-produccion"
+              type="textarea"
+              value={stateChangeReason}
+              onChange={(value) => setStateChangeReason(String(value))}
+              rows={3}
+              required
+              placeholder="Explica por qué se cancela la orden (mínimo 10 caracteres)"
+            />
+          ) : null}
+
+          <FormActions>
+            <Button variant="outline" onClick={handleCancelStateChange} disabled={stateChangeSaving}>
+              Cancelar
+            </Button>
+            <Button onClick={handleConfirmStateChange} disabled={stateChangeSaving}>
+              {stateChangeSaving ? 'Guardando...' : 'Confirmar'}
+            </Button>
+          </FormActions>
+        </div>
+      </Modal>
 
       {/* Modal de formulario */}
       <Modal
@@ -323,7 +502,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
 
           <div className="p-4 bg-accent/50 rounded-lg">
             <p className="text-sm text-muted-foreground">
-              La orden de producción se creará en estado "En Proceso". 
+              La orden de producción se creará en estado "Orden Recibida".
               Puedes cambiar el estado usando las acciones de la tabla.
             </p>
           </div>
@@ -355,11 +534,12 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                 <p className="text-sm text-muted-foreground">{selectedOrden.producto}</p>
               </div>
               <span className={`px-4 py-2 rounded-full text-sm ${
-                selectedOrden.estado === 'Completada' ? 'bg-green-100 text-green-700' :
-                selectedOrden.estado === 'En Proceso' ? 'bg-blue-100 text-blue-700' :
+                normalizeEstadoProduccion(selectedOrden.estado) === 'Orden Lista' ? 'bg-green-100 text-green-700' :
+                normalizeEstadoProduccion(selectedOrden.estado) === 'Orden en preparacion' ? 'bg-blue-100 text-blue-700' :
+                normalizeEstadoProduccion(selectedOrden.estado) === 'Orden Recibida' ? 'bg-amber-100 text-amber-700' :
                 'bg-red-100 text-red-700'
               }`}>
-                {selectedOrden.estado}
+                {normalizeEstadoProduccion(selectedOrden.estado)}
               </span>
             </div>
 
@@ -395,11 +575,13 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
             <div className="p-4 bg-accent/50 rounded-lg">
               <label className="text-sm text-muted-foreground block mb-2">Observaciones</label>
               <p className="text-sm">
-                {selectedOrden.estado === 'Cancelada' 
+                {normalizeEstadoProduccion(selectedOrden.estado) === 'Cancelada' 
                   ? 'Esta orden ha sido cancelada y no puede ser modificada.'
-                  : selectedOrden.estado === 'Completada'
-                  ? 'Orden completada exitosamente.'
-                  : 'Orden en proceso de producción.'}
+                  : normalizeEstadoProduccion(selectedOrden.estado) === 'Orden Lista'
+                  ? 'Orden lista y cerrada. No admite cambios adicionales.'
+                  : normalizeEstadoProduccion(selectedOrden.estado) === 'Orden en preparacion'
+                  ? 'Orden en preparacion de producción.'
+                  : 'Orden recibida pendiente por iniciar preparación.'}
               </p>
             </div>
 

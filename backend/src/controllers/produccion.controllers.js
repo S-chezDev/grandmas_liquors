@@ -34,6 +34,14 @@ module.exports = {
       res.status(500).json({ success: false, message: error.message });
     }
   },
+  updateStatus: async (req, res) => {
+    try {
+      const updated = await models.Produccion.updateStatus(req.params.id, req.body);
+      res.json({ success: true, data: updated, message: 'Estado de produccion actualizado exitosamente' });
+    } catch (error) {
+      res.status(error.statusCode || 500).json({ success: false, message: error.message, details: error.details });
+    }
+  },
   delete: async (req, res) => {
     try {
       await models.Produccion.delete(req.params.id);

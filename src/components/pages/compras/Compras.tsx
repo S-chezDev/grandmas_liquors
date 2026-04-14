@@ -3,9 +3,10 @@ import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, ShoppingCart, Trash2 } from 'lucide-react';
+import { Plus, Trash2, RotateCcw, Search } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
 import { compras as comprasAPI, productos as productosAPI, proveedores as proveedoresAPI } from '../../../services/api';
+import { useAuth } from '../../AuthContext';
 
 interface CompraItem {
   productoId: number;
@@ -13,8 +14,6 @@ interface CompraItem {
   cantidad: number;
   precioUnitario: number;
   subtotal: number;
-  permisoExtraordinario?: boolean;
-  motivoPermiso?: string;
 }
 
 interface ProductoOption {
@@ -46,7 +45,59 @@ interface Compra {
   observaciones?: string;
 }
 
+interface ComprasFilters {
+  id: string;
+  fecha: string;
+  proveedor: string;
+  estado: '' | 'Pendiente' | 'Recibida' | 'Cancelada';
+}
+
+interface StateChangeRequest {
+  compra: Compra;
+  from: 'Pendiente' | 'Recibida' | 'Cancelada';
+  to: 'Pendiente' | 'Recibida' | 'Cancelada';
+}
+
+const normalizeEstadoCompra = (value: unknown): 'Pendiente' | 'Recibida' | 'Cancelada' => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'recibida' || normalized === 'completada') return 'Recibida';
+  if (normalized === 'cancelada' || normalized === 'cancelado' || normalized === 'anulada') return 'Cancelada';
+  return 'Pendiente';
+};
+
+const toDateOnly = (value: unknown): string => {
+  if (!value) return '';
+  const raw = String(value).trim();
+  if (!raw) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (raw.includes('T')) return raw.split('T')[0];
+
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().split('T')[0];
+  }
+  return raw;
+};
+
+const normalizeDateFilterInput = (value: string): string => {
+  const raw = value.trim();
+  if (!raw) return '';
+
+  const directMatch = raw.match(/^(\d{4})[/-](\d{2})[/-](\d{2})$/);
+  if (directMatch) {
+    return `${directMatch[1]}-${directMatch[2]}-${directMatch[3]}`;
+  }
+
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().split('T')[0];
+  }
+
+  return raw;
+};
+
 export function Compras() {
+  const { user } = useAuth();
   const [compras, setCompras] = useState<Compra[]>([]);
   const [productosDisponibles, setProductosDisponibles] = useState<ProductoOption[]>([]);
   const [proveedoresDisponibles, setProveedoresDisponibles] = useState<ProveedorOption[]>([]);
@@ -96,14 +147,14 @@ export function Compras() {
         numero_compra: compra.numero_compra || `COM-${compra.id}`,
         proveedor_id: Number(compra.proveedor_id || 0),
         proveedor: compra.nombre_empresa || compra.proveedor_nombre || 'Sin proveedor',
-        fecha: compra.fecha || '',
-        fechaCreacion: compra.fecha_creacion || compra.fecha || '',
-        fechaCompra: compra.fecha || '',
+        fecha: toDateOnly(compra.fecha),
+        fechaCreacion: toDateOnly(compra.fecha_creacion || compra.fecha),
+        fechaCompra: toDateOnly(compra.fecha),
         items: Array.isArray(compra.items) ? compra.items : [],
         subtotal: Number(compra.subtotal || 0),
         iva: Number(compra.iva || 0),
         total: Number(compra.total || 0),
-        estado: compra.estado || 'Pendiente',
+        estado: normalizeEstadoCompra(compra.estado),
         observaciones: compra.observaciones || '',
       }));
 
@@ -119,23 +170,31 @@ export function Compras() {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
   const [pdfContent, setPdfContent] = useState('');
+  const [pendingStateChange, setPendingStateChange] = useState<StateChangeRequest | null>(null);
+  const [stateChangeReason, setStateChangeReason] = useState('');
+  const [stateChangeSaving, setStateChangeSaving] = useState(false);
+  const [filters, setFilters] = useState<ComprasFilters>({
+    id: '',
+    fecha: '',
+    proveedor: '',
+    estado: '',
+  });
   
   const [formData, setFormData] = useState({
     proveedor: '',
     fecha: new Date().toISOString().split('T')[0],
     items: [] as CompraItem[],
     observaciones: '',
-    aprobacionExtraordinaria: false,
-    motivoAprobacion: ''
   });
 
   const [currentItem, setCurrentItem] = useState({
     productoId: '',
     cantidad: 0,
     precioUnitario: 0,
-    permisoExtraordinario: false,
-    motivoPermiso: ''
   });
+
+  const canChangeCompraStatus =
+    user?.rol === 'Administrador' || user?.rol === 'Asesor' || user?.rol === 'Productor';
 
   const subtotalCalculado = useMemo(
     () => formData.items.reduce((sum, item) => sum + item.subtotal, 0),
@@ -143,6 +202,22 @@ export function Compras() {
   );
   const ivaCalculado = useMemo(() => subtotalCalculado * 0.19, [subtotalCalculado]);
   const totalCalculado = useMemo(() => subtotalCalculado + ivaCalculado, [subtotalCalculado, ivaCalculado]);
+  const canCreateCompra = Boolean(formData.proveedor) && formData.items.length > 0;
+  const creationHelpMessage = useMemo(() => {
+    if (!formData.proveedor && formData.items.length === 0) {
+      return 'Selecciona un proveedor y agrega al menos un producto para poder crear la compra.';
+    }
+
+    if (!formData.proveedor) {
+      return 'Debes seleccionar un proveedor para continuar.';
+    }
+
+    if (formData.items.length === 0) {
+      return 'Debes agregar al menos un producto del proveedor para crear la compra.';
+    }
+
+    return '';
+  }, [formData.items.length, formData.proveedor]);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('es-CO', {
@@ -169,17 +244,42 @@ export function Compras() {
     { 
       key: 'estado', 
       label: 'Estado',
-      render: (estado: string) => (
-        <span className={`px-3 py-1 rounded-full text-xs ${
-          estado === 'Completada' ? 'bg-green-100 text-green-700' :
-          estado === 'Pendiente' ? 'bg-yellow-100 text-yellow-700' :
-          'bg-red-100 text-red-700'
-        }`}>
-          {estado}
-        </span>
+      render: (estado: string, compra: Compra) => (
+        normalizeEstadoCompra(estado) === 'Recibida' ? (
+          <span className="inline-flex rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-700">
+            Compra recibida completamente
+          </span>
+        ) : (
+          <select
+            value={normalizeEstadoCompra(estado)}
+            onChange={(event) =>
+              handleEstadoChangeRequest(compra, event.target.value as 'Pendiente' | 'Recibida' | 'Cancelada')
+            }
+            disabled={!canChangeCompraStatus || stateChangeSaving}
+            className={`px-3 py-1 rounded-full text-xs border-0 cursor-pointer ${
+              estado === 'Pendiente' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
+            } ${!canChangeCompraStatus ? 'opacity-70 cursor-not-allowed' : ''}`}
+          >
+            <option value="Pendiente">Pendiente</option>
+            <option value="Recibida">Recibida</option>
+            <option value="Cancelada">Cancelada</option>
+          </select>
+        )
       )
     }
   ];
+
+  const comprasFiltradas = useMemo(() => {
+    return compras.filter((compra) => {
+      const byId = !filters.id.trim() || String(compra.id).includes(filters.id.trim());
+      const byFecha = !filters.fecha || toDateOnly(compra.fecha) === normalizeDateFilterInput(filters.fecha);
+      const byProveedor =
+        !filters.proveedor.trim() ||
+        compra.proveedor.toLowerCase().includes(filters.proveedor.trim().toLowerCase());
+      const byEstado = !filters.estado || normalizeEstadoCompra(compra.estado) === filters.estado;
+      return byId && byFecha && byProveedor && byEstado;
+    });
+  }, [compras, filters]);
 
   const handleAdd = () => {
     setSelectedCompra(null);
@@ -188,10 +288,8 @@ export function Compras() {
       fecha: new Date().toISOString().split('T')[0], 
       items: [],
       observaciones: '',
-      aprobacionExtraordinaria: false,
-      motivoAprobacion: ''
     });
-    setCurrentItem({ productoId: '', cantidad: 0, precioUnitario: 0, permisoExtraordinario: false, motivoPermiso: '' });
+    setCurrentItem({ productoId: '', cantidad: 0, precioUnitario: 0 });
     setIsModalOpen(true);
   };
 
@@ -210,10 +308,14 @@ export function Compras() {
 
       setSelectedCompra({
         ...compra,
+        fecha: toDateOnly((detalle as any)?.fecha ?? compra.fecha),
+        fechaCompra: toDateOnly((detalle as any)?.fecha ?? compra.fechaCompra),
+        fechaCreacion: toDateOnly((detalle as any)?.fecha_creacion ?? compra.fechaCreacion),
         items: detalleItems,
         subtotal: Number((detalle as any)?.subtotal ?? compra.subtotal),
         iva: Number((detalle as any)?.iva ?? compra.iva),
         total: Number((detalle as any)?.total ?? compra.total),
+        estado: normalizeEstadoCompra((detalle as any)?.estado ?? compra.estado),
         observaciones: String((detalle as any)?.observaciones || compra.observaciones || ''),
       });
     } catch {
@@ -222,17 +324,119 @@ export function Compras() {
     setIsDetailModalOpen(true);
   };
 
-  const handleAnular = (compra: Compra) => {
-    showAlert({
-      title: 'Confirmar anulación',
-      description: `¿Está seguro de anular la compra ${compra.id}? Esta acción no se puede deshacer.`,
-      type: 'danger',
-      confirmText: 'Anular',
-      cancelText: 'Cancelar',
-      onConfirm: () => {
-        setCompras(compras.map(c => c.id === compra.id ? { ...c, estado: 'Anulada' as const } : c));
-      }
+  const handleEstadoChangeRequest = (
+    compra: Compra,
+    targetState: 'Pendiente' | 'Recibida' | 'Cancelada'
+  ) => {
+    if (!canChangeCompraStatus) {
+      showAlert({
+        title: 'Sin permisos',
+        description: 'Solo administradores, asesores o productores pueden cambiar el estado de la compra.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
+    const estadoActual = normalizeEstadoCompra(compra.estado);
+    if (estadoActual === 'Recibida') {
+      showAlert({
+        title: 'Compra recibida',
+        description: 'Esta compra ya fue recibida. El estado ya no puede modificarse.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
+    if (estadoActual === targetState) return;
+
+    setPendingStateChange({
+      compra,
+      from: estadoActual,
+      to: targetState,
     });
+    setStateChangeReason('');
+  };
+
+  const handleConfirmStatusChange = async () => {
+    if (!pendingStateChange) return;
+
+    if (pendingStateChange.to === 'Cancelada' && stateChangeReason.trim().length < 10) {
+      showAlert({
+        title: 'Motivo requerido',
+        description: 'Para cancelar la compra debes indicar un motivo corto de al menos 10 caracteres.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
+    try {
+      setStateChangeSaving(true);
+      const response: any = await comprasAPI.updateStatus(Number(pendingStateChange.compra.id), {
+        estado: pendingStateChange.to,
+        motivo_cancelacion: stateChangeReason.trim() || undefined,
+      });
+
+      const estadoFinal = normalizeEstadoCompra(response?.estado || pendingStateChange.to);
+      setCompras((current) =>
+        current.map((compra) =>
+          String(compra.id) === String(pendingStateChange.compra.id)
+            ? {
+                ...compra,
+                estado: estadoFinal,
+                observaciones: response?.observaciones ?? compra.observaciones,
+              }
+            : compra
+        )
+      );
+      setSelectedCompra((current) =>
+        current && String(current.id) === String(pendingStateChange.compra.id)
+          ? {
+              ...current,
+              estado: estadoFinal,
+              observaciones: response?.observaciones ?? current.observaciones,
+            }
+          : current
+      );
+
+      await loadCompras();
+
+      setPendingStateChange(null);
+      setStateChangeReason('');
+      showAlert({
+        title: 'Estado actualizado',
+        description:
+          estadoFinal === 'Recibida'
+            ? 'La compra pasó a Recibida. El inventario se incrementó con los productos de esta compra y el estado ya no podrá modificarse.'
+            : 'La compra fue cancelada correctamente.',
+        type: 'success',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+    } catch (error: any) {
+      showAlert({
+        title: 'Error',
+        description:
+          error?.status === 403
+            ? 'No tienes permisos para cambiar el estado de compras con este usuario.'
+            : error?.message || 'No se pudo actualizar el estado de la compra.',
+        type: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+    } finally {
+      setStateChangeSaving(false);
+    }
+  };
+
+  const handleCancelStatusChange = () => {
+    setPendingStateChange(null);
+    setStateChangeReason('');
   };
 
   const handleGeneratePDF = (compra: Compra) => {
@@ -301,17 +505,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
       return;
     }
 
-    if (currentItem.cantidad > 50 && (!currentItem.permisoExtraordinario || currentItem.motivoPermiso.trim().length < 10)) {
-      showAlert({
-        title: 'Permiso extraordinario requerido',
-        description: 'Cantidades mayores a 50 requieren permiso extraordinario y un motivo de al menos 10 caracteres.',
-        type: 'warning',
-        confirmText: 'Entendido',
-        onConfirm: () => {}
-      });
-      return;
-    }
-
     const productoSeleccionado = productosDisponibles.find(
       (p) => p.id === Number(currentItem.productoId)
     );
@@ -333,8 +526,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
       cantidad: currentItem.cantidad,
       precioUnitario: currentItem.precioUnitario,
       subtotal: currentItem.cantidad * currentItem.precioUnitario,
-      permisoExtraordinario: currentItem.permisoExtraordinario,
-      motivoPermiso: currentItem.motivoPermiso.trim()
     };
     
     setFormData({
@@ -342,7 +533,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
       items: [...formData.items, newItem]
     });
     
-    setCurrentItem({ productoId: '', cantidad: 0, precioUnitario: 0, permisoExtraordinario: false, motivoPermiso: '' });
+    setCurrentItem({ productoId: '', cantidad: 0, precioUnitario: 0 });
   };
 
   const handleRemoveItem = (index: number) => {
@@ -368,7 +559,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
     if (formData.items.length === 0) {
       showAlert({
         title: 'Compra sin productos',
-        description: 'Debe agregar al menos un producto para guardar la compra.',
+        description: 'Debes agregar al menos un producto del proveedor para crear la compra.',
         type: 'warning',
         confirmText: 'Entendido',
         onConfirm: () => {}
@@ -387,17 +578,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
       return;
     }
 
-    if (totalCalculado >= 10000 && (!formData.aprobacionExtraordinaria || formData.motivoAprobacion.trim().length < 10)) {
-      showAlert({
-        title: 'Aprobacion requerida',
-        description: 'Compras por total mayor o igual a $10,000 requieren aprobacion extraordinaria y motivo valido.',
-        type: 'warning',
-        confirmText: 'Entendido',
-        onConfirm: () => {}
-      });
-      return;
-    }
-
     try {
       const createResult: any = await comprasAPI.create({
         proveedor: formData.proveedor,
@@ -407,8 +587,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         total: totalCalculado,
         estado: 'Pendiente',
         observaciones: formData.observaciones,
-        aprobacion_extraordinaria: formData.aprobacionExtraordinaria,
-        motivo_aprobacion: formData.motivoAprobacion.trim() || undefined,
       });
 
       const compraId = Number(createResult?.id);
@@ -423,8 +601,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
             productoId: Number(item.productoId),
             cantidad: Number(item.cantidad),
             precioUnitario: Number(item.precioUnitario),
-            permisoExtraordinario: Boolean(item.permisoExtraordinario),
-            motivoPermiso: item.motivoPermiso,
           })
         )
       );
@@ -436,10 +612,8 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         fecha: new Date().toISOString().split('T')[0],
         items: [],
         observaciones: '',
-        aprobacionExtraordinaria: false,
-        motivoAprobacion: '',
       });
-      setCurrentItem({ productoId: '', cantidad: 0, precioUnitario: 0, permisoExtraordinario: false, motivoPermiso: '' });
+      setCurrentItem({ productoId: '', cantidad: 0, precioUnitario: 0 });
       showAlert({
         title: 'Éxito',
         description: 'Compra guardada correctamente.',
@@ -472,16 +646,66 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         </Button>
       </div>
 
+      <div className="rounded-lg border border-border bg-white p-4 space-y-3">
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <input
+              type="text"
+              value={filters.proveedor}
+              onChange={(event) => setFilters((current) => ({ ...current, proveedor: event.target.value }))}
+              placeholder="Buscar por proveedor..."
+              className="w-full pl-10 pr-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <Button
+            variant="outline"
+            icon={<RotateCcw className="w-4 h-4" />}
+            onClick={() => setFilters({ id: '', fecha: '', proveedor: '', estado: '' })}
+            disabled={!filters.id.trim() && !filters.fecha && !filters.proveedor.trim() && !filters.estado}
+          >
+            Limpiar filtros
+          </Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filtrar compra por:</span>
+          <input
+            type="text"
+            value={filters.id}
+            onChange={(event) => setFilters((current) => ({ ...current, id: event.target.value }))}
+            placeholder="ID"
+            className="h-8 w-24 rounded-md border border-border px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          <input
+            type="text"
+            inputMode="numeric"
+            value={filters.fecha}
+            onChange={(event) => setFilters((current) => ({ ...current, fecha: event.target.value }))}
+            placeholder="AAAA/MM/DD"
+            className="h-8 rounded-md border border-border px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          <select
+            value={filters.estado}
+            onChange={(event) =>
+              setFilters((current) => ({ ...current, estado: event.target.value as ComprasFilters['estado'] }))
+            }
+            className="h-8 rounded-md border border-border px-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Estado (todos)</option>
+            <option value="Pendiente">Pendiente</option>
+            <option value="Recibida">Recibida</option>
+            <option value="Cancelada">Cancelada</option>
+          </select>
+        </div>
+      </div>
+
       <DataTable
         columns={columns}
-        data={compras}
+        data={comprasFiltradas}
         actions={[
           commonActions.view(handleView),
           commonActions.pdf(handleGeneratePDF),
-          commonActions.cancel(handleAnular)
         ]}
-        onSearch={(query) => console.log('Searching:', query)}
-        searchPlaceholder="Buscar compras..."
       />
 
       {/* Create Modal */}
@@ -519,6 +743,11 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
           {/* Add Items Section */}
           <div className="border-t border-border pt-4 mt-4">
             <h4 className="mb-3">Agregar Productos</h4>
+            {!canCreateCompra ? (
+              <div className="mb-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900">
+                {creationHelpMessage}
+              </div>
+            ) : null}
             <div className="grid grid-cols-4 gap-2 mb-3">
               <FormField
                 label="Producto"
@@ -564,36 +793,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                   Agregar
                 </Button>
               </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 mb-3">
-              <div className="rounded-lg border border-border p-3 bg-accent/20">
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={currentItem.permisoExtraordinario}
-                    onChange={(event) =>
-                      setCurrentItem({
-                        ...currentItem,
-                        permisoExtraordinario: event.target.checked,
-                        motivoPermiso: event.target.checked ? currentItem.motivoPermiso : '',
-                      })
-                    }
-                    className="h-4 w-4 accent-primary"
-                  />
-                  Solicitar permiso extraordinario para cantidad mayor a 50
-                </label>
-              </div>
-              <FormField
-                label="Motivo permiso"
-                name="motivoPermiso"
-                type="textarea"
-                value={currentItem.motivoPermiso}
-                onChange={(value) => setCurrentItem({ ...currentItem, motivoPermiso: value as string })}
-                rows={2}
-                disabled={!currentItem.permisoExtraordinario}
-                placeholder="Justifique la compra extraordinaria"
-              />
             </div>
           </div>
 
@@ -667,36 +866,72 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
             placeholder="Notas de la compra"
           />
 
-          <div className="rounded-lg border border-border p-3 bg-accent/20 space-y-3">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={formData.aprobacionExtraordinaria}
-                onChange={(event) => setFormData({ ...formData, aprobacionExtraordinaria: event.target.checked })}
-                className="h-4 w-4 accent-primary"
-              />
-              Aprobacion extraordinaria
-            </label>
-            <FormField
-              label="Motivo aprobacion"
-              name="motivoAprobacion"
-              type="textarea"
-              value={formData.motivoAprobacion}
-              onChange={(value) => setFormData({ ...formData, motivoAprobacion: value as string })}
-              rows={2}
-              placeholder="Obligatorio si el total es mayor o igual a $10,000"
-            />
-          </div>
-
           <FormActions>
             <Button variant="outline" onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
-            <Button type="submit">
+            <Button type="submit" disabled={!canCreateCompra}>
               Crear Compra
             </Button>
           </FormActions>
         </Form>
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(pendingStateChange)}
+        onClose={handleCancelStatusChange}
+        title={`Cambiar estado - Compra ${pendingStateChange?.compra.id || ''}`}
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-accent/30 p-4 space-y-1">
+            <p className="text-sm text-muted-foreground">Proveedor</p>
+            <p>{pendingStateChange?.compra.proveedor || 'N/A'}</p>
+            <p className="text-sm text-muted-foreground">
+              Estado actual: {pendingStateChange?.from || 'N/A'}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Nuevo estado: {pendingStateChange?.to || 'N/A'}
+            </p>
+          </div>
+
+          {pendingStateChange?.to === 'Recibida' ? (
+            <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-900 space-y-2">
+              <p className="font-medium">Productos recibidos completos y en perfecto estado?</p>
+              <p>Al confirmar, la compra pasará a estado Recibida, se incrementará el inventario de cada producto y después el estado quedará bloqueado para siempre.</p>
+            </div>
+          ) : null}
+
+          {pendingStateChange?.to === 'Cancelada' ? (
+            <FormField
+              label="Motivo de cancelación"
+              name="motivo-cancelacion-compra"
+              type="textarea"
+              value={stateChangeReason}
+              onChange={(value) => setStateChangeReason(String(value))}
+              rows={3}
+              required
+              placeholder="Explica por qué se cancela la compra (mínimo 10 caracteres)"
+            />
+          ) : null}
+
+          <FormActions>
+            <Button
+              variant="outline"
+              onClick={handleCancelStatusChange}
+              disabled={stateChangeSaving}
+            >
+              Cancelar
+            </Button>
+            <Button onClick={handleConfirmStatusChange} disabled={stateChangeSaving || !canChangeCompraStatus}>
+              {stateChangeSaving
+                ? 'Guardando...'
+                : pendingStateChange?.to === 'Cancelada'
+                  ? 'Confirmar cancelación de pedido'
+                  : 'Confirmar'}
+            </Button>
+          </FormActions>
+        </div>
       </Modal>
 
       {/* Detail Modal */}
@@ -724,7 +959,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
               <div>
                 <p className="text-sm text-muted-foreground">Estado</p>
                 <span className={`px-3 py-1 rounded-full text-xs ${
-                  selectedCompra.estado === 'Completada' ? 'bg-green-100 text-green-700' :
+                  selectedCompra.estado === 'Recibida' ? 'bg-green-100 text-green-700' :
                   selectedCompra.estado === 'Pendiente' ? 'bg-yellow-100 text-yellow-700' :
                   'bg-red-100 text-red-700'
                 }`}>

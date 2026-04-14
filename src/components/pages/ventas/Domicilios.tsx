@@ -21,6 +21,12 @@ interface Domicilio {
   detalle: string;
 }
 
+interface StateChangeRequest {
+  domicilio: Domicilio;
+  from: Domicilio['estado'];
+  to: Domicilio['estado'];
+}
+
 export function Domicilios() {
   const [domicilios, setDomicilios] = useState<Domicilio[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,6 +35,9 @@ export function Domicilios() {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [pendingStateChange, setPendingStateChange] = useState<StateChangeRequest | null>(null);
+  const [stateChangeReason, setStateChangeReason] = useState('');
+  const [stateChangeSaving, setStateChangeSaving] = useState(false);
   const [editFormData, setEditFormData] = useState<Domicilio | null>(null);
   const [createFormData, setCreateFormData] = useState<Omit<Domicilio, 'id'>>({
     pedido_id: 0,
@@ -84,7 +93,8 @@ export function Domicilios() {
       render: (estado: string, domicilio: Domicilio) => (
         <select
           value={estado}
-          onChange={(e) => handleEstadoChange(domicilio.id, e.target.value as Domicilio['estado'])}
+          onChange={(e) => handleEstadoChangeRequest(domicilio, e.target.value as Domicilio['estado'])}
+          disabled={stateChangeSaving}
           className={`px-3 py-1 rounded-full text-xs border-0 cursor-pointer ${
             estado === 'Entregado' ? 'bg-green-100 text-green-700' :
             estado === 'En Camino' ? 'bg-blue-100 text-blue-700' :
@@ -101,13 +111,64 @@ export function Domicilios() {
     }
   ];
 
-  const handleEstadoChange = async (id: string, nuevoEstado: Domicilio['estado']) => {
+  const handleEstadoChangeRequest = (domicilio: Domicilio, nuevoEstado: Domicilio['estado']) => {
+    if (domicilio.estado === nuevoEstado) return;
+
+    setPendingStateChange({
+      domicilio,
+      from: domicilio.estado,
+      to: nuevoEstado,
+    });
+    setStateChangeReason('');
+  };
+
+  const handleConfirmEstadoChange = async () => {
+    if (!pendingStateChange) return;
+
+    if (pendingStateChange.to === 'Cancelado' && stateChangeReason.trim().length < 10) {
+      showAlert({
+        title: 'Motivo requerido',
+        description: 'Para cancelar el domicilio debes indicar un motivo de al menos 10 caracteres.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
     try {
-      await domiciliosAPI.update(Number(id), { estado: nuevoEstado });
+      setStateChangeSaving(true);
+      await domiciliosAPI.update(Number(pendingStateChange.domicilio.id), {
+        estado: pendingStateChange.to,
+        detalle: stateChangeReason.trim() || undefined,
+      });
       await loadDomicilios();
+      setPendingStateChange(null);
+      setStateChangeReason('');
+      showAlert({
+        title: 'Estado actualizado',
+        description: 'El estado del domicilio fue actualizado correctamente.',
+        type: 'success',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
     } catch (error) {
       console.error('Error actualizando estado:', error);
+      showAlert({
+        title: 'Error',
+        description: 'No se pudo actualizar el estado del domicilio.',
+        type: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+    } finally {
+      setStateChangeSaving(false);
     }
+  };
+
+  const handleCancelEstadoChange = () => {
+    setPendingStateChange(null);
+    setStateChangeReason('');
   };
 
   const handleView = (domicilio: Domicilio) => {
@@ -214,6 +275,42 @@ export function Domicilios() {
           <p>Cargando domicilios...</p>
         </div>
       )}
+
+      <Modal
+        isOpen={Boolean(pendingStateChange)}
+        onClose={handleCancelEstadoChange}
+        title={`Cambiar estado - Domicilio ${pendingStateChange?.domicilio.numero_domicilio || pendingStateChange?.domicilio.id || ''}`}
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-accent/30 p-4 space-y-1">
+            <p className="text-sm text-muted-foreground">Estado actual: {pendingStateChange?.from || 'N/A'}</p>
+            <p className="text-sm text-muted-foreground">Nuevo estado: {pendingStateChange?.to || 'N/A'}</p>
+          </div>
+
+          {pendingStateChange?.to === 'Cancelado' ? (
+            <FormField
+              label="Motivo del cambio"
+              name="motivo-cambio-domicilio"
+              type="textarea"
+              value={stateChangeReason}
+              onChange={(value) => setStateChangeReason(String(value))}
+              rows={3}
+              required
+              placeholder="Explica por qué se cancela el domicilio (mínimo 10 caracteres)"
+            />
+          ) : null}
+
+          <FormActions>
+            <Button variant="outline" onClick={handleCancelEstadoChange} disabled={stateChangeSaving}>
+              Cancelar
+            </Button>
+            <Button onClick={handleConfirmEstadoChange} disabled={stateChangeSaving}>
+              {stateChangeSaving ? 'Guardando...' : 'Confirmar'}
+            </Button>
+          </FormActions>
+        </div>
+      </Modal>
 
       {/* Detail Modal */}
       <Modal 

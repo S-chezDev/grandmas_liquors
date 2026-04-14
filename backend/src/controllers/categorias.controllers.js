@@ -23,7 +23,7 @@ module.exports = {
       const id = await models.Categorias.create(req.body);
       res.status(201).json({ success: true, id, message: 'Categoria creada exitosamente' });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
   },
   update: async (req, res) => {
@@ -31,7 +31,29 @@ module.exports = {
       await models.Categorias.update(req.params.id, req.body);
       res.json({ success: true, message: 'Categoria actualizada exitosamente' });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      res.status(error.statusCode || 500).json({ success: false, message: error.message });
+    }
+  },
+  updateStatus: async (req, res) => {
+    try {
+      const estado = typeof req.body?.estado === 'string' ? req.body.estado.trim() : '';
+      const motivo = typeof req.body?.motivo === 'string' ? req.body.motivo.trim() : '';
+
+      if (!estado) {
+        return res.status(400).json({ success: false, message: 'Estado es obligatorio' });
+      }
+
+      if (!motivo || motivo.length < 10) {
+        return res.status(400).json({
+          success: false,
+          message: 'El motivo de cambio de estado es obligatorio y debe tener al menos 10 caracteres',
+        });
+      }
+
+      const categoria = await models.Categorias.updateStatus(req.params.id, { estado, motivo });
+      res.json({ success: true, data: categoria, message: 'Estado de la categoria actualizado exitosamente' });
+    } catch (error) {
+      res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
   },
   delete: async (req, res) => {

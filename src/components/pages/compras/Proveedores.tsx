@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Search, Star, Building2, User, ToggleRight, ToggleLeft, AlertTriangle, Eye, PencilLine, Trash2 } from 'lucide-react';
+import { Search, Star, Building2, User, ToggleRight, ToggleLeft, Eye, PencilLine, Trash2 } from 'lucide-react';
 import { DataTable, Column } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
@@ -57,8 +57,14 @@ interface ProveedorFormState {
   email: string;
   direccion: string;
   preferente: boolean;
-  rating: number;
   observaciones: string;
+}
+
+interface StateChangeRequest {
+  proveedorId: string;
+  proveedorNombre: string;
+  currentState: ProveedorEstado;
+  nextState: ProveedorEstado;
 }
 
 const initialFormState: ProveedorFormState = {
@@ -73,7 +79,6 @@ const initialFormState: ProveedorFormState = {
   email: '',
   direccion: '',
   preferente: false,
-  rating: 0,
   observaciones: '',
 };
 
@@ -106,18 +111,25 @@ export function Proveedores() {
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [listFilters, setListFilters] = useState<{
+    tipo: '' | 'Juridica' | 'Natural';
+    estado: '' | 'Activo' | 'Inactivo';
+  }>({ tipo: '', estado: 'Activo' });
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
-  const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [selectedProveedor, setSelectedProveedor] = useState<Proveedor | null>(null);
   const [historial, setHistorial] = useState<ProveedorHistorial[]>([]);
   const [historialLoading, setHistorialLoading] = useState(false);
   const [formData, setFormData] = useState<ProveedorFormState>(initialFormState);
-  const [statusForm, setStatusForm] = useState({ estado: 'Activo' as ProveedorEstado, motivo: '', pendingPurchases: 0 });
+  const [pendingStateChange, setPendingStateChange] = useState<StateChangeRequest | null>(null);
+  const [stateChangeReason, setStateChangeReason] = useState('');
   const [deleteReason, setDeleteReason] = useState('');
+  const [nitValidationState, setNitValidationState] = useState({ checking: false, message: '', ok: false });
+  const [emailValidationState, setEmailValidationState] = useState({ checking: false, message: '', ok: false });
+  const [phoneValidationState, setPhoneValidationState] = useState({ checking: false, message: '', ok: false });
   const [saving, setSaving] = useState(false);
-  const [statusSaving, setStatusSaving] = useState(false);
+  const [stateChangeSaving, setStateChangeSaving] = useState(false);
   const [deleteSaving, setDeleteSaving] = useState(false);
   const { showAlert, AlertComponent } = useAlertDialog();
 
@@ -126,27 +138,87 @@ export function Proveedores() {
   }, []);
 
   useEffect(() => {
-    const loadPendingPurchases = async () => {
-      if (!isStatusModalOpen || !selectedProveedor) return;
+    if (!isFormModalOpen) return;
 
-      if (statusForm.estado !== 'Inactivo') {
-        setStatusForm((current) => ({ ...current, pendingPurchases: 0 }));
-        return;
-      }
+    const identifier = getProveedorIdentifier({
+      tipo_persona: formData.tipo_persona,
+      nit: formData.nit,
+      numero_documento: formData.numero_documento,
+    }).trim();
 
+    if (identifier.length < 5) {
+      setNitValidationState({ checking: false, message: '', ok: false });
+      return;
+    }
+
+    const timeoutId = window.setTimeout(async () => {
+      setNitValidationState({ checking: true, message: '', ok: false });
       try {
-        const response = await proveedoresAPI.getPendingPurchases(Number(selectedProveedor.id));
-        setStatusForm((current) => ({
-          ...current,
-          pendingPurchases: Number((response as { total?: number })?.total || 0),
-        }));
+        const existing = await proveedoresAPI.getByNit(identifier);
+        if (existing && Number((existing as Proveedor).id) !== Number(selectedProveedor?.id)) {
+          setNitValidationState({ checking: false, message: 'El NIT o documento ya está registrado.', ok: false });
+          return;
+        }
+        setNitValidationState({ checking: false, message: 'NIT/Documento disponible.', ok: true });
       } catch {
-        setStatusForm((current) => ({ ...current, pendingPurchases: 0 }));
+        setNitValidationState({ checking: false, message: 'NIT/Documento disponible.', ok: true });
       }
-    };
+    }, 350);
 
-    void loadPendingPurchases();
-  }, [isStatusModalOpen, selectedProveedor?.id, statusForm.estado]);
+    return () => window.clearTimeout(timeoutId);
+  }, [isFormModalOpen, formData.tipo_persona, formData.nit, formData.numero_documento, selectedProveedor?.id]);
+
+  useEffect(() => {
+    if (!isFormModalOpen) return;
+
+    const email = formData.email.trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setEmailValidationState({ checking: false, message: '', ok: false });
+      return;
+    }
+
+    const timeoutId = window.setTimeout(async () => {
+      setEmailValidationState({ checking: true, message: '', ok: false });
+      try {
+        const existing = await proveedoresAPI.getByEmail(email);
+        if (existing && Number((existing as Proveedor).id) !== Number(selectedProveedor?.id)) {
+          setEmailValidationState({ checking: false, message: 'El email ya está registrado.', ok: false });
+          return;
+        }
+        setEmailValidationState({ checking: false, message: 'Email disponible.', ok: true });
+      } catch {
+        setEmailValidationState({ checking: false, message: 'Email disponible.', ok: true });
+      }
+    }, 350);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isFormModalOpen, formData.email, selectedProveedor?.id]);
+
+  useEffect(() => {
+    if (!isFormModalOpen) return;
+
+    const telefono = formData.telefono.replace(/\D/g, '');
+    if (telefono.length < 7 || telefono.length > 15) {
+      setPhoneValidationState({ checking: false, message: '', ok: false });
+      return;
+    }
+
+    const timeoutId = window.setTimeout(async () => {
+      setPhoneValidationState({ checking: true, message: '', ok: false });
+      try {
+        const existing = await proveedoresAPI.getByTelefono(telefono);
+        if (existing && Number((existing as Proveedor).id) !== Number(selectedProveedor?.id)) {
+          setPhoneValidationState({ checking: false, message: 'El teléfono ya está registrado.', ok: false });
+          return;
+        }
+        setPhoneValidationState({ checking: false, message: 'Teléfono disponible.', ok: true });
+      } catch {
+        setPhoneValidationState({ checking: false, message: 'Teléfono disponible.', ok: true });
+      }
+    }, 350);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isFormModalOpen, formData.telefono, selectedProveedor?.id]);
 
   const loadProveedores = async () => {
     try {
@@ -195,15 +267,14 @@ export function Proveedores() {
       });
     });
 
-    if (!normalizedQuery) {
-      return ordered.filter((proveedor) => proveedor.estado === 'Activo');
-    }
-
     return ordered.filter((proveedor) => {
       const searchable = normalizeText([getProveedorIdentifier(proveedor), getProveedorDisplayName(proveedor)].join(' '));
-      return searchable.includes(normalizedQuery);
+      const bySearch = !normalizedQuery || searchable.includes(normalizedQuery);
+      const byTipo = !listFilters.tipo || proveedor.tipo_persona === listFilters.tipo;
+      const byEstado = !listFilters.estado || proveedor.estado === listFilters.estado;
+      return bySearch && byTipo && byEstado;
     });
-  }, [normalizedQuery, proveedores]);
+  }, [normalizedQuery, proveedores, listFilters]);
 
   const isEditing = Boolean(selectedProveedor);
 
@@ -256,27 +327,41 @@ export function Proveedores() {
     {
       key: 'estado',
       label: 'Estado',
-      render: (estado: ProveedorEstado) => (
-        <span
-          className={`px-3 py-1 rounded-full text-xs ${
+      render: (estado: ProveedorEstado, proveedor: Proveedor) => (
+        <select
+          value={estado}
+          onChange={(event) => {
+            void handleEstadoChangeRequest(proveedor, event.target.value as ProveedorEstado);
+          }}
+          className={`px-3 py-1 rounded-full text-xs border-0 cursor-pointer ${
             estado === 'Activo' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
           }`}
         >
-          {estado}
-        </span>
+          <option value="Activo">Activo</option>
+          <option value="Inactivo">Inactivo</option>
+        </select>
       ),
     },
     {
       key: 'preferente',
       label: 'Preferente',
-      render: (preferente: boolean) => (
-        <span
-          className={`px-2 py-1 rounded-full text-xs ${
-            preferente ? 'bg-amber-100 text-amber-800' : 'bg-muted text-muted-foreground'
+      render: (_: boolean, proveedor: Proveedor) => (
+        <button
+          type="button"
+          onClick={() => {
+            void handleTogglePreferente(proveedor);
+          }}
+          className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs border transition-colors ${
+            proveedor.preferente
+              ? 'bg-amber-100 text-amber-800 border-amber-300 shadow-sm'
+              : 'bg-muted text-muted-foreground border-border hover:bg-amber-50 hover:text-amber-700'
           }`}
+          aria-pressed={Boolean(proveedor.preferente)}
+          title={proveedor.preferente ? 'Quitar preferente' : 'Marcar como preferente'}
         >
-          {preferente ? 'Sí' : 'No'}
-        </span>
+          <Star className={`w-3 h-3 ${proveedor.preferente ? 'fill-current' : ''}`} />
+          {proveedor.preferente ? 'Sí' : 'No'}
+        </button>
       ),
     },
   ];
@@ -286,6 +371,9 @@ export function Proveedores() {
   const openCreateModal = () => {
     setSelectedProveedor(null);
     resetForm();
+    setNitValidationState({ checking: false, message: '', ok: false });
+    setEmailValidationState({ checking: false, message: '', ok: false });
+    setPhoneValidationState({ checking: false, message: '', ok: false });
     setIsFormModalOpen(true);
   };
 
@@ -303,17 +391,81 @@ export function Proveedores() {
       email: proveedor.email || '',
       direccion: proveedor.direccion || '',
       preferente: Boolean(proveedor.preferente),
-      rating: Number(proveedor.rating ?? 0),
       observaciones: proveedor.observaciones || '',
     });
+    setNitValidationState({ checking: false, message: '', ok: false });
+    setEmailValidationState({ checking: false, message: '', ok: false });
+    setPhoneValidationState({ checking: false, message: '', ok: false });
     setIsFormModalOpen(true);
   };
 
-  const openStatusModal = (proveedor: Proveedor) => {
-    const nextState = proveedor.estado === 'Activo' ? 'Inactivo' : 'Activo';
-    setSelectedProveedor(proveedor);
-    setStatusForm({ estado: nextState, motivo: '', pendingPurchases: 0 });
-    setIsStatusModalOpen(true);
+  const handleEstadoChangeRequest = async (proveedor: Proveedor, nuevoEstado: ProveedorEstado) => {
+    if (nuevoEstado === proveedor.estado) return;
+
+    if (nuevoEstado === 'Inactivo') {
+      try {
+        const response = await proveedoresAPI.getPendingPurchases(Number(proveedor.id));
+        const pendingPurchases = Number((response as { total?: number })?.total || 0);
+
+        if (pendingPurchases > 0) {
+          showAlert({
+            title: 'No se puede desactivar',
+            description: `El proveedor ${getProveedorDisplayName(proveedor)} tiene ${pendingPurchases} orden(es) de compra pendiente(s). Debes cerrar o cancelar esas ordenes antes de cambiar el estado.`,
+            type: 'warning',
+            confirmText: 'Entendido',
+            onConfirm: () => {},
+          });
+          return;
+        }
+      } catch {
+        showAlert({
+          title: 'Validación incompleta',
+          description: 'No fue posible validar compras pendientes. Intenta nuevamente en unos segundos.',
+          type: 'warning',
+          confirmText: 'Entendido',
+          onConfirm: () => {},
+        });
+        return;
+      }
+    }
+
+    setPendingStateChange({
+      proveedorId: proveedor.id,
+      proveedorNombre: getProveedorDisplayName(proveedor),
+      currentState: proveedor.estado,
+      nextState: nuevoEstado,
+    });
+    setStateChangeReason('');
+  };
+
+  const handleCancelStateChange = () => {
+    setPendingStateChange(null);
+    setStateChangeReason('');
+  };
+
+  const handleTogglePreferente = async (proveedor: Proveedor) => {
+    try {
+      await proveedoresAPI.update(Number(proveedor.id), {
+        preferente: !Boolean(proveedor.preferente),
+        motivo: 'Cambio rapido desde acciones de la tabla',
+      });
+
+      setProveedores((current) =>
+        current.map((row) =>
+          String(row.id) === String(proveedor.id)
+            ? { ...row, preferente: !Boolean(proveedor.preferente) }
+            : row
+        )
+      );
+    } catch (error: any) {
+      showAlert({
+        title: 'Error',
+        description: error?.message || 'No se pudo actualizar la preferencia del proveedor.',
+        type: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+    }
   };
 
   const openDeleteModal = (proveedor: Proveedor) => {
@@ -374,105 +526,152 @@ export function Proveedores() {
       }
     }
 
+    if (nitValidationState.checking || emailValidationState.checking || phoneValidationState.checking) {
+      showAlert({
+        title: 'Validación en progreso',
+        description: 'Espera mientras finalizamos la validación de NIT, email y teléfono.',
+        type: 'info',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
+    if (
+      nitValidationState.message.includes('registrado') ||
+      emailValidationState.message.includes('registrado') ||
+      phoneValidationState.message.includes('registrado')
+    ) {
+      showAlert({
+        title: 'Datos duplicados',
+        description: 'Corrige los campos duplicados antes de continuar.',
+        type: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
     const dataToSend = {
-      ...formData,
-      ...(formData.tipo_persona === 'Juridica'
-        ? { nombre: undefined, apellido: undefined, tipo_documento: undefined, numero_documento: undefined }
-        : { nombre_empresa: undefined, nit: undefined }),
-      rating: Number(formData.rating),
+      tipoPersona: formData.tipo_persona,
+      nombreEmpresa: formData.tipo_persona === 'Juridica' ? formData.nombre_empresa.trim() : undefined,
+      nit: formData.tipo_persona === 'Juridica' ? formData.nit.trim() : undefined,
+      nombre: formData.tipo_persona === 'Natural' ? formData.nombre.trim() : '',
+      apellido: formData.tipo_persona === 'Natural' ? formData.apellido.trim() : undefined,
+      tipoDocumento: formData.tipo_persona === 'Natural' ? formData.tipo_documento : undefined,
+      numeroDocumento: formData.tipo_persona === 'Natural' ? formData.numero_documento.trim() : undefined,
+      telefono: formData.telefono.trim(),
+      email: formData.email.trim(),
+      direccion: formData.direccion.trim(),
+      estado: 'Activo',
+      preferente: formData.preferente,
+      rating: 0,
       observaciones: formData.observaciones.trim(),
     };
 
-    try {
-      setSaving(true);
-      if (selectedProveedor) {
-        await proveedoresAPI.update(Number(selectedProveedor.id), dataToSend);
-        setProveedores((current) =>
-          current.map((proveedor) =>
-            String(proveedor.id) === String(selectedProveedor.id)
-              ? {
-                  ...proveedor,
-                  ...formData,
-                  tipo_persona: formData.tipo_persona,
-                  preferente: formData.preferente,
-                  rating: formData.rating,
-                  observaciones: formData.observaciones.trim(),
-                }
-              : proveedor
-          )
-        );
-      } else {
-        await proveedoresAPI.create(dataToSend);
-      }
+    const executeSave = async () => {
+      try {
+        setSaving(true);
+        if (selectedProveedor) {
+          await proveedoresAPI.update(Number(selectedProveedor.id), dataToSend);
+          setProveedores((current) =>
+            current.map((proveedor) =>
+              String(proveedor.id) === String(selectedProveedor.id)
+                ? {
+                    ...proveedor,
+                    ...formData,
+                    tipo_persona: formData.tipo_persona,
+                    preferente: formData.preferente,
+                    observaciones: formData.observaciones.trim(),
+                  }
+                : proveedor
+            )
+          );
+        } else {
+          await proveedoresAPI.create(dataToSend);
+        }
 
-      await loadProveedores();
-      setIsFormModalOpen(false);
-      setSelectedProveedor(null);
+        await loadProveedores();
+        setIsFormModalOpen(false);
+        setSelectedProveedor(null);
+        showAlert({
+          title: 'Éxito',
+          description: `Proveedor ${selectedProveedor ? 'actualizado' : 'creado'} correctamente`,
+          type: 'success',
+          confirmText: 'Entendido',
+          onConfirm: () => {},
+        });
+      } catch (error: any) {
+        console.error('Error al guardar proveedor:', error);
+        showAlert({
+          title: 'Error',
+          description: error?.message || 'No se pudo guardar el proveedor',
+          type: 'danger',
+          confirmText: 'Entendido',
+          onConfirm: () => {},
+        });
+      } finally {
+        setSaving(false);
+      }
+    };
+
+    if (!selectedProveedor) {
+      const confirmationSummary = [
+        `Nombre: ${formData.tipo_persona === 'Juridica' ? formData.nombre_empresa : `${formData.nombre} ${formData.apellido}`.trim()}`,
+        `Identificador: ${identifier || 'N/A'}`,
+        `Email: ${formData.email || 'N/A'}`,
+        `Teléfono: ${formData.telefono || 'N/A'}`,
+        `Preferente: ${formData.preferente ? 'Sí' : 'No'}`,
+      ].join('\n');
+
       showAlert({
-        title: 'Éxito',
-        description: `Proveedor ${selectedProveedor ? 'actualizado' : 'creado'} correctamente`,
-        type: 'success',
-        confirmText: 'Entendido',
-        onConfirm: () => {},
+        title: 'Confirmación de datos del proveedor',
+        description: `Datos únicos verificados. Confirma la información antes de crear:\n\n${confirmationSummary}`,
+        type: 'info',
+        confirmText: 'Confirmar creación',
+        cancelText: 'Revisar',
+        onConfirm: () => {
+          void executeSave();
+        },
       });
-    } catch (error: any) {
-      console.error('Error al guardar proveedor:', error);
-      showAlert({
-        title: 'Error',
-        description: error?.message || 'No se pudo guardar el proveedor',
-        type: 'danger',
-        confirmText: 'Entendido',
-        onConfirm: () => {},
-      });
-    } finally {
-      setSaving(false);
+      return;
     }
+
+    await executeSave();
   };
 
-  const handleSubmitStatus = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    const motivo = statusForm.motivo.trim();
-    if (motivo.length < 10) {
-      showAlert({
-        title: 'Motivo requerido',
-        description: 'El motivo de cambio de estado debe tener al menos 10 caracteres.',
-        type: 'danger',
-        confirmText: 'Entendido',
-        onConfirm: () => {},
-      });
-      return;
-    }
-
-    if (statusForm.estado === 'Inactivo' && statusForm.pendingPurchases > 0) {
-      showAlert({
-        title: 'No permitido',
-        description: 'No se puede desactivar el proveedor porque tiene ordenes de compra pendientes.',
-        type: 'danger',
-        confirmText: 'Entendido',
-        onConfirm: () => {},
-      });
-      return;
-    }
+  const handleConfirmStateChange = async () => {
+    if (!pendingStateChange) return;
 
     try {
-      setStatusSaving(true);
-      await proveedoresAPI.updateStatus(Number(selectedProveedor?.id), {
-        estado: statusForm.estado,
-        motivo,
+      setStateChangeSaving(true);
+      const response = await proveedoresAPI.updateStatus(Number(pendingStateChange.proveedorId), {
+        estado: pendingStateChange.nextState,
+        motivo: stateChangeReason.trim(),
       });
+      const updatedEstado =
+        ((response as { estado?: ProveedorEstado })?.estado || pendingStateChange.nextState) as ProveedorEstado;
+
       setProveedores((current) =>
         current.map((proveedor) =>
-          String(proveedor.id) === String(selectedProveedor?.id)
-            ? { ...proveedor, estado: statusForm.estado }
+          String(proveedor.id) === String(pendingStateChange.proveedorId)
+            ? { ...proveedor, estado: updatedEstado }
             : proveedor
         )
       );
+      setSelectedProveedor((current) =>
+        current && String(current.id) === String(pendingStateChange.proveedorId)
+          ? { ...current, estado: updatedEstado }
+          : current
+      );
+
       await loadProveedores();
-      setIsStatusModalOpen(false);
+      setPendingStateChange(null);
+      setStateChangeReason('');
+
       showAlert({
-        title: 'Éxito',
-        description: 'Estado del proveedor actualizado correctamente',
+        title: 'Estado actualizado',
+        description: `El proveedor ${pendingStateChange.proveedorNombre} cambió a ${updatedEstado} correctamente.${stateChangeReason.trim() ? ` Motivo registrado: ${stateChangeReason.trim()}.` : ''}`,
         type: 'success',
         confirmText: 'Entendido',
         onConfirm: () => {},
@@ -487,7 +686,7 @@ export function Proveedores() {
         onConfirm: () => {},
       });
     } finally {
-      setStatusSaving(false);
+      setStateChangeSaving(false);
     }
   };
 
@@ -532,9 +731,7 @@ export function Proveedores() {
     }
   };
 
-  const emptyMessage = normalizedQuery
-    ? 'No se encontraron proveedores activos o inactivos que coincidan con la búsqueda por RUC o nombre.'
-    : 'No hay proveedores activos disponibles.';
+  const emptyMessage = 'No se encontraron proveedores con los filtros aplicados.';
 
   return (
     <div className="space-y-6">
@@ -562,12 +759,50 @@ export function Proveedores() {
               className="w-full pl-10 pr-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
-          <Button variant="outline" onClick={() => setSearchQuery('')} disabled={!searchQuery.trim()}>
-            Limpiar
+          <Button
+            variant="outline"
+            onClick={() => {
+              setSearchQuery('');
+              setListFilters({ tipo: '', estado: '' });
+            }}
+            disabled={!searchQuery.trim() && !listFilters.tipo && !listFilters.estado}
+          >
+            Limpiar filtros
           </Button>
         </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filtrar por:</span>
+          <select
+            value={listFilters.tipo}
+            onChange={(event) =>
+              setListFilters((current) => ({
+                ...current,
+                tipo: event.target.value as '' | 'Juridica' | 'Natural',
+              }))
+            }
+            className="h-8 rounded-md border border-border px-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Tipo (todos)</option>
+            <option value="Natural">Natural</option>
+            <option value="Juridica">Empresa</option>
+          </select>
+          <select
+            value={listFilters.estado}
+            onChange={(event) =>
+              setListFilters((current) => ({
+                ...current,
+                estado: event.target.value as '' | 'Activo' | 'Inactivo',
+              }))
+            }
+            className="h-8 rounded-md border border-border px-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Estado (todos)</option>
+            <option value="Activo">Activo</option>
+            <option value="Inactivo">Inactivo</option>
+          </select>
+        </div>
         <p className="text-sm text-muted-foreground">
-          Por defecto se muestran solo proveedores activos. Los inactivos aparecen cuando la búsqueda coincide con su RUC o nombre.
+          Puedes combinar búsqueda por texto con filtros de tipo y estado.
         </p>
       </div>
 
@@ -583,73 +818,98 @@ export function Proveedores() {
           data={proveedoresVisible}
           actions={[
             {
-              label: 'Cambiar Estado',
-                icon: (row) =>
-                  row?.estado === 'Activo' ? (
-                    <ToggleRight className="w-4 h-4 text-green-600" />
-                  ) : (
-                    <ToggleLeft className="w-4 h-4 text-slate-500" />
-                  ),
-              onClick: openStatusModal,
-              variant: 'outline',
+              label: 'Ver detalle',
+              icon: <Eye className="w-4 h-4" />,
+              onClick: handleView,
             },
-              {
-                label: 'Ver detalle',
-                icon: <Eye className="w-4 h-4" />,
-                onClick: handleView,
-              },
-              {
-                label: 'Editar',
-                icon: <PencilLine className="w-4 h-4" />,
-                onClick: openEditModal,
-                variant: 'primary',
-              },
-              {
-                label: 'Eliminar',
-                icon: <Trash2 className="w-4 h-4" />,
-                onClick: openDeleteModal,
-                variant: 'destructive',
-              },
+            {
+              label: 'Editar',
+              icon: <PencilLine className="w-4 h-4" />,
+              onClick: openEditModal,
+              variant: 'primary',
+            },
+            {
+              label: 'Eliminar',
+              icon: <Trash2 className="w-4 h-4" />,
+              onClick: openDeleteModal,
+              variant: 'destructive',
+            },
           ]}
         />
       )}
 
-      <Modal isOpen={isFormModalOpen} onClose={() => setIsFormModalOpen(false)} title={selectedProveedor ? 'Editar Proveedor' : 'Nuevo Proveedor'} size="lg">
-        <Form onSubmit={handleSubmit}>
-          <div className="mb-6">
-            <label className="block mb-3">Tipo de Proveedor</label>
-            <div className="flex gap-4">
-              <button
-                type="button"
-                onClick={() => setFormData((current) => ({ ...current, tipo_persona: 'Juridica' }))}
-                className={`flex-1 p-4 rounded-lg border-2 transition-all ${
-                  formData.tipo_persona === 'Juridica' ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'
-                }`}
-              >
-                <Building2 className={`w-8 h-8 mx-auto mb-2 ${formData.tipo_persona === 'Juridica' ? 'text-primary' : 'text-muted-foreground'}`} />
-                <div className={formData.tipo_persona === 'Juridica' ? 'text-primary' : 'text-muted-foreground'}>
-                  Persona Jurídica
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">Empresa o sociedad</p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setFormData((current) => ({ ...current, tipo_persona: 'Natural' }))}
-                className={`flex-1 p-4 rounded-lg border-2 transition-all ${
-                  formData.tipo_persona === 'Natural' ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'
-                }`}
-              >
-                <User className={`w-8 h-8 mx-auto mb-2 ${formData.tipo_persona === 'Natural' ? 'text-primary' : 'text-muted-foreground'}`} />
-                <div className={formData.tipo_persona === 'Natural' ? 'text-primary' : 'text-muted-foreground'}>
-                  Persona Natural
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">Persona individual</p>
-              </button>
+      <Modal
+        isOpen={Boolean(pendingStateChange)}
+        onClose={handleCancelStateChange}
+        title={`Confirmar cambio de estado - ${pendingStateChange?.proveedorNombre}`}
+        size="md"
+      >
+        {pendingStateChange ? (
+          <div className="space-y-4">
+            <div className="p-4 bg-accent/50 rounded-lg space-y-2">
+              <p className="text-sm text-muted-foreground">
+                Vas a cambiar el estado de <strong>{pendingStateChange.proveedorNombre}</strong> de{' '}
+                <strong>{pendingStateChange.currentState}</strong> a <strong>{pendingStateChange.nextState}</strong>.
+              </p>
             </div>
+
+            <FormField
+              label="Motivo opcional"
+              name="motivo-estado-proveedor"
+              type="textarea"
+              value={stateChangeReason}
+              onChange={(value) => setStateChangeReason(value as string)}
+              placeholder="Ej: ajuste operativo, proveedor temporalmente no disponible"
+              rows={3}
+            />
+
+            <FormActions>
+              <Button type="button" variant="outline" onClick={handleCancelStateChange}>
+                Cancelar
+              </Button>
+              <Button type="button" onClick={handleConfirmStateChange} disabled={stateChangeSaving}>
+                Confirmar
+              </Button>
+            </FormActions>
+          </div>
+        ) : null}
+      </Modal>
+
+      <Modal
+        isOpen={isFormModalOpen}
+        onClose={() => setIsFormModalOpen(false)}
+        title={selectedProveedor ? 'Editar Proveedor' : 'Nuevo Proveedor'}
+        size="xl"
+      >
+        <Form onSubmit={handleSubmit}>
+          <div className="flex items-center gap-3 rounded-lg border border-border p-3 bg-accent/30 mb-4">
+            <input
+              id="preferente"
+              type="checkbox"
+              checked={formData.preferente}
+              onChange={(event) => setFormData((current) => ({ ...current, preferente: event.target.checked }))}
+              className="h-4 w-4 accent-primary"
+            />
+            <label htmlFor="preferente" className="flex items-center gap-2 text-sm font-medium">
+              <Star className="w-4 h-4 text-amber-600" />
+              Marcar como proveedor preferente
+            </label>
           </div>
 
-          {formData.tipo_persona === 'Juridica' && (
+          <FormField
+            label="Tipo de Proveedor"
+            name="tipo_persona"
+            type="select"
+            value={formData.tipo_persona}
+            onChange={(value) => setFormData((current) => ({ ...current, tipo_persona: value as ProveedorTipoPersona }))}
+            options={[
+              { value: 'Juridica', label: 'Persona Jurídica' },
+              { value: 'Natural', label: 'Persona Natural' },
+            ]}
+            required
+          />
+
+          {formData.tipo_persona === 'Juridica' ? (
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 label="Razón Social"
@@ -667,12 +927,19 @@ export function Proveedores() {
                 placeholder="900.123.456-7"
                 required
                 readOnly={isEditing}
-                helperText={isEditing ? 'El RUC no se puede editar.' : 'Se validará la existencia del RUC antes de guardar.'}
+                error={nitValidationState.message.includes('registrado') ? nitValidationState.message : undefined}
+                helperText={
+                  isEditing
+                    ? 'El RUC no se puede editar.'
+                    : nitValidationState.checking
+                    ? 'Validando NIT en tiempo real...'
+                    : nitValidationState.ok
+                    ? nitValidationState.message
+                    : 'Se validará la existencia del NIT antes de guardar.'
+                }
               />
             </div>
-          )}
-
-          {formData.tipo_persona === 'Natural' && (
+          ) : (
             <>
               <div className="grid grid-cols-2 gap-4">
                 <FormField
@@ -716,7 +983,7 @@ export function Proveedores() {
                   placeholder="1234567890"
                   required
                   readOnly={isEditing}
-                  helperText={isEditing ? 'El RUC no se puede editar.' : 'Se validará la existencia del RUC antes de guardar.'}
+                  error={nitValidationState.message.includes('registrado') ? nitValidationState.message : undefined}
                 />
               </div>
             </>
@@ -729,7 +996,14 @@ export function Proveedores() {
               value={formData.telefono}
               onChange={(value) => setFormData((current) => ({ ...current, telefono: value as string }))}
               placeholder="6041234567"
-              helperText="Debe contener entre 7 y 15 dígitos."
+              error={phoneValidationState.message.includes('registrado') ? phoneValidationState.message : undefined}
+              helperText={
+                phoneValidationState.checking
+                  ? 'Validando teléfono en tiempo real...'
+                  : phoneValidationState.ok
+                  ? phoneValidationState.message
+                  : 'Debe contener entre 7 y 15 dígitos.'
+              }
               required
             />
             <FormField
@@ -739,123 +1013,55 @@ export function Proveedores() {
               value={formData.email}
               onChange={(value) => setFormData((current) => ({ ...current, email: value as string }))}
               placeholder="contacto@proveedor.com"
+              error={emailValidationState.message.includes('registrado') ? emailValidationState.message : undefined}
+              helperText={
+                emailValidationState.checking
+                  ? 'Validando email en tiempo real...'
+                  : emailValidationState.ok
+                  ? emailValidationState.message
+                  : undefined
+              }
               required
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <FormField
-              label="Rating"
-              name="rating"
-              type="number"
-              value={formData.rating}
-              onChange={(value) => setFormData((current) => ({ ...current, rating: Number(value) }))}
-              placeholder="0"
-              helperText="Valor entre 0 y 5."
+              label="Dirección"
+              name="direccion"
+              type="textarea"
+              value={formData.direccion}
+              onChange={(value) => setFormData((current) => ({ ...current, direccion: value as string }))}
+              placeholder="Dirección completa del proveedor"
+              rows={2}
               required
             />
-            <div />
-          </div>
 
-          <FormField
-            label="Dirección"
-            name="direccion"
-            type="textarea"
-            value={formData.direccion}
-            onChange={(value) => setFormData((current) => ({ ...current, direccion: value as string }))}
-            placeholder="Dirección completa del proveedor"
-            rows={2}
-            required
-          />
-
-          <FormField
-            label="Observaciones"
-            name="observaciones"
-            type="textarea"
-            value={formData.observaciones}
-            onChange={(value) => setFormData((current) => ({ ...current, observaciones: value as string }))}
-            placeholder="Notas internas sobre el proveedor"
-            rows={3}
-          />
-
-          <div className="flex items-center gap-3 rounded-lg border border-border p-3 bg-accent/30">
-            <input
-              id="preferente"
-              type="checkbox"
-              checked={formData.preferente}
-              onChange={(event) => setFormData((current) => ({ ...current, preferente: event.target.checked }))}
-              className="h-4 w-4 accent-primary"
+            <FormField
+              label="Observaciones clave"
+              name="observaciones"
+              type="textarea"
+              value={formData.observaciones}
+              onChange={(value) => setFormData((current) => ({ ...current, observaciones: value as string }))}
+              placeholder="Ej: precios competitivos, tiempo de entrega 24h"
+              rows={2}
             />
-            <label htmlFor="preferente" className="flex items-center gap-2 text-sm">
-              <Star className="w-4 h-4 text-amber-600" />
-              Marcar como proveedor preferente
-            </label>
           </div>
 
           <FormActions>
             <Button variant="outline" onClick={() => setIsFormModalOpen(false)} disabled={saving}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={saving}>
+            <Button
+              type="submit"
+              disabled={
+                saving ||
+                nitValidationState.checking ||
+                emailValidationState.checking ||
+                phoneValidationState.checking
+              }
+            >
               {selectedProveedor ? 'Actualizar' : 'Crear'} Proveedor
-            </Button>
-          </FormActions>
-        </Form>
-      </Modal>
-
-      <Modal isOpen={isStatusModalOpen} onClose={() => setIsStatusModalOpen(false)} title="Cambiar estado del proveedor" size="md">
-        <Form onSubmit={handleSubmitStatus}>
-          <div className="rounded-lg border border-border bg-accent/30 p-4 space-y-2">
-            <p className="text-sm text-muted-foreground">Proveedor seleccionado</p>
-            <p className="font-medium">{selectedProveedor ? getProveedorDisplayName(selectedProveedor) : ''}</p>
-            <p className="text-sm text-muted-foreground">RUC: {selectedProveedor ? getProveedorIdentifier(selectedProveedor) : ''}</p>
-          </div>
-
-          <FormField
-            label="Nuevo estado"
-            name="estado"
-            type="select"
-            value={statusForm.estado}
-            onChange={(value) => setStatusForm((current) => ({ ...current, estado: value as ProveedorEstado }))}
-            options={[
-              { value: 'Activo', label: 'Activo' },
-              { value: 'Inactivo', label: 'Inactivo' },
-            ]}
-            required
-          />
-
-          {statusForm.estado === 'Inactivo' ? (
-            <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 space-y-2">
-              <div className="flex items-center gap-2 font-medium">
-                <AlertTriangle className="w-4 h-4" />
-                Confirmación requerida
-              </div>
-              <p>Debe registrar un motivo y no podrá desactivar el proveedor si existen ordenes de compra pendientes.</p>
-              {statusForm.pendingPurchases > 0 ? <p className="font-medium">Hay {statusForm.pendingPurchases} orden(es) de compra pendiente(s).</p> : null}
-            </div>
-          ) : (
-            <div className="rounded-lg border border-border bg-accent/20 p-4 text-sm text-muted-foreground">
-              El motivo sigue siendo obligatorio para dejar trazabilidad del cambio.
-            </div>
-          )}
-
-          <FormField
-            label="Motivo"
-            name="motivo-estado"
-            type="textarea"
-            value={statusForm.motivo}
-            onChange={(value) => setStatusForm((current) => ({ ...current, motivo: value as string }))}
-            placeholder="Explique el motivo del cambio de estado"
-            rows={3}
-            required
-          />
-
-          <FormActions>
-            <Button variant="outline" onClick={() => setIsStatusModalOpen(false)} disabled={statusSaving}>
-              Cancelar
-            </Button>
-            <Button type="submit" disabled={statusSaving || (statusForm.estado === 'Inactivo' && statusForm.pendingPurchases > 0)}>
-              Confirmar cambio
             </Button>
           </FormActions>
         </Form>

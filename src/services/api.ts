@@ -307,7 +307,7 @@ const normalizeProduccionPayload = async (data: any) => {
     cantidad: toNumberOrZero(data?.cantidad),
     fecha: data?.fecha ?? data?.fechaInicio ?? new Date().toISOString().split('T')[0],
     responsable: data?.responsable ?? data?.operario,
-    estado: data?.estado ?? 'Pendiente',
+    estado: data?.estado ?? 'Orden Recibida',
     notes: data?.notes ?? data?.detalle ?? data?.lote ?? null,
   };
 
@@ -340,10 +340,12 @@ const mergeWithCurrent = async (endpoint: string, patch: any) => {
 export const categorias = {
   getAll: () => apiCall('/api/categorias'),
   getById: (id: number) => apiCall(`/api/categorias/${id}`),
-  create: (data: { nombre: string; descripcion?: string; estado?: string }) =>
+  create: (data: { nombre: string; descripcion?: string }) =>
     apiCall('/api/categorias', 'POST', data),
-  update: (id: number, data: { nombre: string; descripcion?: string; estado?: string }) =>
+  update: (id: number, data: { nombre: string; descripcion?: string }) =>
     apiCall(`/api/categorias/${id}`, 'PUT', data),
+  updateStatus: (id: number, data: { estado: 'Activo' | 'Inactivo'; motivo: string }) =>
+    apiCall(`/api/categorias/${id}/estado`, 'PUT', data),
   delete: (id: number) => apiCall(`/api/categorias/${id}`, 'DELETE'),
 };
 
@@ -361,10 +363,11 @@ export const productos = {
     stock?: number;
     stock_minimo?: number;
     imagen_url?: string;
-    estado?: string;
   }) => apiCall('/api/productos', 'POST', data),
   update: (id: number, data: any) =>
     apiCall(`/api/productos/${id}`, 'PUT', data),
+  updateStatus: (id: number, data: { estado: 'Activo' | 'Inactivo'; motivo: string }) =>
+    apiCall(`/api/productos/${id}/estado`, 'PUT', data),
   delete: (id: number) => apiCall(`/api/productos/${id}`, 'DELETE'),
 };
 
@@ -398,6 +401,9 @@ export const clientes = {
 export const proveedores = {
   getAll: () => apiCall('/api/proveedores'),
   getById: (id: number) => apiCall(`/api/proveedores/${id}`),
+  getByNit: (nit: string) => apiCall(`/api/proveedores/nit/${encodeURIComponent(nit)}`),
+  getByEmail: (email: string) => apiCall(`/api/proveedores/email/${encodeURIComponent(email)}`),
+  getByTelefono: (telefono: string) => apiCall(`/api/proveedores/telefono/${encodeURIComponent(telefono)}`),
   getHistory: (id: number) => apiCall(`/api/proveedores/${id}/historial`),
   getPendingPurchases: (id: number) => apiCall(`/api/proveedores/${id}/pendientes`),
   create: (data: {
@@ -573,6 +579,14 @@ export const compras = {
     const payload = await normalizeCompraPayload(merged);
     return apiCall(`/api/compras/${id}`, 'PUT', payload);
   },
+  updateStatus: (
+    id: number,
+    data: {
+      estado: 'Pendiente' | 'Recibida' | 'Cancelada';
+      confirmacion_recibido?: boolean;
+      motivo_cancelacion?: string;
+    }
+  ) => apiCall(`/api/compras/${id}/estado`, 'PUT', data),
   delete: (id: number) => apiCall(`/api/compras/${id}`, 'DELETE'),
 };
 
@@ -629,6 +643,13 @@ export const produccion = {
     const payload = await normalizeProduccionPayload(merged);
     return apiCall(`/api/produccion/${id}`, 'PUT', payload);
   },
+  updateStatus: (
+    id: number,
+    data: {
+      estado: 'Orden Recibida' | 'Orden en preparacion' | 'Orden Lista' | 'Cancelada';
+      motivo_cancelacion?: string;
+    }
+  ) => apiCall(`/api/produccion/${id}/estado`, 'PUT', data),
   delete: (id: number) => apiCall(`/api/produccion/${id}`, 'DELETE'),
 };
 
@@ -685,6 +706,7 @@ export const usuarios = {
   getDeleteImpact: (id: number) => apiCall(`/api/usuarios/${id}/impacto-eliminacion`),
   getByEmail: (email: string) => apiCall(`/api/usuarios/email/${encodeURIComponent(email)}`),
   getByDocumento: (documento: string) => apiCall(`/api/usuarios/documento/${documento}`),
+  getByTelefono: (telefono: string) => apiCall(`/api/usuarios/telefono/${encodeURIComponent(telefono)}`),
   create: (data: {
     nombre: string;
     apellido: string;

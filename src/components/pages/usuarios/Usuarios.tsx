@@ -3,7 +3,7 @@ import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, Download, RotateCcw, KeyRound } from 'lucide-react';
+import { Plus, Download, RotateCcw, KeyRound, Search } from 'lucide-react';
 import { AlertDialog } from '../../AlertDialog';
 import { usuarios as usuariosAPI, roles as rolesAPI } from '../../../services/api';
 
@@ -15,7 +15,6 @@ interface Usuario {
   documento: string;
   direccion: string;
   email: string;
-  username?: string;
   telefono: string;
   rol_id?: number;
   rol?: string;
@@ -52,13 +51,17 @@ interface UsuarioDetalleCompleto {
   activeSessions: number;
 }
 
+interface DeleteImpactBlocker {
+  key: string;
+  label: string;
+  total: number;
+}
+
 interface DeleteImpact {
-  usuario: Usuario;
-  blockers: Array<{ key: string; label: string; total: number }>;
   activeSessions: number;
   daysInactive: number;
   canPhysicalDelete: boolean;
-  hasImpact: boolean;
+  blockers: DeleteImpactBlocker[];
 }
 
 interface UsersFilters {
@@ -67,64 +70,54 @@ interface UsersFilters {
   rolId: string;
 }
 
-const deriveUsernameFromEmail = (email: string) => {
-  const localPart = email
-    .trim()
-    .toLowerCase()
-    .split('@')[0]
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9._-]/g, '');
+interface UsuarioFormErrors {
+  nombre?: string;
+  apellido?: string;
+  tipo_documento?: string;
+  documento?: string;
+  direccion?: string;
+  email?: string;
+  telefono?: string;
+  rol_id?: string;
+}
 
-  return localPart || 'usuario';
-};
+interface UsuarioTouchedFields {
+  nombre?: boolean;
+  apellido?: boolean;
+  tipo_documento?: boolean;
+  documento?: boolean;
+  direccion?: boolean;
+  email?: boolean;
+  telefono?: boolean;
+  rol_id?: boolean;
+}
 
-const validateUsuarioForm = (data: any) => {
-  const nextErrors: Record<string, string> = {};
+interface ValidationState {
+  checking: boolean;
+  message: string;
+}
 
-  if (!data.nombre.trim()) nextErrors.nombre = 'El nombre es obligatorio';
-  if (!data.apellido.trim()) nextErrors.apellido = 'El apellido es obligatorio';
-  if (!data.tipo_documento) nextErrors.tipo_documento = 'Seleccione un tipo de documento';
-  if (!data.documento.trim()) nextErrors.documento = 'El documento es obligatorio';
-  if (!/^\d{5,20}$/.test(String(data.documento || '').trim())) {
-    nextErrors.documento = 'El documento debe contener solo números (5 a 20 dígitos)';
-  }
-  if (!data.direccion.trim()) nextErrors.direccion = 'La dirección es obligatoria';
+interface AlertState {
+  isOpen: boolean;
+  title: string;
+  description: string;
+  type: 'warning' | 'info' | 'success' | 'danger';
+  onConfirm: () => void;
+}
 
-  if (!data.email.trim()) {
-    nextErrors.email = 'El correo es obligatorio';
-  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
-    nextErrors.email = 'Ingrese un correo válido';
-  }
-
-  const telefono = String(data.telefono || '').replace(/\D/g, '');
-  if (!telefono) {
-    nextErrors.telefono = 'El teléfono es obligatorio';
-  } else if (telefono.length !== 10) {
-    nextErrors.telefono = 'El teléfono debe tener 10 dígitos';
-  }
-
-  if (!data.rol_id) nextErrors.rol_id = 'Seleccione un rol';
-  if (!data.estado) nextErrors.estado = 'Seleccione un estado';
-
-  return nextErrors;
-};
-
-const defaultFilters: UsersFilters = {
-  globalQuery: '',
-  estado: '',
-  rolId: '',
-};
-
-const toCsvValue = (value: unknown) => {
-  const raw = value === null || value === undefined ? '' : String(value);
-  return `"${raw.replace(/"/g, '""')}"`;
-};
-
+interface StatusChangeRequest {
+  usuario: Usuario;
+  from: 'Activo' | 'Inactivo';
+  to: 'Activo' | 'Inactivo';
+}
 const downloadUsersCsv = (rows: Usuario[]) => {
+  const toCsvValue = (value: unknown) => {
+    const text = value === null || value === undefined ? '' : String(value);
+    return `"${text.replace(/"/g, '""')}"`;
+  };
+
   const headers = [
     'id',
-    'username',
     'nombre',
     'apellido',
     'tipo_documento',
@@ -144,7 +137,6 @@ const downloadUsersCsv = (rows: Usuario[]) => {
     lines.push(
       [
         row.id,
-        row.username,
         row.nombre,
         row.apellido,
         row.tipo_documento,
@@ -175,36 +167,33 @@ const downloadUsersCsv = (rows: Usuario[]) => {
 };
 
 export function Usuarios() {
+  const defaultFilters: UsersFilters = {
+    globalQuery: '',
+    estado: '',
+    rolId: '',
+  };
+
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [roles, setRoles] = useState<Array<{ value: string; label: string }>>([]);
-  const [loading, setLoading] = useState(true);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
-  const [selectedUsuario, setSelectedUsuario] = useState<Usuario | null>(null);
-  const [detalleCompleto, setDetalleCompleto] = useState<UsuarioDetalleCompleto | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
-  const [touchedFields, setTouchedFields] = useState<Record<string, boolean>>({});
-  const [emailValidationState, setEmailValidationState] = useState({ checking: false, message: '' });
-  const [submitSaving, setSubmitSaving] = useState(false);
-  const [filters, setFilters] = useState<UsersFilters>(defaultFilters);
-  const [alertState, setAlertState] = useState({
-    isOpen: false,
-    title: '',
-    description: '',
-    type: 'warning' as 'warning' | 'info' | 'success' | 'danger',
-    onConfirm: () => {},
-  });
+  const [loading, setLoading] = useState(false);
 
-  const [statusModalOpen, setStatusModalOpen] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [submitSaving, setSubmitSaving] = useState(false);
+  const [selectedUsuario, setSelectedUsuario] = useState<Usuario | null>(null);
+
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detalleCompleto, setDetalleCompleto] = useState<UsuarioDetalleCompleto | null>(null);
+
   const [statusSaving, setStatusSaving] = useState(false);
-  const [statusTargetUsuario, setStatusTargetUsuario] = useState<Usuario | null>(null);
+  const [pendingStateChange, setPendingStateChange] = useState<StatusChangeRequest | null>(null);
   const [statusForm, setStatusForm] = useState({
-    estado: 'Inactivo' as 'Activo' | 'Inactivo',
     motivo: '',
     force: true,
     notificar: true,
   });
+
+  const [filters, setFilters] = useState<UsersFilters>(defaultFilters);
 
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteSaving, setDeleteSaving] = useState(false);
@@ -223,16 +212,71 @@ export function Usuarios() {
     documento: '',
     direccion: '',
     email: '',
-    username: '',
     telefono: '',
     rol_id: '',
-    estado: 'Activo' as 'Activo' | 'Inactivo',
+  });
+
+  const [formErrors, setFormErrors] = useState<UsuarioFormErrors>({});
+  const [touchedFields, setTouchedFields] = useState<UsuarioTouchedFields>({});
+
+  const [emailValidationState, setEmailValidationState] = useState<ValidationState>({
+    checking: false,
+    message: '',
+  });
+  const [documentValidationState, setDocumentValidationState] = useState<ValidationState>({
+    checking: false,
+    message: '',
+  });
+  const [phoneValidationState, setPhoneValidationState] = useState<ValidationState>({
+    checking: false,
+    message: '',
+  });
+
+  const [alertState, setAlertState] = useState<AlertState>({
+    isOpen: false,
+    title: '',
+    description: '',
+    type: 'warning',
+    onConfirm: () => {},
   });
 
   const lastLoadIdRef = useRef(0);
   const searchDebounceRef = useRef<number | null>(null);
 
-  const usernamePreview = formData.username || deriveUsernameFromEmail(formData.email);
+  const validateUsuarioForm = (data: typeof formData): UsuarioFormErrors => {
+    const errors: UsuarioFormErrors = {};
+
+    if (!data.nombre.trim()) errors.nombre = 'El nombre es obligatorio.';
+    if (!data.apellido.trim()) errors.apellido = 'El apellido es obligatorio.';
+    if (!data.tipo_documento) errors.tipo_documento = 'El tipo de documento es obligatorio.';
+
+    const documento = String(data.documento || '').trim();
+    if (!documento) {
+      errors.documento = 'El documento es obligatorio.';
+    } else if (!/^\d{5,20}$/.test(documento)) {
+      errors.documento = 'El documento debe contener entre 5 y 20 dígitos.';
+    }
+
+    if (!data.direccion.trim()) errors.direccion = 'La dirección es obligatoria.';
+
+    const email = data.email.trim().toLowerCase();
+    if (!email) {
+      errors.email = 'El correo es obligatorio.';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      errors.email = 'Ingresa un correo válido.';
+    }
+
+    const telefono = String(data.telefono || '').replace(/\D/g, '');
+    if (!telefono) {
+      errors.telefono = 'El teléfono es obligatorio.';
+    } else if (telefono.length !== 10) {
+      errors.telefono = 'El teléfono debe tener 10 dígitos.';
+    }
+
+    if (!data.rol_id.trim()) errors.rol_id = 'El rol es obligatorio.';
+
+    return errors;
+  };
 
   const getErrorReason = (error: unknown, fallback: string) => {
     if (error instanceof Error && error.message) return error.message;
@@ -245,40 +289,31 @@ export function Usuarios() {
 
   const columns: Column[] = [
     { key: 'id', label: 'ID' },
-    { key: 'username', label: 'Username' },
     { key: 'nombre', label: 'Nombre', render: (_: any, row: Usuario) => `${row.nombre} ${row.apellido}` },
-    { key: 'tipo_documento', label: 'Tipo Doc' },
-    { key: 'documento', label: 'Documento' },
-    { key: 'direccion', label: 'Dirección' },
     { key: 'email', label: 'Email' },
     { key: 'telefono', label: 'Teléfono' },
     { key: 'rol', label: 'Rol' },
     {
       key: 'estado',
       label: 'Estado',
-      render: (estado: string) => (
-        <span
-          className={`px-3 py-1 rounded-full text-xs ${
+      render: (estado: string, usuario: Usuario) => (
+        <select
+          value={estado === 'Activo' ? 'Activo' : estado === 'Inactivo' ? 'Inactivo' : 'Eliminado'}
+          onChange={(event) => handleChangeStateRequest(usuario, event.target.value as 'Activo' | 'Inactivo' | 'Eliminado')}
+          disabled={statusSaving || estado === 'Eliminado'}
+          className={`px-3 py-1 rounded-full text-xs border-0 cursor-pointer ${
             estado === 'Activo'
               ? 'bg-green-100 text-green-700'
               : estado === 'Eliminado'
               ? 'bg-slate-200 text-slate-700'
               : 'bg-red-100 text-red-700'
-          }`}
+          } ${estado === 'Eliminado' ? 'opacity-70 cursor-not-allowed' : ''}`}
         >
-          {estado}
-        </span>
+          <option value="Activo">Activo</option>
+          <option value="Inactivo">Inactivo</option>
+          {estado === 'Eliminado' ? <option value="Eliminado">Eliminado</option> : null}
+        </select>
       ),
-    },
-    {
-      key: 'created_at',
-      label: 'Creado',
-      render: (value: string) => (value ? new Date(value).toLocaleString() : 'N/A'),
-    },
-    {
-      key: 'updated_at',
-      label: 'Actualizado',
-      render: (value: string) => (value ? new Date(value).toLocaleString() : 'N/A'),
     },
   ];
 
@@ -318,7 +353,9 @@ export function Usuarios() {
       await minWait(startedAt, mergedFilters.globalQuery ? 5000 : 4000);
 
       if (loadId === lastLoadIdRef.current) {
-        setUsuarios(Array.isArray(data) ? data : []);
+        const normalizedRows = Array.isArray(data) ? data : [];
+        normalizedRows.sort((a: Usuario, b: Usuario) => Number(a.id) - Number(b.id));
+        setUsuarios(normalizedRows);
       }
     } catch (error) {
       console.error('Error cargando usuarios:', error);
@@ -365,16 +402,68 @@ export function Usuarios() {
     return () => window.clearTimeout(timeoutId);
   }, [formData.email, isModalOpen, selectedUsuario?.id]);
 
+  useEffect(() => {
+    if (!isModalOpen) return;
+
+    const documento = String(formData.documento || '').trim();
+    if (!/^\d{5,20}$/.test(documento)) {
+      setDocumentValidationState({ checking: false, message: '' });
+      return;
+    }
+
+    const timeoutId = window.setTimeout(async () => {
+      setDocumentValidationState({ checking: true, message: '' });
+
+      try {
+        const existing = await usuariosAPI.getByDocumento(documento);
+        if (existing && Number(existing.id) !== Number(selectedUsuario?.id)) {
+          setDocumentValidationState({ checking: false, message: 'El documento ya está registrado' });
+          return;
+        }
+        setDocumentValidationState({ checking: false, message: '' });
+      } catch {
+        setDocumentValidationState({ checking: false, message: '' });
+      }
+    }, 350);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [formData.documento, isModalOpen, selectedUsuario?.id]);
+
+  useEffect(() => {
+    if (!isModalOpen) return;
+
+    const telefono = String(formData.telefono || '').replace(/\D/g, '');
+    if (telefono.length !== 10) {
+      setPhoneValidationState({ checking: false, message: '' });
+      return;
+    }
+
+    const timeoutId = window.setTimeout(async () => {
+      setPhoneValidationState({ checking: true, message: '' });
+
+      try {
+        const existing = await usuariosAPI.getByTelefono(telefono);
+        if (existing && Number(existing.id) !== Number(selectedUsuario?.id)) {
+          setPhoneValidationState({ checking: false, message: 'El teléfono ya está registrado' });
+          return;
+        }
+        setPhoneValidationState({ checking: false, message: '' });
+      } catch {
+        setPhoneValidationState({ checking: false, message: '' });
+      }
+    }, 350);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [formData.telefono, isModalOpen, selectedUsuario?.id]);
+
   const roleFilterOptions = useMemo(() => {
     return [{ value: '', label: 'Todos los roles' }, ...roles];
   }, [roles]);
 
   const handleAdvancedFiltersChange = (field: keyof UsersFilters, value: string) => {
-    setFilters((current) => ({ ...current, [field]: value }));
-  };
-
-  const handleApplyFilters = async () => {
-    await loadUsuarios();
+    const nextFilters = { ...filters, [field]: value };
+    setFilters(nextFilters);
+    void loadUsuarios(nextFilters);
   };
 
   const handleResetFilters = async () => {
@@ -386,7 +475,6 @@ export function Usuarios() {
     const nextData = {
       ...formData,
       [field]: value,
-      ...(field === 'email' ? { username: deriveUsernameFromEmail(value) } : {}),
       ...(field === 'telefono' ? { telefono: String(value).replace(/\D/g, '').slice(0, 10) } : {}),
     };
 
@@ -403,14 +491,14 @@ export function Usuarios() {
       documento: '',
       direccion: '',
       email: '',
-      username: '',
       telefono: '',
       rol_id: '',
-      estado: 'Activo',
     });
     setFormErrors({});
     setTouchedFields({});
     setEmailValidationState({ checking: false, message: '' });
+    setDocumentValidationState({ checking: false, message: '' });
+    setPhoneValidationState({ checking: false, message: '' });
     setIsModalOpen(true);
   };
 
@@ -423,14 +511,14 @@ export function Usuarios() {
       documento: usuario.documento,
       direccion: usuario.direccion,
       email: usuario.email,
-      username: usuario.username || deriveUsernameFromEmail(usuario.email),
       telefono: usuario.telefono,
       rol_id: usuario.rol_id?.toString() || '',
-      estado: usuario.estado === 'Eliminado' ? 'Inactivo' : usuario.estado,
     });
     setFormErrors({});
     setTouchedFields({});
     setEmailValidationState({ checking: false, message: '' });
+    setDocumentValidationState({ checking: false, message: '' });
+    setPhoneValidationState({ checking: false, message: '' });
     setIsModalOpen(true);
   };
 
@@ -447,11 +535,15 @@ export function Usuarios() {
       email: true,
       telefono: true,
       rol_id: true,
-      estado: true,
     });
     setFormErrors(validationErrors);
 
-    if (Object.keys(validationErrors).length > 0 || Boolean(emailValidationState.message)) {
+    if (
+      Object.keys(validationErrors).length > 0 ||
+      Boolean(emailValidationState.message) ||
+      Boolean(documentValidationState.message) ||
+      Boolean(phoneValidationState.message)
+    ) {
       return;
     }
 
@@ -464,10 +556,8 @@ export function Usuarios() {
         documento: formData.documento.trim(),
         direccion: formData.direccion.trim(),
         email: formData.email.trim().toLowerCase(),
-        username: usernamePreview,
         telefono: formData.telefono.replace(/\D/g, ''),
         rol_id: parseInt(formData.rol_id, 10),
-        estado: formData.estado,
       };
 
       if (selectedUsuario) {
@@ -609,19 +699,24 @@ export function Usuarios() {
     }
   };
 
-  const handleChangeState = (usuario: Usuario) => {
-    setStatusTargetUsuario(usuario);
+  const handleChangeStateRequest = (usuario: Usuario, targetState: 'Activo' | 'Inactivo' | 'Eliminado') => {
+    if (targetState === 'Eliminado' || usuario.estado === 'Eliminado') return;
+    if (usuario.estado === targetState) return;
+
+    setPendingStateChange({
+      usuario,
+      from: usuario.estado as 'Activo' | 'Inactivo',
+      to: targetState,
+    });
     setStatusForm({
-      estado: usuario.estado === 'Activo' ? 'Inactivo' : 'Activo',
       motivo: '',
       force: true,
       notificar: true,
     });
-    setStatusModalOpen(true);
   };
 
   const handleConfirmStatusChange = async () => {
-    if (!statusTargetUsuario) return;
+    if (!pendingStateChange) return;
 
     if (!statusForm.notificar) {
       setAlertState({
@@ -636,17 +731,17 @@ export function Usuarios() {
 
     try {
       setStatusSaving(true);
-      await usuariosAPI.updateStatus(Number(statusTargetUsuario.id), {
-        estado: statusForm.estado,
+      await usuariosAPI.updateStatus(Number(pendingStateChange.usuario.id), {
+        estado: pendingStateChange.to,
         force: statusForm.force,
+        motivo: statusForm.motivo.trim() || undefined,
         notificar: statusForm.notificar,
-        verificacion: statusForm.estado === 'Activo',
-        motivo: statusForm.motivo,
+        verificacion: pendingStateChange.to === 'Activo',
       });
 
       await loadUsuarios();
-      setStatusModalOpen(false);
-      setStatusTargetUsuario(null);
+      setPendingStateChange(null);
+      setStatusForm({ motivo: '', force: true, notificar: true });
     } catch (error) {
       console.error('Error cambiando estado:', error);
       setAlertState({
@@ -659,6 +754,11 @@ export function Usuarios() {
     } finally {
       setStatusSaving(false);
     }
+  };
+
+  const handleCancelStatusChange = () => {
+    setPendingStateChange(null);
+    setStatusForm({ motivo: '', force: true, notificar: true });
   };
 
   return (
@@ -678,38 +778,63 @@ export function Usuarios() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <FormField
-          label="Estado"
-          name="usuarios-filtro-estado"
-          type="select"
-          value={filters.estado}
-          onChange={(value) => handleAdvancedFiltersChange('estado', String(value) as UsersFilters['estado'])}
-          options={[
-            { value: '', label: 'Todos' },
-            { value: 'Activo', label: 'Activo' },
-            { value: 'Inactivo', label: 'Inactivo' },
-            { value: 'Eliminado', label: 'Eliminado' },
-          ]}
-        />
+      <div className="rounded-lg border border-border bg-white p-4 space-y-3">
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <input
+              type="text"
+              value={filters.globalQuery}
+              onChange={(event) => {
+                const query = event.target.value;
+                const nextFilters = { ...filters, globalQuery: query };
+                setFilters(nextFilters);
 
-        <FormField
-          label="Rol"
-          name="usuarios-filtro-rol"
-          type="select"
-          value={filters.rolId}
-          onChange={(value) => handleAdvancedFiltersChange('rolId', String(value))}
-          options={roleFilterOptions}
-        />
-      </div>
+                if (searchDebounceRef.current) {
+                  window.clearTimeout(searchDebounceRef.current);
+                }
 
-      <div className="flex flex-wrap gap-2">
-        <Button variant="outline" onClick={() => void handleApplyFilters()}>
-          Aplicar filtros combinados
-        </Button>
-        <Button variant="ghost" icon={<RotateCcw className="w-4 h-4" />} onClick={() => void handleResetFilters()}>
-          Limpiar filtros
-        </Button>
+                searchDebounceRef.current = window.setTimeout(() => {
+                  void loadUsuarios(nextFilters);
+                }, 350);
+              }}
+              placeholder="Buscar usuario por nombre, correo o documento..."
+              className="w-full pl-10 pr-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <Button
+            variant="outline"
+            icon={<RotateCcw className="w-4 h-4" />}
+            onClick={() => void handleResetFilters()}
+            disabled={!filters.globalQuery.trim() && !filters.estado && !filters.rolId}
+          >
+            Limpiar filtros
+          </Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filtrar por:</span>
+          <select
+            value={filters.estado}
+            onChange={(event) => handleAdvancedFiltersChange('estado', event.target.value as UsersFilters['estado'])}
+            className="h-8 rounded-md border border-border px-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Estado (todos)</option>
+            <option value="Activo">Activo</option>
+            <option value="Inactivo">Inactivo</option>
+            <option value="Eliminado">Eliminado</option>
+          </select>
+          <select
+            value={filters.rolId}
+            onChange={(event) => handleAdvancedFiltersChange('rolId', event.target.value)}
+            className="h-8 rounded-md border border-border px-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            {roleFilterOptions.map((role) => (
+              <option key={role.value} value={role.value}>
+                {role.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {loading ? <p className="text-sm text-muted-foreground">Cargando usuarios...</p> : null}
@@ -720,26 +845,8 @@ export function Usuarios() {
         actions={[
           commonActions.view(handleView),
           commonActions.edit(handleEdit),
-          {
-            label: 'Cambiar Estado',
-            icon: <span className="text-xs">⚡</span>,
-            onClick: handleChangeState,
-            variant: 'default',
-          },
           commonActions.delete(handleDelete),
         ]}
-        onSearch={(query) => {
-          if (searchDebounceRef.current) {
-            window.clearTimeout(searchDebounceRef.current);
-          }
-
-          searchDebounceRef.current = window.setTimeout(() => {
-            const nextFilters = { ...filters, globalQuery: query };
-            setFilters(nextFilters);
-            void loadUsuarios(nextFilters);
-          }, 400);
-        }}
-        searchPlaceholder="Búsqueda global en toda la base de datos..."
       />
 
       <Modal
@@ -792,7 +899,12 @@ export function Usuarios() {
             onChange={(value) => updateField('documento', value as string)}
             onBlur={() => setTouchedFields((current) => ({ ...current, documento: true }))}
             required
-            error={touchedFields.documento ? formErrors.documento : undefined}
+            error={
+              touchedFields.documento || Boolean(documentValidationState.message)
+                ? formErrors.documento || documentValidationState.message || undefined
+                : undefined
+            }
+            helperText={documentValidationState.checking ? 'Validando unicidad del documento...' : undefined}
           />
 
           <FormField
@@ -813,20 +925,16 @@ export function Usuarios() {
             onChange={(value) => updateField('email', value as string)}
             onBlur={() => setTouchedFields((current) => ({ ...current, email: true }))}
             required
-            error={touchedFields.email ? (formErrors.email || emailValidationState.message || undefined) : undefined}
+            error={
+              touchedFields.email || Boolean(emailValidationState.message)
+                ? formErrors.email || emailValidationState.message || undefined
+                : undefined
+            }
             helperText={
               emailValidationState.checking
                 ? 'Validando unicidad del correo...'
-                : 'El username se autogenera desde este correo'
+                : undefined
             }
-          />
-
-          <FormField
-            label="Username"
-            name="username"
-            value={usernamePreview}
-            readOnly
-            helperText="Se genera automáticamente desde el email"
           />
 
           {!selectedUsuario ? (
@@ -842,8 +950,12 @@ export function Usuarios() {
             onChange={(value) => updateField('telefono', value as string)}
             onBlur={() => setTouchedFields((current) => ({ ...current, telefono: true }))}
             required
-            error={touchedFields.telefono ? formErrors.telefono : undefined}
-            helperText="Formato de 10 dígitos"
+            error={
+              touchedFields.telefono || Boolean(phoneValidationState.message)
+                ? formErrors.telefono || phoneValidationState.message || undefined
+                : undefined
+            }
+            helperText={phoneValidationState.checking ? 'Validando unicidad del teléfono...' : 'Formato de 10 dígitos'}
           />
 
           <FormField
@@ -858,28 +970,25 @@ export function Usuarios() {
             error={touchedFields.rol_id ? formErrors.rol_id : undefined}
           />
 
-          <FormField
-            label="Estado"
-            name="estado"
-            type="select"
-            value={formData.estado}
-            onChange={(value) => updateField('estado', value as string)}
-            onBlur={() => setTouchedFields((current) => ({ ...current, estado: true }))}
-            options={[
-              { value: 'Activo', label: 'Activo' },
-              { value: 'Inactivo', label: 'Inactivo' },
-            ]}
-            required
-            disabled={Boolean(selectedUsuario)}
-            helperText={selectedUsuario ? 'El cambio de estado se realiza desde la opción Cambiar Estado' : undefined}
-            error={touchedFields.estado ? formErrors.estado : undefined}
-          />
+          {!selectedUsuario ? (
+            <p className="text-xs text-muted-foreground -mt-1">
+              El estado inicial se asigna automáticamente. Para cambios posteriores, usa el selector de estado en la tabla.
+            </p>
+          ) : null}
 
           <FormActions>
             <Button variant="outline" onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={submitSaving || emailValidationState.checking}>
+            <Button
+              type="submit"
+              disabled={
+                submitSaving ||
+                emailValidationState.checking ||
+                documentValidationState.checking ||
+                phoneValidationState.checking
+              }
+            >
               {submitSaving ? 'Guardando...' : `${selectedUsuario ? 'Actualizar' : 'Crear'} Usuario`}
             </Button>
           </FormActions>
@@ -904,10 +1013,6 @@ export function Usuarios() {
               <div>
                 <p className="text-sm text-muted-foreground">ID</p>
                 <p>{detalleCompleto.usuario.id}</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Username</p>
-                <p>{detalleCompleto.usuario.username}</p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Nombre</p>
@@ -1005,28 +1110,16 @@ export function Usuarios() {
       </Modal>
 
       <Modal
-        isOpen={statusModalOpen}
-        onClose={() => {
-          setStatusModalOpen(false);
-          setStatusTargetUsuario(null);
-          setStatusForm({ estado: 'Inactivo', motivo: '', force: true, notificar: true });
-        }}
-        title={`Cambiar estado - ${statusTargetUsuario?.nombre} ${statusTargetUsuario?.apellido}`}
+        isOpen={Boolean(pendingStateChange)}
+        onClose={handleCancelStatusChange}
+        title={`Cambiar estado - ${pendingStateChange?.usuario.nombre || ''} ${pendingStateChange?.usuario.apellido || ''}`}
         size="md"
       >
         <div className="space-y-4">
-          <FormField
-            label="Estado"
-            name="status_estado"
-            type="select"
-            value={statusForm.estado}
-            onChange={(value) => setStatusForm((current) => ({ ...current, estado: value as 'Activo' | 'Inactivo' }))}
-            options={[
-              { value: 'Activo', label: 'Activo' },
-              { value: 'Inactivo', label: 'Inactivo' },
-            ]}
-            required
-          />
+          <div className="rounded-lg border border-border bg-accent/30 p-4 space-y-1">
+            <p className="text-sm text-muted-foreground">Estado actual: {pendingStateChange?.from || 'N/A'}</p>
+            <p className="text-sm text-muted-foreground">Nuevo estado: {pendingStateChange?.to || 'N/A'}</p>
+          </div>
 
           <FormField
             label="Motivo"
@@ -1059,14 +1152,7 @@ export function Usuarios() {
           </label>
 
           <FormActions>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setStatusModalOpen(false);
-                setStatusTargetUsuario(null);
-                setStatusForm({ estado: 'Inactivo', motivo: '', force: true, notificar: true });
-              }}
-            >
+            <Button variant="outline" onClick={handleCancelStatusChange}>
               Cancelar
             </Button>
             <Button onClick={handleConfirmStatusChange} disabled={statusSaving}>

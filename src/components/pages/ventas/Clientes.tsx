@@ -3,7 +3,7 @@ import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, UserCircle, RefreshCcw, Upload } from 'lucide-react';
+import { Plus, UserCircle, Upload } from 'lucide-react';
 import { AlertDialog } from '../../AlertDialog';
 import { clientes as clientesAPI } from '../../../services/api';
 
@@ -18,6 +18,12 @@ interface Cliente {
   direccion: string;
   foto_url?: string;
   estado: 'Activo' | 'Inactivo';
+}
+
+interface StateChangeRequest {
+  cliente: Cliente;
+  from: Cliente['estado'];
+  to: Cliente['estado'];
 }
 
 export function Clientes() {
@@ -49,6 +55,9 @@ export function Clientes() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [selectedCliente, setSelectedCliente] = useState<Cliente | null>(null);
+  const [pendingStateChange, setPendingStateChange] = useState<StateChangeRequest | null>(null);
+  const [stateChangeReason, setStateChangeReason] = useState('');
+  const [stateChangeSaving, setStateChangeSaving] = useState(false);
   const [fotoPreview, setFotoPreview] = useState<string | null>(null);
   const [alertState, setAlertState] = useState({
     isOpen: false,
@@ -100,12 +109,18 @@ export function Clientes() {
     { 
       key: 'estado', 
       label: 'Estado',
-      render: (estado: string) => (
-        <span className={`px-3 py-1 rounded-full text-xs ${
-          estado === 'Activo' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-        }`}>
-          {estado}
-        </span>
+      render: (estado: string, cliente: Cliente) => (
+        <select
+          value={estado}
+          onChange={(event) => handleEstadoChangeRequest(cliente, event.target.value as Cliente['estado'])}
+          disabled={stateChangeSaving}
+          className={`px-3 py-1 rounded-full text-xs border-0 cursor-pointer ${
+            estado === 'Activo' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+          }`}
+        >
+          <option value="Activo">Activo</option>
+          <option value="Inactivo">Inactivo</option>
+        </select>
       )
     }
   ];
@@ -160,14 +175,49 @@ export function Clientes() {
     });
   };
 
-  const handleToggleEstado = async (cliente: Cliente) => {
-    const nuevoEstado = cliente.estado === 'Activo' ? 'Inactivo' : 'Activo';
+  const handleEstadoChangeRequest = (cliente: Cliente, nuevoEstado: Cliente['estado']) => {
+    if (cliente.estado === nuevoEstado) return;
+
+    setPendingStateChange({
+      cliente,
+      from: cliente.estado,
+      to: nuevoEstado,
+    });
+    setStateChangeReason('');
+  };
+
+  const handleConfirmEstadoChange = async () => {
+    if (!pendingStateChange) return;
+
+    if (pendingStateChange.to === 'Inactivo' && stateChangeReason.trim().length < 10) {
+      setAlertState({
+        isOpen: true,
+        title: 'Motivo requerido',
+        description: 'Para inactivar al cliente debes indicar un motivo de al menos 10 caracteres.',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
     try {
-      await clientesAPI.update(Number(cliente.id), { estado: nuevoEstado });
+      setStateChangeSaving(true);
+      await clientesAPI.update(Number(pendingStateChange.cliente.id), {
+        estado: pendingStateChange.to,
+        observaciones: stateChangeReason.trim() || undefined,
+      });
       await loadClientes();
+      setPendingStateChange(null);
+      setStateChangeReason('');
     } catch (error) {
       console.error('Error al cambiar estado:', error);
+    } finally {
+      setStateChangeSaving(false);
     }
+  };
+
+  const handleCancelEstadoChange = () => {
+    setPendingStateChange(null);
+    setStateChangeReason('');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -220,12 +270,6 @@ export function Clientes() {
               setSelectedCliente(cliente);
               setIsDetailModalOpen(true);
             }),
-            {
-              label: 'Cambiar Estado',
-              icon: <RefreshCcw className="w-4 h-4" />,
-              onClick: handleToggleEstado,
-              variant: 'primary'
-            },
             commonActions.edit(handleEdit),
             commonActions.delete(handleDelete)
           ]}
@@ -233,6 +277,42 @@ export function Clientes() {
           searchPlaceholder="Buscar clientes..."
         />
       )}
+
+      <Modal
+        isOpen={Boolean(pendingStateChange)}
+        onClose={handleCancelEstadoChange}
+        title={`Cambiar estado - Cliente ${pendingStateChange?.cliente.nombre || ''} ${pendingStateChange?.cliente.apellido || ''}`}
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-accent/30 p-4 space-y-1">
+            <p className="text-sm text-muted-foreground">Estado actual: {pendingStateChange?.from || 'N/A'}</p>
+            <p className="text-sm text-muted-foreground">Nuevo estado: {pendingStateChange?.to || 'N/A'}</p>
+          </div>
+
+          {pendingStateChange?.to === 'Inactivo' ? (
+            <FormField
+              label="Motivo del cambio"
+              name="motivo-cambio-cliente"
+              type="textarea"
+              value={stateChangeReason}
+              onChange={(value) => setStateChangeReason(String(value))}
+              rows={3}
+              required
+              placeholder="Explica por qué se inactiva el cliente (mínimo 10 caracteres)"
+            />
+          ) : null}
+
+          <FormActions>
+            <Button variant="outline" onClick={handleCancelEstadoChange} disabled={stateChangeSaving}>
+              Cancelar
+            </Button>
+            <Button onClick={handleConfirmEstadoChange} disabled={stateChangeSaving}>
+              {stateChangeSaving ? 'Guardando...' : 'Confirmar'}
+            </Button>
+          </FormActions>
+        </div>
+      </Modal>
 
       {/* Detail Modal */}
       <Modal 

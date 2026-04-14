@@ -42,6 +42,12 @@ interface Producto {
   stock: number;
 }
 
+interface StateChangeRequest {
+  venta: Venta;
+  from: string;
+  to: string;
+}
+
 export function Ventas() {
   const [ventas, setVentas] = useState<Venta[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
@@ -85,6 +91,9 @@ export function Ventas() {
   };
 
   const [selectedVenta, setSelectedVenta] = useState<Venta | null>(null);
+  const [pendingStateChange, setPendingStateChange] = useState<StateChangeRequest | null>(null);
+  const [stateChangeReason, setStateChangeReason] = useState('');
+  const [stateChangeSaving, setStateChangeSaving] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
   const [pdfContent, setPdfContent] = useState('');
@@ -131,14 +140,21 @@ export function Ventas() {
     { 
       key: 'estado', 
       label: 'Estado',
-      render: (estado: string) => (
-        <span className={`px-3 py-1 rounded-full text-xs ${
-          estado === 'Completada' ? 'bg-green-100 text-green-700' :
-          estado === 'Pendiente' ? 'bg-yellow-100 text-yellow-700' :
-          'bg-red-100 text-red-700'
-        }`}>
-          {estado}
-        </span>
+      render: (estado: string, venta: Venta) => (
+        <select
+          value={estado}
+          onChange={(event) => handleEstadoChangeRequest(venta, event.target.value)}
+          disabled={stateChangeSaving}
+          className={`px-3 py-1 rounded-full text-xs border-0 cursor-pointer ${
+            estado === 'Completada' ? 'bg-green-100 text-green-700' :
+            estado === 'Pendiente' ? 'bg-yellow-100 text-yellow-700' :
+            'bg-red-100 text-red-700'
+          }`}
+        >
+          <option value="Pendiente">Pendiente</option>
+          <option value="Completada">Completada</option>
+          <option value="Cancelada">Cancelada</option>
+        </select>
       )
     }
   ];
@@ -148,29 +164,54 @@ export function Ventas() {
     setIsDetailModalOpen(true);
   };
 
-  const handleAnular = async (venta: Venta) => {
-    showAlert({
-      title: 'Confirmar anulación',
-      description: `¿Está seguro de anular la venta ${venta.numero_venta}? Esta acción no se puede deshacer.`,
-      type: 'danger',
-      confirmText: 'Anular venta',
-      cancelText: 'Cancelar',
-      onConfirm: async () => {
-        try {
-          await ventasAPI.update(venta.id, { estado: 'Cancelada' });
-          await loadVentas();
-        } catch (error) {
-          console.error('Error al anular venta:', error);
-          showAlert({
-            title: 'Error',
-            description: 'No se pudo anular la venta.',
-            type: 'danger',
-            confirmText: 'Entendido',
-            onConfirm: () => {}
-          });
-        }
-      }
+  const handleEstadoChangeRequest = (venta: Venta, nuevoEstado: string) => {
+    if (venta.estado === nuevoEstado) return;
+
+    setPendingStateChange({
+      venta,
+      from: venta.estado,
+      to: nuevoEstado,
     });
+    setStateChangeReason('');
+  };
+
+  const handleConfirmEstadoChange = async () => {
+    if (!pendingStateChange) return;
+
+    if (pendingStateChange.to === 'Cancelada' && stateChangeReason.trim().length < 10) {
+      showAlert({
+        title: 'Motivo requerido',
+        description: 'Para cancelar la venta debes indicar un motivo de al menos 10 caracteres.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
+    try {
+      setStateChangeSaving(true);
+      await ventasAPI.update(pendingStateChange.venta.id, { estado: pendingStateChange.to });
+      await loadVentas();
+      setPendingStateChange(null);
+      setStateChangeReason('');
+    } catch (error) {
+      console.error('Error actualizando estado de venta:', error);
+      showAlert({
+        title: 'Error',
+        description: 'No se pudo actualizar el estado de la venta.',
+        type: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+    } finally {
+      setStateChangeSaving(false);
+    }
+  };
+
+  const handleCancelEstadoChange = () => {
+    setPendingStateChange(null);
+    setStateChangeReason('');
   };
 
   const handleGeneratePDF = (venta: Venta) => {
@@ -346,11 +387,46 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         actions={[
           commonActions.view(handleView),
           commonActions.pdf(handleGeneratePDF),
-          commonActions.cancel(handleAnular)
         ]}
         onSearch={(query) => console.log('Searching:', query)}
         searchPlaceholder="Buscar ventas..."
       />
+
+      <Modal
+        isOpen={Boolean(pendingStateChange)}
+        onClose={handleCancelEstadoChange}
+        title={`Cambiar estado - Venta ${pendingStateChange?.venta.numero_venta || ''}`}
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-accent/30 p-4 space-y-1">
+            <p className="text-sm text-muted-foreground">Estado actual: {pendingStateChange?.from || 'N/A'}</p>
+            <p className="text-sm text-muted-foreground">Nuevo estado: {pendingStateChange?.to || 'N/A'}</p>
+          </div>
+
+          {pendingStateChange?.to === 'Cancelada' ? (
+            <FormField
+              label="Motivo del cambio"
+              name="motivo-cambio-venta"
+              type="textarea"
+              value={stateChangeReason}
+              onChange={(value) => setStateChangeReason(String(value))}
+              rows={3}
+              required
+              placeholder="Explica por qué se cancela la venta (mínimo 10 caracteres)"
+            />
+          ) : null}
+
+          <FormActions>
+            <Button variant="outline" onClick={handleCancelEstadoChange} disabled={stateChangeSaving}>
+              Cancelar
+            </Button>
+            <Button onClick={handleConfirmEstadoChange} disabled={stateChangeSaving}>
+              {stateChangeSaving ? 'Guardando...' : 'Confirmar'}
+            </Button>
+          </FormActions>
+        </div>
+      </Modal>
 
       <Modal
         isOpen={isDetailModalOpen}

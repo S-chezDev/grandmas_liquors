@@ -5,7 +5,6 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const config = require('../../config');
 const { normalizeAuthRegisterPayload } = require('./normalizador-http');
-const { buildUsernameFromEmail } = require('../utils/credentials');
 const { generateTempPassword, isStrongPassword } = require('../utils/credentials');
 const { sendTemporaryPasswordEmail } = require('../services/email.service');
 
@@ -43,7 +42,6 @@ const mapUserForResponse = (usuario, roleName, clienteId, permissions = []) => (
   email: usuario.email,
   nombre: usuario.nombre,
   apellido: usuario.apellido,
-  username: usuario.username,
   rol: roleName,
   rol_id: usuario.rol_id,
   cliente_id: clienteId,
@@ -94,7 +92,7 @@ module.exports = {
         return res.status(429).json({ success: false, message: 'Cuenta bloqueada temporalmente por intentos fallidos' });
       }
 
-      const usuario = await models.Usuarios.getByEmailOrUsername(identifier);
+      const usuario = await models.Usuarios.getByEmailLogin(identifier);
       if (!usuario) {
         await models.Usuarios.registerLoginFailure(identifier);
         return res.status(401).json({ success: false, message: 'Credenciales incorrectas' });
@@ -259,7 +257,7 @@ module.exports = {
         return res.status(400).json({ success: false, message: 'El correo es obligatorio' });
       }
 
-      const usuario = await models.Usuarios.getByEmailOrUsername(email);
+      const usuario = await models.Usuarios.getByEmailLogin(email);
       if (!usuario) {
         return res.status(404).json({ success: false, message: 'No existe una cuenta asociada a este correo' });
       }
@@ -277,7 +275,6 @@ module.exports = {
       await sendTemporaryPasswordEmail({
         to: usuario.email,
         name: `${usuario.nombre || ''} ${usuario.apellido || ''}`.trim(),
-        username: usuario.username,
         tempPassword: token,
       });
 
@@ -404,12 +401,10 @@ module.exports = {
       }
 
       const passwordHash = await bcrypt.hash(password, 10);
-      const username = await buildUsernameFromEmail(client, email);
-
       const userResult = await client.query(
         `INSERT INTO usuarios
-        (nombre, apellido, tipo_documento, documento, direccion, email, username, telefono, password_hash, rol_id, estado)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Activo')
+        (nombre, apellido, tipo_documento, documento, direccion, email, telefono, password_hash, rol_id, estado)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'Activo')
         RETURNING id`,
         [
           nombre,
@@ -418,7 +413,6 @@ module.exports = {
           numeroDocumento,
           direccion,
           email,
-          username,
           telefono || null,
           passwordHash,
           clienteRole.rows[0].id,

@@ -5,6 +5,14 @@
 
 -- Drop existing tables if they exist (in correct order due to foreign keys)
 DROP TABLE IF EXISTS schema_migrations CASCADE;
+DROP TABLE IF EXISTS usuarios_login_intentos CASCADE;
+DROP TABLE IF EXISTS usuarios_password_resets CASCADE;
+DROP TABLE IF EXISTS usuarios_password_historial CASCADE;
+DROP TABLE IF EXISTS usuarios_backup CASCADE;
+DROP TABLE IF EXISTS usuarios_sesiones CASCADE;
+DROP TABLE IF EXISTS usuarios_auditoria CASCADE;
+DROP TABLE IF EXISTS roles_auditoria CASCADE;
+DROP TABLE IF EXISTS proveedores_auditoria CASCADE;
 DROP TABLE IF EXISTS usuarios CASCADE;
 DROP TABLE IF EXISTS detalle_ventas CASCADE;
 DROP TABLE IF EXISTS detalle_compras CASCADE;
@@ -295,7 +303,6 @@ CREATE TABLE produccion (
 -- ========================================
 CREATE TABLE usuarios (
     id SERIAL PRIMARY KEY,
-    username VARCHAR(120) UNIQUE NOT NULL,
     nombre VARCHAR(100) NOT NULL,
     apellido VARCHAR(100) NOT NULL,
     tipo_documento VARCHAR(20) NOT NULL,
@@ -307,6 +314,81 @@ CREATE TABLE usuarios (
     rol_id INTEGER REFERENCES roles(id) ON DELETE SET NULL,
     estado VARCHAR(20) DEFAULT 'Activo',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ========================================
+-- TABLAS AUXILIARES (AUDITORIA / SEGURIDAD)
+-- ========================================
+CREATE TABLE proveedores_auditoria (
+    id SERIAL PRIMARY KEY,
+    proveedor_id INTEGER,
+    accion VARCHAR(20) NOT NULL,
+    usuario_id INTEGER,
+    cambios JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE roles_auditoria (
+    id SERIAL PRIMARY KEY,
+    rol_id INTEGER,
+    accion VARCHAR(20) NOT NULL,
+    usuario_id INTEGER,
+    cambios JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE usuarios_auditoria (
+    id SERIAL PRIMARY KEY,
+    usuario_id INTEGER,
+    accion VARCHAR(20) NOT NULL,
+    actor_id INTEGER,
+    cambios JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE usuarios_sesiones (
+    id SERIAL PRIMARY KEY,
+    usuario_id INTEGER NOT NULL,
+    jti VARCHAR(120) NOT NULL UNIQUE,
+    expires_at TIMESTAMP NOT NULL,
+    revoked_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ip_address VARCHAR(64),
+    user_agent TEXT
+);
+
+CREATE TABLE usuarios_backup (
+    id SERIAL PRIMARY KEY,
+    usuario_id INTEGER NOT NULL,
+    actor_id INTEGER,
+    reason TEXT,
+    snapshot JSONB NOT NULL,
+    deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE usuarios_password_historial (
+    id SERIAL PRIMARY KEY,
+    usuario_id INTEGER NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE usuarios_password_resets (
+    id SERIAL PRIMARY KEY,
+    usuario_id INTEGER NOT NULL,
+    token_hash TEXT NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    used_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE usuarios_login_intentos (
+    email VARCHAR(255) PRIMARY KEY,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    blocked_until TIMESTAMP NULL,
+    last_attempt_at TIMESTAMP NULL,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -328,6 +410,15 @@ CREATE INDEX idx_usuarios_email ON usuarios(email);
 CREATE INDEX idx_usuarios_rol ON usuarios(rol_id);
 CREATE INDEX idx_usuarios_estado ON usuarios(estado);
 CREATE UNIQUE INDEX idx_usuarios_email_unique_lower ON usuarios(LOWER(email));
+
+-- Índices para auditoría y seguridad
+CREATE INDEX idx_usuarios_sesiones_usuario_activa ON usuarios_sesiones(usuario_id, revoked_at, expires_at);
+CREATE INDEX idx_usuarios_password_historial_usuario ON usuarios_password_historial(usuario_id, created_at DESC);
+CREATE INDEX idx_usuarios_password_resets_usuario ON usuarios_password_resets(usuario_id, created_at DESC);
+CREATE INDEX idx_usuarios_password_resets_token ON usuarios_password_resets(token_hash);
+CREATE INDEX idx_usuarios_auditoria_usuario_fecha ON usuarios_auditoria(usuario_id, created_at DESC);
+CREATE INDEX idx_proveedores_auditoria_proveedor_fecha ON proveedores_auditoria(proveedor_id, created_at DESC);
+CREATE INDEX idx_roles_auditoria_rol_fecha ON roles_auditoria(rol_id, created_at DESC);
 
 -- Índices para productos
 CREATE INDEX idx_productos_categoria ON productos(categoria_id);

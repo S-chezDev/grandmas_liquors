@@ -39,7 +39,29 @@ module.exports = {
       await models.Productos.update(req.params.id, req.body);
       res.json({ success: true, message: 'Producto actualizado exitosamente' });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      res.status(error.statusCode || 500).json({ success: false, message: error.message });
+    }
+  },
+  updateStatus: async (req, res) => {
+    try {
+      const estado = typeof req.body?.estado === 'string' ? req.body.estado.trim() : '';
+      const motivo = typeof req.body?.motivo === 'string' ? req.body.motivo.trim() : '';
+
+      if (!estado) {
+        return res.status(400).json({ success: false, message: 'Estado es obligatorio' });
+      }
+
+      if (!motivo || motivo.length < 10) {
+        return res.status(400).json({
+          success: false,
+          message: 'El motivo de cambio de estado es obligatorio y debe tener al menos 10 caracteres',
+        });
+      }
+
+      const producto = await models.Productos.updateStatus(req.params.id, { estado, motivo });
+      res.json({ success: true, data: producto, message: 'Estado del producto actualizado exitosamente' });
+    } catch (error) {
+      res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
   },
   delete: async (req, res) => {

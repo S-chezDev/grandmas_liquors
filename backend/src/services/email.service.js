@@ -27,7 +27,7 @@ const createTransporter = () => {
   return cachedTransporter;
 };
 
-const sendTemporaryPasswordEmail = async ({ to, name, username, tempPassword }) => {
+const sendTemporaryPasswordEmail = async ({ to, name, tempPassword }) => {
   const transporter = createTransporter();
 
   const message = {
@@ -37,7 +37,6 @@ const sendTemporaryPasswordEmail = async ({ to, name, username, tempPassword }) 
     text: [
       `Hola ${name || ''}`.trim(),
       '',
-      `Tu usuario temporal es: ${username}`,
       `Tu contraseña temporal es: ${tempPassword}`,
       '',
       'Debes cambiar la contraseña al ingresar por primera vez.',
@@ -46,7 +45,6 @@ const sendTemporaryPasswordEmail = async ({ to, name, username, tempPassword }) 
       <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #1f2937;">
         <h2 style="margin-bottom: 16px;">Acceso temporal a Grandma's Liquors</h2>
         <p>Hola ${name || ''}</p>
-        <p>Tu usuario temporal es: <strong>${username}</strong></p>
         <p>Tu contraseña temporal es: <strong>${tempPassword}</strong></p>
         <p>Debes cambiar la contraseña al ingresar por primera vez.</p>
       </div>
@@ -56,7 +54,7 @@ const sendTemporaryPasswordEmail = async ({ to, name, username, tempPassword }) 
   return transporter.sendMail(message);
 };
 
-const sendEmailChangeNotification = async ({ to, name, username, previousEmail, currentEmail }) => {
+const sendEmailChangeNotification = async ({ to, name, previousEmail, currentEmail }) => {
   const transporter = createTransporter();
 
   const message = {
@@ -69,7 +67,6 @@ const sendEmailChangeNotification = async ({ to, name, username, previousEmail, 
       'Te informamos que el correo asociado a tu cuenta fue actualizado.',
       `Correo anterior: ${previousEmail || 'No disponible'}`,
       `Correo actual: ${currentEmail || to}`,
-      `Usuario: ${username || 'No disponible'}`,
       '',
       'Si no realizaste este cambio, contacta al administrador de inmediato.',
     ].join('\n'),
@@ -81,7 +78,6 @@ const sendEmailChangeNotification = async ({ to, name, username, previousEmail, 
         <ul>
           <li><strong>Correo anterior:</strong> ${previousEmail || 'No disponible'}</li>
           <li><strong>Correo actual:</strong> ${currentEmail || to}</li>
-          <li><strong>Usuario:</strong> ${username || 'No disponible'}</li>
         </ul>
         <p>Si no realizaste este cambio, contacta al administrador de inmediato.</p>
       </div>
@@ -91,7 +87,7 @@ const sendEmailChangeNotification = async ({ to, name, username, previousEmail, 
   return transporter.sendMail(message);
 };
 
-const sendUserStatusChangeNotification = async ({ to, name, username, estado, motivo, changedBy }) => {
+const sendUserStatusChangeNotification = async ({ to, name, estado, motivo, changedBy }) => {
   const transporter = createTransporter();
 
   const message = {
@@ -102,7 +98,6 @@ const sendUserStatusChangeNotification = async ({ to, name, username, estado, mo
       `Hola ${name || ''}`.trim(),
       '',
       `El estado de tu cuenta fue actualizado a: ${estado}`,
-      `Usuario: ${username || 'No disponible'}`,
       changedBy ? `Realizado por: ${changedBy}` : null,
       motivo ? `Motivo: ${motivo}` : null,
       '',
@@ -116,7 +111,6 @@ const sendUserStatusChangeNotification = async ({ to, name, username, estado, mo
         <p>Hola ${name || ''}</p>
         <p>El estado de tu cuenta fue actualizado a: <strong>${estado}</strong></p>
         <ul>
-          <li><strong>Usuario:</strong> ${username || 'No disponible'}</li>
           ${changedBy ? `<li><strong>Realizado por:</strong> ${changedBy}</li>` : ''}
           ${motivo ? `<li><strong>Motivo:</strong> ${motivo}</li>` : ''}
         </ul>

@@ -67,6 +67,11 @@ async function getAppliedMigrations() {
   return names;
 }
 
+async function hasTable(tableName) {
+  const result = await pool.query('SELECT to_regclass($1) AS table_ref', [`public.${tableName}`]);
+  return result.rows[0]?.table_ref !== null;
+}
+
 async function runMigration(filename) {
   const filePath = path.join(migrationsDir, filename);
   const sql = fs.readFileSync(filePath, 'utf8');
@@ -119,6 +124,15 @@ async function migrate() {
       }
       return !applied.has(file);
     });
+
+    if (pending.length > 0) {
+      const hasUsuarios = await hasTable('usuarios');
+      if (!hasUsuarios) {
+        console.error('✗ Falta esquema base: no existe la tabla "usuarios".');
+        console.error('  Ejecuta primero backend/db.sql para crear la base desde cero y luego vuelve a correr npm run migrate.');
+        process.exit(1);
+      }
+    }
 
     if (pending.length === 0) {
       console.log('✓ No hay migraciones pendientes');

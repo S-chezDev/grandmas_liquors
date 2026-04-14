@@ -5,6 +5,7 @@ const router = express.Router();
 router.get('/', controller.getAll);
 router.get('/email/:email', controller.getByEmail);
 router.get('/documento/:documento', controller.getByDocumento);
+router.get('/telefono/:telefono', controller.getByTelefono);
 router.post('/', controller.create);
 // Rutas específicas ANTES de rutas genéricas con parámetro /:id
 router.put('/:id/estado', controller.updateStatus);

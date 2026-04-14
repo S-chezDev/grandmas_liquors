@@ -30,18 +30,18 @@ export function FormField({
   placeholder,
   required = false,
   options = [],
-  rows = 4,
+  rows = 3,
   accept,
   error,
   helperText
 }: FormFieldProps) {
-  const baseInputClasses = `w-full px-4 py-2 bg-input-background border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring ${
+  const baseInputClasses = `w-full px-3 py-1.5 text-sm bg-input-background border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring ${
     error ? 'border-destructive focus:ring-destructive' : 'border-border'
   }`;
 
   return (
-    <div className="space-y-2">
-      <label htmlFor={name} className="block">
+    <div className="space-y-1.5">
+      <label htmlFor={name} className="block text-sm font-medium leading-tight">
         {label} {required && <span className="text-destructive">*</span>}
       </label>
       
@@ -144,7 +144,7 @@ interface FormProps {
 
 export function Form({ children, onSubmit, className = '' }: FormProps) {
   return (
-    <form onSubmit={onSubmit} className={`space-y-4 ${className}`}>
+    <form onSubmit={onSubmit} className={`space-y-3 ${className}`}>
       {children}
     </form>
   );
@@ -163,7 +163,7 @@ export function FormActions({ children, align = 'right' }: FormActionsProps) {
   };
 
   return (
-    <div className={`flex gap-3 pt-4 ${alignClasses[align]}`}>
+    <div className={`flex gap-2 pt-3 ${alignClasses[align]}`}>
       {children}
     </div>
   );

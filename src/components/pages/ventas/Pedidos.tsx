@@ -33,6 +33,12 @@ interface ProductoEnPedido {
   subtotal: number;
 }
 
+interface StateChangeRequest {
+  pedido: Pedido;
+  from: Pedido['estado'];
+  to: Pedido['estado'];
+}
+
 export function Pedidos() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,6 +49,9 @@ export function Pedidos() {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [selectedPedido, setSelectedPedido] = useState<Pedido | null>(null);
   const [selectedEstado, setSelectedEstado] = useState<'Pendiente' | 'En Proceso' | 'Completado' | 'Cancelado'>('Pendiente');
+  const [pendingStateChange, setPendingStateChange] = useState<StateChangeRequest | null>(null);
+  const [stateChangeReason, setStateChangeReason] = useState('');
+  const [stateChangeSaving, setStateChangeSaving] = useState(false);
   const [isAbonosModalOpen, setIsAbonosModalOpen] = useState(false);
   const [pedidoParaAbonos, setPedidoParaAbonos] = useState<Pedido | null>(null);
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
@@ -123,15 +132,23 @@ export function Pedidos() {
     { 
       key: 'estado', 
       label: 'Estado',
-      render: (estado: string) => (
-        <span className={`px-3 py-1 rounded-full text-xs ${
-          estado === 'Completado' ? 'bg-green-100 text-green-700' :
-          estado === 'En Proceso' ? 'bg-blue-100 text-blue-700' :
-          estado === 'Pendiente' ? 'bg-yellow-100 text-yellow-700' :
-          'bg-red-100 text-red-700'
-        }`}>
-          {estado}
-        </span>
+      render: (estado: string, pedido: Pedido) => (
+        <select
+          value={estado}
+          onChange={(event) => handleEstadoChangeRequest(pedido, event.target.value as Pedido['estado'])}
+          disabled={stateChangeSaving}
+          className={`px-3 py-1 rounded-full text-xs border-0 cursor-pointer ${
+            estado === 'Completado' ? 'bg-green-100 text-green-700' :
+            estado === 'En Proceso' ? 'bg-blue-100 text-blue-700' :
+            estado === 'Pendiente' ? 'bg-yellow-100 text-yellow-700' :
+            'bg-red-100 text-red-700'
+          }`}
+        >
+          <option value="Pendiente">Pendiente</option>
+          <option value="En Proceso">En Proceso</option>
+          <option value="Completado">Completado</option>
+          <option value="Cancelado">Cancelado</option>
+        </select>
       )
     }
   ];
@@ -276,17 +293,47 @@ export function Pedidos() {
     }
   };
 
-  const handleChangeState = async (pedido: Pedido) => {
-    const states: Array<'Pendiente' | 'En Proceso' | 'Completado'> = ['Pendiente', 'En Proceso', 'Completado'];
-    const currentIndex = states.indexOf(pedido.estado as any);
-    const nextState = states[(currentIndex + 1) % states.length];
-    
+  const handleEstadoChangeRequest = (pedido: Pedido, nuevoEstado: Pedido['estado']) => {
+    if (pedido.estado === nuevoEstado) return;
+
+    setPendingStateChange({
+      pedido,
+      from: pedido.estado,
+      to: nuevoEstado,
+    });
+    setStateChangeReason('');
+  };
+
+  const handleConfirmEstadoChange = async () => {
+    if (!pendingStateChange) return;
+
+    if (pendingStateChange.to === 'Cancelado' && stateChangeReason.trim().length < 10) {
+      showAlert({
+        title: 'Motivo requerido',
+        description: 'Para cancelar el pedido debes indicar un motivo de al menos 10 caracteres.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
     try {
-      await pedidosAPI.update(Number(pedido.id), { estado: nextState });
+      setStateChangeSaving(true);
+      await pedidosAPI.update(Number(pendingStateChange.pedido.id), { estado: pendingStateChange.to });
       await loadPedidos();
+      setPendingStateChange(null);
+      setStateChangeReason('');
     } catch (error) {
       console.error('Error actualizando estado:', error);
+    } finally {
+      setStateChangeSaving(false);
     }
+  };
+
+  const handleCancelEstadoChange = () => {
+    setPendingStateChange(null);
+    setStateChangeReason('');
   };
 
   const handleEdit = (pedido: Pedido) => {
@@ -366,34 +413,6 @@ export function Pedidos() {
         });
       }
     }
-  };
-
-  const handleCancelar = async () => {
-    if (!selectedPedido) return;
-
-    showAlert({
-      title: 'Confirmar cancelación',
-      description: `¿Está seguro de cancelar el pedido ${selectedPedido.numero_pedido || selectedPedido.id}? Esta acción no se puede deshacer.`,
-      type: 'danger',
-      confirmText: 'Cancelar pedido',
-      cancelText: 'Cerrar',
-      onConfirm: async () => {
-        try {
-          await pedidosAPI.update(Number(selectedPedido.id), { estado: 'Cancelado' });
-          await loadPedidos();
-          setIsEditModalOpen(false);
-        } catch (error) {
-          console.error('Error cancelando pedido:', error);
-          showAlert({
-            title: 'Error',
-            description: 'No se pudo cancelar el pedido.',
-            type: 'danger',
-            confirmText: 'Entendido',
-            onConfirm: () => {}
-          });
-        }
-      }
-    });
   };
 
   const handleVerAbonos = (pedido: Pedido) => {
@@ -487,34 +506,46 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
           },
           commonActions.edit(handleEdit),
           commonActions.pdf(handleGeneratePDF),
-          commonActions.cancel(async (pedido) => {
-            showAlert({
-              title: 'Confirmar cancelación',
-              description: `¿Está seguro de cancelar el pedido ${pedido.numero_pedido || pedido.id}? Esta acción no se puede deshacer.`,
-              type: 'danger',
-              confirmText: 'Cancelar pedido',
-              cancelText: 'Cerrar',
-              onConfirm: async () => {
-                try {
-                  await pedidosAPI.update(Number(pedido.id), { estado: 'Cancelado' });
-                  await loadPedidos();
-                } catch (error) {
-                  console.error('Error:', error);
-                  showAlert({
-                    title: 'Error',
-                    description: 'No se pudo cancelar el pedido.',
-                    type: 'danger',
-                    confirmText: 'Entendido',
-                    onConfirm: () => {}
-                  });
-                }
-              }
-            });
-          })
         ]}
         onSearch={(query) => console.log('Searching:', query)}
         searchPlaceholder="Buscar pedidos..."
       />
+
+      <Modal
+        isOpen={Boolean(pendingStateChange)}
+        onClose={handleCancelEstadoChange}
+        title={`Cambiar estado - Pedido ${pendingStateChange?.pedido.numero_pedido || pendingStateChange?.pedido.id || ''}`}
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-accent/30 p-4 space-y-1">
+            <p className="text-sm text-muted-foreground">Estado actual: {pendingStateChange?.from || 'N/A'}</p>
+            <p className="text-sm text-muted-foreground">Nuevo estado: {pendingStateChange?.to || 'N/A'}</p>
+          </div>
+
+          {pendingStateChange?.to === 'Cancelado' ? (
+            <FormField
+              label="Motivo del cambio"
+              name="motivo-cambio-pedido"
+              type="textarea"
+              value={stateChangeReason}
+              onChange={(value) => setStateChangeReason(String(value))}
+              rows={3}
+              required
+              placeholder="Explica por qué se cancela el pedido (mínimo 10 caracteres)"
+            />
+          ) : null}
+
+          <FormActions>
+            <Button variant="outline" onClick={handleCancelEstadoChange} disabled={stateChangeSaving}>
+              Cancelar
+            </Button>
+            <Button onClick={handleConfirmEstadoChange} disabled={stateChangeSaving}>
+              {stateChangeSaving ? 'Guardando...' : 'Confirmar'}
+            </Button>
+          </FormActions>
+        </div>
+      </Modal>
 
       {loading && (
         <div className="text-center py-8">
@@ -778,19 +809,10 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
               />
             </div>
 
-            <div>
-              <label className="text-sm text-muted-foreground block mb-2">Estado del Pedido</label>
-              <select
-                className="w-full px-3 py-2 border rounded-lg"
-                value={selectedEstado}
-                onChange={(e) => setSelectedEstado(e.target.value as any)}
-                disabled={selectedPedido.estado === 'Cancelado'}
-              >
-                <option value="Pendiente">Pendiente</option>
-                <option value="En Proceso">En Proceso</option>
-                <option value="Completado">Completado</option>
-                <option value="Cancelado">Cancelado</option>
-              </select>
+            <div className="rounded-lg border border-border bg-accent/20 px-3 py-2">
+              <label className="text-sm text-muted-foreground block">Estado del Pedido</label>
+              <p className="text-sm">{selectedPedido.estado}</p>
+              <p className="text-xs text-muted-foreground mt-1">Para cambiar el estado usa el selector de la tabla.</p>
             </div>
 
             <div className="space-y-3">
@@ -886,19 +908,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                   No hay productos agregados. Haz clic en "Agregar Producto" para comenzar.
                 </div>
               )}
-            </div>
-
-            {/* Botones de acción */}
-            <div className="flex gap-3">
-              <Button 
-                type="button"
-                variant="destructive"
-                onClick={handleCancelar}
-                className="flex-1"
-                disabled={selectedPedido.estado === 'Cancelado'}
-              >
-                Cancelar Pedido
-              </Button>
             </div>
 
             {/* Acciones del modal */}

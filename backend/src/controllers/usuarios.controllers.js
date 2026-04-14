@@ -2,7 +2,7 @@ const models = require('../models/entities.models');
 const bcrypt = require('bcryptjs');
 const pool = require('../../db');
 const { normalizeUsuarioPayload } = require('./normalizador-http');
-const { buildUsernameFromEmail, generateTempPassword, isStrongPassword } = require('../utils/credentials');
+const { generateTempPassword, isStrongPassword } = require('../utils/credentials');
 const {
   sendTemporaryPasswordEmail,
   sendEmailChangeNotification,
@@ -54,6 +54,16 @@ module.exports = {
   getByDocumento: async (req, res) => {
     try {
       const usuario = await models.Usuarios.getByDocumento(req.params.documento);
+      if (!usuario) return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
+      res.json({ success: true, data: usuario });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  },
+  getByTelefono: async (req, res) => {
+    try {
+      const telefono = String(req.params.telefono || '').replace(/\D/g, '');
+      const usuario = await models.Usuarios.getByTelefono(telefono);
       if (!usuario) return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
       res.json({ success: true, data: usuario });
     } catch (error) {
@@ -118,7 +128,13 @@ module.exports = {
         return res.status(409).json({ success: false, message: 'El documento ya esta registrado' });
       }
 
-      const username = await buildUsernameFromEmail(pool, payload.email);
+      if (payload.telefono) {
+        const existingPhone = await models.Usuarios.getByTelefono(payload.telefono);
+        if (existingPhone) {
+          return res.status(409).json({ success: false, message: 'El telefono ya esta registrado' });
+        }
+      }
+
       const rawPassword = typeof payload.password === 'string' ? payload.password.trim() : '';
       const useManualPassword = Boolean(rawPassword);
 
@@ -132,13 +148,12 @@ module.exports = {
       const tempPassword = useManualPassword ? null : generateTempPassword();
       const passwordToHash = useManualPassword ? rawPassword : tempPassword;
       const password_hash = await bcrypt.hash(passwordToHash, 10);
-      const id = await models.Usuarios.create({ ...payload, username, password_hash, actor_id: req.user?.id || null });
+      const id = await models.Usuarios.create({ ...payload, password_hash, actor_id: req.user?.id || null });
 
       if (!useManualPassword && tempPassword) {
         void sendTemporaryPasswordEmail({
           to: payload.email,
           name: `${payload.nombre} ${payload.apellido}`.trim(),
-          username,
           tempPassword,
         }).catch((error) => {
           console.error('Error enviando contraseña temporal:', error);
@@ -151,9 +166,6 @@ module.exports = {
         message: useManualPassword
           ? 'Usuario creado exitosamente con contrasena personalizada.'
           : 'Usuario creado exitosamente. Se envio una contrasena temporal al correo registrado.',
-        data: {
-          username,
-        },
       });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -199,8 +211,14 @@ module.exports = {
         }
       }
 
-      if (emailChanged) {
-        normalized.data.username = await buildUsernameFromEmail(pool, normalized.data.email, req.params.id);
+      if (typeof normalized.data.telefono === 'string' && normalized.data.telefono.trim()) {
+        const existingPhone = await pool.query(
+          'SELECT id FROM usuarios WHERE telefono = $1 AND id <> $2 LIMIT 1',
+          [normalized.data.telefono.trim(), Number(req.params.id)]
+        );
+        if (existingPhone.rows.length > 0) {
+          return res.status(409).json({ success: false, message: 'El telefono ya esta registrado' });
+        }
       }
 
       if (normalized.data.estado && normalized.data.estado !== currentUsuario.estado) {
@@ -220,7 +238,6 @@ module.exports = {
         void sendEmailChangeNotification({
           to: normalized.data.email,
           name: `${normalized.data.nombre || currentUsuario.nombre || ''} ${normalized.data.apellido || currentUsuario.apellido || ''}`.trim(),
-          username: normalized.data.username || currentUsuario.username,
           previousEmail,
           currentEmail: normalized.data.email,
         }).catch((error) => {
@@ -270,7 +287,6 @@ module.exports = {
       await sendUserStatusChangeNotification({
         to: updatedUser.email,
         name: `${updatedUser.nombre || ''} ${updatedUser.apellido || ''}`.trim(),
-        username: updatedUser.username,
         estado,
         motivo: typeof req.body?.motivo === 'string' ? req.body.motivo.trim() : '',
         changedBy: req.user?.email || null,
@@ -352,7 +368,6 @@ module.exports = {
         await sendTemporaryPasswordEmail({
           to: result.user.email,
           name: `${result.user.nombre || ''} ${result.user.apellido || ''}`.trim(),
-          username: result.user.username,
           tempPassword: result.tempPassword,
         });
       }
