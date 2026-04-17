@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, Truck, FileText } from 'lucide-react';
+import { Plus, Truck, FileText, Search, RotateCcw } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
 import { entregas_insumos as entregasAPI } from '../../../services/api';
 
@@ -21,6 +21,11 @@ interface EntregaInsumo {
 export function Insumos() {
   const [entregas, setEntregas] = useState<EntregaInsumo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState({
+    id: '',
+    operario: '',
+    fecha: ''
+  });
 
   useEffect(() => {
     loadEntregas();
@@ -65,6 +70,23 @@ export function Insumos() {
     { key: 'fecha', label: 'Fecha' },
     { key: 'hora', label: 'Hora' }
   ];
+
+  const operariosOptions = useMemo(
+    () => Array.from(new Set(entregas.map((entrega) => entrega.operario).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'es')),
+    [entregas]
+  );
+
+  const entregasFiltradas = useMemo(() => {
+    return entregas.filter((entrega) => {
+      const matchesId =
+        !filters.id.trim() ||
+        String(entrega.numero_entrega || '').toLowerCase().includes(filters.id.trim().toLowerCase()) ||
+        String(entrega.id || '').toLowerCase().includes(filters.id.trim().toLowerCase());
+      const matchesOperario = !filters.operario || entrega.operario === filters.operario;
+      const matchesFecha = !filters.fecha || String(entrega.fecha || '').includes(filters.fecha);
+      return matchesId && matchesOperario && matchesFecha;
+    });
+  }, [entregas, filters]);
 
   const handleAdd = () => {
     setSelectedEntrega(null);
@@ -155,16 +177,59 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         </Button>
       </div>
 
+      <div className="rounded-lg border border-border bg-white p-4 space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <input
+              type="text"
+              value={filters.id}
+              onChange={(event) => setFilters((current) => ({ ...current, id: event.target.value }))}
+              placeholder="Buscar por ID de entrega..."
+              className="w-full pl-10 pr-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <Button
+            variant="outline"
+            icon={<RotateCcw className="w-4 h-4" />}
+            onClick={() => setFilters({ id: '', operario: '', fecha: '' })}
+            disabled={!filters.id.trim() && !filters.operario && !filters.fecha}
+          >
+            Limpiar filtros
+          </Button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filtrar por:</span>
+          <select
+            value={filters.operario}
+            onChange={(event) => setFilters((current) => ({ ...current, operario: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Operario (todos)</option>
+            {operariosOptions.map((operario) => (
+              <option key={operario} value={operario}>
+                {operario}
+              </option>
+            ))}
+          </select>
+          <input
+            type="date"
+            value={filters.fecha}
+            onChange={(event) => setFilters((current) => ({ ...current, fecha: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+        </div>
+      </div>
+
       <DataTable
         columns={columns}
-        data={entregas}
+        data={entregasFiltradas}
         actions={[
           commonActions.view(handleViewDetail),
           commonActions.pdf(handleGeneratePDF),
           commonActions.delete(handleDelete)
         ]}
-        onSearch={(query) => console.log('Searching:', query)}
-        searchPlaceholder="Buscar entregas..."
       />
 
       {/* Modal de formulario */}

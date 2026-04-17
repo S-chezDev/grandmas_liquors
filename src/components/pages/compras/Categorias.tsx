@@ -107,7 +107,7 @@ export function Categorias() {
             openStateChangeModal(categoria, event.target.value as 'Activo' | 'Inactivo')
           }
           disabled={stateChangeSaving}
-          className={`px-3 py-1 rounded-full text-xs border-0 cursor-pointer ${
+          className={`min-h-8 rounded-lg border border-transparent px-2.5 py-1 text-xs font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring ${
             estado === 'Activo' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
           }`}
         >
@@ -284,7 +284,7 @@ export function Categorias() {
       </div>
 
       <div className="rounded-lg border border-border bg-white p-4 space-y-3">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
             <input
@@ -310,7 +310,7 @@ export function Categorias() {
           <select
             value={filters.estado}
             onChange={(event) => setFilters((current) => ({ ...current, estado: event.target.value as CategoryFilters['estado'] }))}
-            className="h-8 rounded-md border border-border px-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           >
             <option value="">Estado (todos)</option>
             <option value="Activo">Activo</option>

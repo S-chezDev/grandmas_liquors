@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, FileText } from 'lucide-react';
+import { Plus, FileText, Search, RotateCcw } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
 import { produccion as produccionAPI } from '../../../services/api';
 
@@ -52,6 +52,10 @@ const toDateOnly = (value: unknown): string => {
 export function Produccion() {
   const [produccion, setProduccion] = useState<OrdenProduccion[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState({
+    responsable: '',
+    fecha: ''
+  });
   const { showAlert, AlertComponent } = useAlertDialog();
 
   useEffect(() => {
@@ -122,7 +126,7 @@ export function Produccion() {
             normalizeEstadoProduccion(estado) === 'Cancelada' ||
             normalizeEstadoProduccion(estado) === 'Orden Lista'
           }
-          className={`px-3 py-1 rounded-full text-xs border-0 cursor-pointer ${
+          className={`min-h-8 rounded-lg border border-transparent px-2.5 py-1 text-xs font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring ${
             normalizeEstadoProduccion(estado) === 'Orden Lista' ? 'bg-green-100 text-green-700' :
             normalizeEstadoProduccion(estado) === 'Orden en preparacion' ? 'bg-blue-100 text-blue-700' :
             normalizeEstadoProduccion(estado) === 'Orden Recibida' ? 'bg-amber-100 text-amber-700' :
@@ -141,6 +145,19 @@ export function Produccion() {
       )
     }
   ];
+
+  const responsablesOptions = useMemo(
+    () => Array.from(new Set(produccion.map((orden) => orden.responsable).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'es')),
+    [produccion]
+  );
+
+  const produccionFiltrada = useMemo(() => {
+    return produccion.filter((orden) => {
+      const matchesResponsable = !filters.responsable || orden.responsable === filters.responsable;
+      const matchesFecha = !filters.fecha || String(orden.fecha || '').includes(filters.fecha);
+      return matchesResponsable && matchesFecha;
+    });
+  }, [produccion, filters]);
 
   const handleAdd = () => {
     setSelectedOrden(null);
@@ -258,10 +275,25 @@ export function Produccion() {
 
     try {
       setStateChangeSaving(true);
-      await produccionAPI.updateStatus(Number(pendingStateChange.orden.id), {
-        estado: targetState,
-        motivo_cancelacion: stateChangeReason.trim() || undefined,
-      });
+      try {
+        await produccionAPI.updateStatus(Number(pendingStateChange.orden.id), {
+          estado: targetState,
+          motivo_cancelacion: stateChangeReason.trim() || undefined,
+        });
+      } catch (error: any) {
+        // Fallback for environments where backend status route is not yet reloaded.
+        if (error?.status === 404 || String(error?.message || '').includes('/estado')) {
+          await produccionAPI.update(Number(pendingStateChange.orden.id), {
+            estado: targetState,
+            notes:
+              targetState === 'Cancelada' && stateChangeReason.trim()
+                ? stateChangeReason.trim()
+                : pendingStateChange.orden.notes,
+          });
+        } else {
+          throw error;
+        }
+      }
       await loadProduccion();
       setPendingStateChange(null);
       setStateChangeReason('');
@@ -339,8 +371,22 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
     try {
       if (selectedOrden) {
         await produccionAPI.update(Number(selectedOrden.id), formData);
+        showAlert({
+          title: 'Orden actualizada',
+          description: 'La orden de producción se actualizó correctamente.',
+          type: 'success',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
       } else {
         await produccionAPI.create(formData);
+        showAlert({
+          title: 'Orden creada',
+          description: 'La orden de producción se creó correctamente.',
+          type: 'success',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
       }
       await loadProduccion();
       setIsModalOpen(false);
@@ -369,15 +415,57 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         </Button>
       </div>
 
+      <div className="rounded-lg border border-border bg-white p-4 space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <input
+              type="text"
+              value={filters.responsable}
+              onChange={(event) => setFilters((current) => ({ ...current, responsable: event.target.value }))}
+              placeholder="Buscar por responsable..."
+              className="w-full pl-10 pr-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <Button
+            variant="outline"
+            icon={<RotateCcw className="w-4 h-4" />}
+            onClick={() => setFilters({ responsable: '', fecha: '' })}
+            disabled={!filters.responsable.trim() && !filters.fecha}
+          >
+            Limpiar filtros
+          </Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filtrar por:</span>
+          <select
+            value={filters.responsable}
+            onChange={(event) => setFilters((current) => ({ ...current, responsable: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Responsable (todos)</option>
+            {responsablesOptions.map((responsable) => (
+              <option key={responsable} value={responsable}>
+                {responsable}
+              </option>
+            ))}
+          </select>
+          <input
+            type="date"
+            value={filters.fecha}
+            onChange={(event) => setFilters((current) => ({ ...current, fecha: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+        </div>
+      </div>
+
       <DataTable
         columns={columns}
-        data={produccion}
+        data={produccionFiltrada}
         actions={[
           commonActions.view(handleViewDetail),
           commonActions.pdf(handleGeneratePDF),
         ]}
-        onSearch={(query) => console.log('Searching:', query)}
-        searchPlaceholder="Buscar órdenes..."
       />
 
       <Modal

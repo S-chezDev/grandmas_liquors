@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, UserCircle, Upload } from 'lucide-react';
+import { Plus, UserCircle, Upload, Search, RotateCcw } from 'lucide-react';
 import { AlertDialog } from '../../AlertDialog';
 import { clientes as clientesAPI } from '../../../services/api';
 
@@ -29,6 +29,11 @@ interface StateChangeRequest {
 export function Clientes() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState({
+    query: '',
+    tipo_documento: '',
+    estado: ''
+  });
 
   // Cargar clientes al montar el componente
   useEffect(() => {
@@ -114,7 +119,7 @@ export function Clientes() {
           value={estado}
           onChange={(event) => handleEstadoChangeRequest(cliente, event.target.value as Cliente['estado'])}
           disabled={stateChangeSaving}
-          className={`px-3 py-1 rounded-full text-xs border-0 cursor-pointer ${
+          className={`min-h-8 rounded-lg border border-transparent px-2.5 py-1 text-xs font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring ${
             estado === 'Activo' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
           }`}
         >
@@ -124,6 +129,21 @@ export function Clientes() {
       )
     }
   ];
+
+  const clientesFiltrados = useMemo(() => {
+    const normalizedQuery = filters.query.trim().toLowerCase();
+
+    return clientes.filter((cliente) => {
+      const matchesQuery =
+        !normalizedQuery ||
+        `${cliente.nombre} ${cliente.apellido}`.toLowerCase().includes(normalizedQuery) ||
+        String(cliente.documento || '').toLowerCase().includes(normalizedQuery) ||
+        String(cliente.email || '').toLowerCase().includes(normalizedQuery);
+      const matchesTipo = !filters.tipo_documento || cliente.tipo_documento === filters.tipo_documento;
+      const matchesEstado = !filters.estado || cliente.estado === filters.estado;
+      return matchesQuery && matchesTipo && matchesEstado;
+    });
+  }, [clientes, filters]);
 
   const handleAdd = () => {
     setSelectedCliente(null);
@@ -259,12 +279,58 @@ export function Clientes() {
         </Button>
       </div>
 
+      <div className="rounded-lg border border-border bg-white p-4 space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <input
+              type="text"
+              value={filters.query}
+              onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))}
+              placeholder="Buscar cliente por nombre, documento o correo..."
+              className="w-full pl-10 pr-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <Button
+            variant="outline"
+            icon={<RotateCcw className="w-4 h-4" />}
+            onClick={() => setFilters({ query: '', tipo_documento: '', estado: '' })}
+            disabled={!filters.query.trim() && !filters.tipo_documento && !filters.estado}
+          >
+            Limpiar filtros
+          </Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filtrar por:</span>
+          <select
+            value={filters.tipo_documento}
+            onChange={(event) => setFilters((current) => ({ ...current, tipo_documento: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Tipo Doc. (todos)</option>
+            <option value="CC">CC</option>
+            <option value="CE">CE</option>
+            <option value="TI">TI</option>
+            <option value="Pasaporte">Pasaporte</option>
+          </select>
+          <select
+            value={filters.estado}
+            onChange={(event) => setFilters((current) => ({ ...current, estado: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Estado (todos)</option>
+            <option value="Activo">Activo</option>
+            <option value="Inactivo">Inactivo</option>
+          </select>
+        </div>
+      </div>
+
       {loading ? (
         <div className="text-center py-8">Cargando clientes...</div>
       ) : (
         <DataTable
           columns={columns}
-          data={clientes}
+          data={clientesFiltrados}
           actions={[
             commonActions.view((cliente) => {
               setSelectedCliente(cliente);
@@ -273,8 +339,6 @@ export function Clientes() {
             commonActions.edit(handleEdit),
             commonActions.delete(handleDelete)
           ]}
-          onSearch={(query) => console.log('Searching:', query)}
-          searchPlaceholder="Buscar clientes..."
         />
       )}
 

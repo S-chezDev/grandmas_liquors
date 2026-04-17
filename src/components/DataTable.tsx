@@ -20,6 +20,7 @@ interface DataTableProps {
   actions?: Action[];
   onSearch?: (query: string) => void;
   searchPlaceholder?: string;
+  topContent?: React.ReactNode;
 }
 
 const normalizeSearchValue = (value: unknown): string => {
@@ -59,7 +60,8 @@ export function DataTable({
   data, 
   actions = [], 
   onSearch,
-  searchPlaceholder = "Buscar..."
+  searchPlaceholder = "Buscar...",
+  topContent,
 }: DataTableProps) {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [currentPage, setCurrentPage] = React.useState(1);
@@ -140,29 +142,38 @@ export function DataTable({
   return (
     <div className="bg-white rounded-lg border border-border">
       {/* Search Bar */}
-      {onSearch && (
-        <div className="p-4 border-b border-border">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-muted-foreground" />
-            <input
-              type="text"
-              placeholder={searchPlaceholder}
-              value={searchQuery}
-              onChange={(e) => handleSearch(e.target.value)}
-              className="w-full pl-10 pr-24 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-            {searchQuery.trim() && (
-              <button
-                type="button"
-                onClick={clearSearch}
-                className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 px-2 py-1 text-xs rounded-md border border-border hover:bg-accent transition-colors"
-                aria-label="Limpiar búsqueda"
-              >
-                <X className="w-3 h-3" />
-                Limpiar
-              </button>
-            )}
-          </div>
+      {(onSearch || topContent) && (
+        <div className="border-b border-border">
+          {onSearch && (
+            <div className="p-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder={searchPlaceholder}
+                  value={searchQuery}
+                  onChange={(e) => handleSearch(e.target.value)}
+                  className="w-full pl-10 pr-24 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+                {searchQuery.trim() && (
+                  <button
+                    type="button"
+                    onClick={clearSearch}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 px-2 py-1 text-xs rounded-md border border-border hover:bg-accent transition-colors"
+                    aria-label="Limpiar búsqueda"
+                  >
+                    <X className="w-3 h-3" />
+                    Limpiar
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+          {topContent && (
+            <div className={onSearch ? 'px-4 pb-4' : 'p-4'}>
+              {topContent}
+            </div>
+          )}
         </div>
       )}
 

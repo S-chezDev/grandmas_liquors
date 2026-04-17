@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Search, RotateCcw } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
 import { domicilios as domiciliosAPI, pedidos as pedidosAPI } from '../../../services/api';
 
@@ -30,6 +30,12 @@ interface StateChangeRequest {
 export function Domicilios() {
   const [domicilios, setDomicilios] = useState<Domicilio[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState({
+    query: '',
+    repartidor: '',
+    fecha: '',
+    estado: ''
+  });
   const [pedidosDisponibles, setPedidosDisponibles] = useState<Array<{value: string, label: string}>>([]);
   const [selectedDomicilio, setSelectedDomicilio] = useState<Domicilio | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
@@ -95,7 +101,7 @@ export function Domicilios() {
           value={estado}
           onChange={(e) => handleEstadoChangeRequest(domicilio, e.target.value as Domicilio['estado'])}
           disabled={stateChangeSaving}
-          className={`px-3 py-1 rounded-full text-xs border-0 cursor-pointer ${
+          className={`min-h-8 rounded-lg border border-transparent px-2.5 py-1 text-xs font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring ${
             estado === 'Entregado' ? 'bg-green-100 text-green-700' :
             estado === 'En Camino' ? 'bg-blue-100 text-blue-700' :
             estado === 'Pendiente' ? 'bg-yellow-100 text-yellow-700' :
@@ -110,6 +116,27 @@ export function Domicilios() {
       )
     }
   ];
+
+  const repartidoresOptions = useMemo(
+    () => Array.from(new Set(domicilios.map((domicilio) => domicilio.repartidor).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'es')),
+    [domicilios]
+  );
+
+  const domiciliosFiltrados = useMemo(() => {
+    const normalizedQuery = filters.query.trim().toLowerCase();
+
+    return domicilios.filter((domicilio) => {
+      const matchesQuery =
+        !normalizedQuery ||
+        String(domicilio.numero_domicilio || domicilio.id).toLowerCase().includes(normalizedQuery) ||
+        String(domicilio.cliente || '').toLowerCase().includes(normalizedQuery) ||
+        String(domicilio.direccion || '').toLowerCase().includes(normalizedQuery);
+      const matchesRepartidor = !filters.repartidor || domicilio.repartidor === filters.repartidor;
+      const matchesFecha = !filters.fecha || String(domicilio.fecha || '').includes(filters.fecha);
+      const matchesEstado = !filters.estado || domicilio.estado === filters.estado;
+      return matchesQuery && matchesRepartidor && matchesFecha && matchesEstado;
+    });
+  }, [domicilios, filters]);
 
   const handleEstadoChangeRequest = (domicilio: Domicilio, nuevoEstado: Domicilio['estado']) => {
     if (domicilio.estado === nuevoEstado) return;
@@ -248,9 +275,64 @@ export function Domicilios() {
         </Button>
       </div>
 
+      <div className="rounded-lg border border-border bg-white p-4 space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <input
+              type="text"
+              value={filters.query}
+              onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))}
+              placeholder="Buscar domicilio por ID, cliente o dirección..."
+              className="w-full pl-10 pr-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <Button
+            variant="outline"
+            icon={<RotateCcw className="w-4 h-4" />}
+            onClick={() => setFilters({ query: '', repartidor: '', fecha: '', estado: '' })}
+            disabled={!filters.query.trim() && !filters.repartidor && !filters.fecha && !filters.estado}
+          >
+            Limpiar filtros
+          </Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filtrar por:</span>
+          <select
+            value={filters.repartidor}
+            onChange={(event) => setFilters((current) => ({ ...current, repartidor: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Repartidor (todos)</option>
+            {repartidoresOptions.map((repartidor) => (
+              <option key={repartidor} value={repartidor}>
+                {repartidor}
+              </option>
+            ))}
+          </select>
+          <input
+            type="date"
+            value={filters.fecha}
+            onChange={(event) => setFilters((current) => ({ ...current, fecha: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          <select
+            value={filters.estado}
+            onChange={(event) => setFilters((current) => ({ ...current, estado: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Estado (todos)</option>
+            <option value="Pendiente">Pendiente</option>
+            <option value="En Camino">En Camino</option>
+            <option value="Entregado">Entregado</option>
+            <option value="Cancelado">Cancelado</option>
+          </select>
+        </div>
+      </div>
+
       <DataTable
         columns={columns}
-        data={domicilios}
+        data={domiciliosFiltrados}
         actions={[
           commonActions.view(handleView),
           {
@@ -266,8 +348,6 @@ export function Domicilios() {
             variant: 'danger'
           }
         ]}
-        onSearch={(query) => console.log('Searching:', query)}
-        searchPlaceholder="Buscar domicilios..."
       />
 
       {loading && (

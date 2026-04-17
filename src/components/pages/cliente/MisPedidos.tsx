@@ -3,7 +3,7 @@ import { DataTable, Column } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Button } from '../../Button';
 import { Form, FormActions, FormField } from '../../Form';
-import { Edit, Eye, Package } from 'lucide-react';
+import { Edit, Eye, Package, RotateCcw, Search } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
 import { useAlertDialog } from '../../AlertDialog';
 import { clientes as clientesAPI, pedidos as pedidosAPI } from '../../../services/api';
@@ -47,6 +47,10 @@ export function MisPedidos() {
 
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [filters, setFilters] = useState({
+    fecha: '',
+    estado: ''
+  });
   const [cliente, setCliente] = useState<Cliente | null>(null);
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [selectedPedido, setSelectedPedido] = useState<Pedido | null>(null);
@@ -102,14 +106,17 @@ export function MisPedidos() {
   }, [user?.id]);
 
   const pedidosFiltrados = useMemo(() => {
-    if (!search.trim()) return pedidos;
-    const query = search.toLowerCase();
+    const query = search.trim().toLowerCase();
+
     return pedidos.filter((pedido) => {
       const numero = (pedido.numero_pedido || pedido.id.toString()).toLowerCase();
       const estado = (pedido.estado || '').toLowerCase();
-      return numero.includes(query) || estado.includes(query);
+      const matchesSearch = !query || numero.includes(query) || estado.includes(query);
+      const matchesFecha = !filters.fecha || String(pedido.fecha || '').includes(filters.fecha);
+      const matchesEstado = !filters.estado || pedido.estado === filters.estado;
+      return matchesSearch && matchesFecha && matchesEstado;
     });
-  }, [pedidos, search]);
+  }, [pedidos, search, filters]);
 
   const columns: Column[] = [
     {
@@ -222,6 +229,54 @@ export function MisPedidos() {
         </div>
       </div>
 
+      <div className="rounded-lg border border-border bg-white p-4 space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <input
+              type="text"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Buscar por numero o estado..."
+              className="w-full pl-10 pr-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            icon={<RotateCcw className="w-4 h-4" />}
+            onClick={() => {
+              setSearch('');
+              setFilters({ fecha: '', estado: '' });
+            }}
+            disabled={!search.trim() && !filters.fecha && !filters.estado}
+          >
+            Limpiar filtros
+          </Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filtrar por:</span>
+          <input
+            type="date"
+            value={filters.fecha}
+            onChange={(event) => setFilters((current) => ({ ...current, fecha: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          <select
+            value={filters.estado}
+            onChange={(event) => setFilters((current) => ({ ...current, estado: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Estado (todos)</option>
+            <option value="Pendiente">Pendiente</option>
+            <option value="En Proceso">En Proceso</option>
+            <option value="Completado">Completado</option>
+            <option value="Entregado">Entregado</option>
+            <option value="Cancelado">Cancelado</option>
+          </select>
+        </div>
+      </div>
+
       <DataTable
         columns={columns}
         data={pedidosFiltrados}
@@ -239,8 +294,6 @@ export function MisPedidos() {
             variant: 'primary'
           }
         ]}
-        onSearch={setSearch}
-        searchPlaceholder="Buscar por numero o estado..."
       />
 
       <Modal

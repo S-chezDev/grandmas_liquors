@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus } from 'lucide-react';
+import { Plus, Search, RotateCcw } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
 import { abonos as abonosAPI, pedidos as pedidosAPI } from '../../../services/api';
 
@@ -28,6 +28,12 @@ interface StateChangeRequest {
 export function Abonos() {
   const [abonos, setAbonos] = useState<Abono[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [filters, setFilters] = useState({
+    query: '',
+    fecha: '',
+    metodo_pago: '',
+    estado: ''
+  });
   const { showAlert, AlertComponent } = useAlertDialog();
 
   useEffect(() => {
@@ -89,7 +95,7 @@ export function Abonos() {
           value={estado}
           onChange={(event) => handleEstadoChangeRequest(abono, event.target.value)}
           disabled={stateChangeSaving}
-          className={`px-3 py-1 rounded-full text-xs border-0 cursor-pointer ${
+          className={`min-h-8 rounded-lg border border-transparent px-2.5 py-1 text-xs font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring ${
             estado === 'Registrado' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
           }`}
         >
@@ -99,6 +105,26 @@ export function Abonos() {
       )
     }
   ];
+
+  const metodosPagoOptions = useMemo(
+    () => Array.from(new Set(abonos.map((abono) => abono.metodo_pago).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'es')),
+    [abonos]
+  );
+
+  const abonosFiltrados = useMemo(() => {
+    const normalizedQuery = filters.query.trim().toLowerCase();
+
+    return abonos.filter((abono) => {
+      const matchesQuery =
+        !normalizedQuery ||
+        String(abono.numero_abono || '').toLowerCase().includes(normalizedQuery) ||
+        String(abono.pedido_id || '').toLowerCase().includes(normalizedQuery);
+      const matchesFecha = !filters.fecha || String(abono.fecha || '').includes(filters.fecha);
+      const matchesMetodo = !filters.metodo_pago || abono.metodo_pago === filters.metodo_pago;
+      const matchesEstado = !filters.estado || abono.estado === filters.estado;
+      return matchesQuery && matchesFecha && matchesMetodo && matchesEstado;
+    });
+  }, [abonos, filters]);
 
   const handleAdd = () => {
     setFormData({ 
@@ -233,12 +259,65 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         </Button>
       </div>
 
+      <div className="rounded-lg border border-border bg-white p-4 space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <input
+              type="text"
+              value={filters.query}
+              onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))}
+              placeholder="Buscar abono por número o pedido..."
+              className="w-full pl-10 pr-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <Button
+            variant="outline"
+            icon={<RotateCcw className="w-4 h-4" />}
+            onClick={() => setFilters({ query: '', fecha: '', metodo_pago: '', estado: '' })}
+            disabled={!filters.query.trim() && !filters.fecha && !filters.metodo_pago && !filters.estado}
+          >
+            Limpiar filtros
+          </Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filtrar por:</span>
+          <input
+            type="date"
+            value={filters.fecha}
+            onChange={(event) => setFilters((current) => ({ ...current, fecha: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          <select
+            value={filters.metodo_pago}
+            onChange={(event) => setFilters((current) => ({ ...current, metodo_pago: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Metodo de Pago (todos)</option>
+            {metodosPagoOptions.map((metodo) => (
+              <option key={metodo} value={metodo}>
+                {metodo}
+              </option>
+            ))}
+          </select>
+          <select
+            value={filters.estado}
+            onChange={(event) => setFilters((current) => ({ ...current, estado: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Estado (todos)</option>
+            <option value="Registrado">Registrado</option>
+            <option value="Cancelado">Cancelado</option>
+          </select>
+        </div>
+      </div>
+
       {loading ? (
         <div className="text-center py-8">Cargando abonos...</div>
       ) : (
         <DataTable
           columns={columns}
-          data={abonos}
+          data={abonosFiltrados}
           actions={[
             commonActions.view((abono) => {
               setSelectedAbono(abono);
@@ -246,8 +325,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
             }),
             commonActions.pdf(handleGeneratePDF),
           ]}
-          onSearch={(query) => console.log('Searching:', query)}
-          searchPlaceholder="Buscar abonos..."
         />
       )}
 

@@ -301,7 +301,7 @@ export function Usuarios() {
           value={estado === 'Activo' ? 'Activo' : estado === 'Inactivo' ? 'Inactivo' : 'Eliminado'}
           onChange={(event) => handleChangeStateRequest(usuario, event.target.value as 'Activo' | 'Inactivo' | 'Eliminado')}
           disabled={statusSaving || estado === 'Eliminado'}
-          className={`px-3 py-1 rounded-full text-xs border-0 cursor-pointer ${
+          className={`min-h-8 rounded-lg border border-transparent px-2.5 py-1 text-xs font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring ${
             estado === 'Activo'
               ? 'bg-green-100 text-green-700'
               : estado === 'Eliminado'
@@ -338,7 +338,6 @@ export function Usuarios() {
   const loadUsuarios = async (nextFilters?: Partial<UsersFilters>) => {
     const mergedFilters: UsersFilters = { ...filters, ...(nextFilters || {}) };
     const loadId = ++lastLoadIdRef.current;
-    const startedAt = Date.now();
 
     try {
       setLoading(true);
@@ -350,11 +349,8 @@ export function Usuarios() {
         limit: 50000,
       });
 
-      await minWait(startedAt, mergedFilters.globalQuery ? 5000 : 4000);
-
       if (loadId === lastLoadIdRef.current) {
         const normalizedRows = Array.isArray(data) ? data : [];
-        normalizedRows.sort((a: Usuario, b: Usuario) => Number(a.id) - Number(b.id));
         setUsuarios(normalizedRows);
       }
     } catch (error) {
@@ -779,7 +775,7 @@ export function Usuarios() {
       </div>
 
       <div className="rounded-lg border border-border bg-white p-4 space-y-3">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
             <input
@@ -816,7 +812,7 @@ export function Usuarios() {
           <select
             value={filters.estado}
             onChange={(event) => handleAdvancedFiltersChange('estado', event.target.value as UsersFilters['estado'])}
-            className="h-8 rounded-md border border-border px-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           >
             <option value="">Estado (todos)</option>
             <option value="Activo">Activo</option>
@@ -826,7 +822,7 @@ export function Usuarios() {
           <select
             value={filters.rolId}
             onChange={(event) => handleAdvancedFiltersChange('rolId', event.target.value)}
-            className="h-8 rounded-md border border-border px-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           >
             {roleFilterOptions.map((role) => (
               <option key={role.value} value={role.value}>

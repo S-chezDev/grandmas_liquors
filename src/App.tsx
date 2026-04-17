@@ -78,7 +78,7 @@ const pageTitles: { [key: string]: string } = {
 function GlobalLoadingOverlay() {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[#1C0A11]/60 backdrop-blur-[3px]"
+      className="fixed inset-0 z-[80] flex items-center justify-center bg-[#1C0A11]/60 backdrop-blur-[3px]"
       role="status"
       aria-live="polite"
       aria-busy="true"

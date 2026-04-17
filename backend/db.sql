@@ -292,7 +292,7 @@ CREATE TABLE produccion (
     cantidad INTEGER NOT NULL,
     fecha DATE NOT NULL,
     responsable VARCHAR(100),
-    estado VARCHAR(20) DEFAULT 'Pendiente', -- Pendiente, En Proceso, Completada
+    estado VARCHAR(30) DEFAULT 'Orden Recibida', -- Orden Recibida, Orden en preparacion, Orden Lista, Cancelada
     notes TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -409,6 +409,7 @@ CREATE INDEX idx_usuarios_documento ON usuarios(documento);
 CREATE INDEX idx_usuarios_email ON usuarios(email);
 CREATE INDEX idx_usuarios_rol ON usuarios(rol_id);
 CREATE INDEX idx_usuarios_estado ON usuarios(estado);
+CREATE INDEX idx_usuarios_rol_estado ON usuarios(rol_id, estado);
 CREATE UNIQUE INDEX idx_usuarios_email_unique_lower ON usuarios(LOWER(email));
 
 -- Índices para auditoría y seguridad
@@ -423,10 +424,12 @@ CREATE INDEX idx_roles_auditoria_rol_fecha ON roles_auditoria(rol_id, created_at
 -- Índices para productos
 CREATE INDEX idx_productos_categoria ON productos(categoria_id);
 CREATE INDEX idx_productos_estado ON productos(estado);
+CREATE INDEX idx_productos_nombre ON productos(nombre);
 
 -- Índices para clientes
 CREATE INDEX idx_clientes_documento ON clientes(documento);
 CREATE INDEX idx_clientes_estado ON clientes(estado);
+CREATE INDEX idx_clientes_nombre ON clientes(nombre);
 CREATE UNIQUE INDEX idx_clientes_email_unique ON clientes(LOWER(email)) WHERE email IS NOT NULL;
 CREATE UNIQUE INDEX idx_clientes_usuario_id_unique ON clientes(usuario_id) WHERE usuario_id IS NOT NULL;
 
@@ -434,11 +437,20 @@ CREATE UNIQUE INDEX idx_clientes_usuario_id_unique ON clientes(usuario_id) WHERE
 CREATE INDEX idx_pedidos_cliente ON pedidos(cliente_id);
 CREATE INDEX idx_pedidos_fecha ON pedidos(fecha DESC);
 CREATE INDEX idx_pedidos_estado ON pedidos(estado);
+CREATE INDEX idx_pedidos_cliente_fecha ON pedidos(cliente_id, fecha DESC);
 
 -- Índices para ventas
 CREATE INDEX idx_ventas_cliente ON ventas(cliente_id);
 CREATE INDEX idx_ventas_pedido ON ventas(pedido_id);
 CREATE INDEX idx_ventas_fecha ON ventas(fecha DESC);
+CREATE INDEX idx_ventas_cliente_fecha ON ventas(cliente_id, fecha DESC);
+
+-- Índices para compras, insumos y producción
+CREATE INDEX idx_compras_fecha ON compras(fecha DESC);
+CREATE INDEX idx_compras_proveedor_fecha ON compras(proveedor_id, fecha DESC);
+CREATE INDEX idx_insumos_nombre ON insumos(nombre);
+CREATE INDEX idx_entregas_insumos_fecha ON entregas_insumos(fecha DESC);
+CREATE INDEX idx_produccion_fecha ON produccion(fecha DESC);
 
 -- Índices para detalles
 CREATE INDEX idx_detalle_pedidos_pedido ON detalle_pedidos(pedido_id);
@@ -447,7 +459,17 @@ CREATE INDEX idx_detalle_compras_compra ON detalle_compras(compra_id);
 
 -- Índices para abonos y domicilios
 CREATE INDEX idx_abonos_pedido ON abonos(pedido_id);
+CREATE INDEX idx_abonos_fecha ON abonos(fecha DESC);
+CREATE INDEX idx_abonos_cliente_fecha ON abonos(cliente_id, fecha DESC);
 CREATE INDEX idx_domicilios_pedido ON domicilios(pedido_id);
+CREATE INDEX idx_domicilios_fecha ON domicilios(fecha DESC);
+CREATE INDEX idx_domicilios_cliente_fecha ON domicilios(cliente_id, fecha DESC);
+
+-- Índices para proveedores
+CREATE INDEX idx_proveedores_nit ON proveedores(nit);
+CREATE INDEX idx_proveedores_numero_documento ON proveedores(numero_documento);
+CREATE INDEX idx_proveedores_email_lower ON proveedores(LOWER(COALESCE(email, '')));
+CREATE INDEX idx_proveedores_telefono_digits ON proveedores((regexp_replace(COALESCE(telefono, ''), '\\D', '', 'g')));
 
 -- ========================================
 -- DATOS DE EJEMPLO - LICORES COLOMBIANOS
@@ -611,11 +633,11 @@ EXECUTE FUNCTION sync_cliente_from_usuario();
 
 -- Insertar proveedores
 INSERT INTO proveedores (tipo_persona, nombre_empresa, nit, nombre, apellido, tipo_documento, numero_documento, telefono, email, direccion, estado) VALUES
-('Jurídica', 'Destilería Antioqueña S.A.', '890123456-1', 'Roberto', 'Sánchez', 'CC', '71123456', '6045551234', 'ventas@destileriaan.com', 'Zona Industrial, Medellín', 'Activo'),
-('Jurídica', 'Licores del Valle Ltda', '890234567-2', 'Patricia', 'Mejía', 'CC', '66234567', '6025552345', 'comercial@licoresvalle.com', 'Parque Industrial, Yumbo', 'Activo'),
+('Juridica', 'Destilería Antioqueña S.A.', '890123456-1', 'Roberto', 'Sánchez', 'CC', '71123456', '6045551234', 'ventas@destileriaan.com', 'Zona Industrial, Medellín', 'Activo'),
+('Juridica', 'Licores del Valle Ltda', '890234567-2', 'Patricia', 'Mejía', 'CC', '66234567', '6025552345', 'comercial@licoresvalle.com', 'Parque Industrial, Yumbo', 'Activo'),
 ('Natural', NULL, NULL, 'Fernando', 'Quintero', 'CC', '79345678', '3101112233', 'fernando.quintero@email.com', 'Vereda La Esperanza, Caldas', 'Activo'),
-('Jurídica', 'Frutos de Colombia S.A.S', '890345678-3', 'Mónica', 'Arbeláez', 'CC', '43456789', '6015553456', 'pedidos@frutoscol.com', 'Calle 50 #25-30, Bogotá', 'Activo'),
-('Jurídica', 'Embotelladora Nacional', '890456789-4', 'Jorge', 'Montoya', 'CC', '1113567890', '6045554567', 'ventas@embnacional.com', 'Zona Franca, Rionegro', 'Activo'),
+('Juridica', 'Frutos de Colombia S.A.S', '890345678-3', 'Mónica', 'Arbeláez', 'CC', '43456789', '6015553456', 'pedidos@frutoscol.com', 'Calle 50 #25-30, Bogotá', 'Activo'),
+('Juridica', 'Embotelladora Nacional', '890456789-4', 'Jorge', 'Montoya', 'CC', '1113567890', '6045554567', 'ventas@embnacional.com', 'Zona Franca, Rionegro', 'Activo'),
 ('Natural', NULL, NULL, 'Carmen', 'Ospina', 'CC', '39678901', '3209998877', 'carmen.ospina@email.com', 'Finca El Roble, Manizales', 'Activo');
 
 -- Insertar insumos para producción
@@ -698,19 +720,19 @@ INSERT INTO abonos (numero_abono, pedido_id, cliente_id, monto, fecha, metodo_pa
 
 -- Insertar domicilios
 INSERT INTO domicilios (numero_domicilio, pedido_id, cliente_id, direccion, repartidor, fecha, hora, estado, detalle) VALUES
-('DOM-2024-001', 1, 1, 'Calle 72 #10-30, Bogotá', 'Pedro López', '2024-02-05', '14:30', 'Completado', 'Entregado en portería'),
-('DOM-2024-002', 2, 2, 'Carrera 43A #34-50, Medellín', 'Pedro López', '2024-02-08', '10:00', 'Completado', 'Recibido por el cliente'),
+('DOM-2024-001', 1, 1, 'Calle 72 #10-30, Bogotá', 'Pedro López', '2024-02-05', '14:30', 'Entregado', 'Entregado en portería'),
+('DOM-2024-002', 2, 2, 'Carrera 43A #34-50, Medellín', 'Pedro López', '2024-02-08', '10:00', 'Entregado', 'Recibido por el cliente'),
 ('DOM-2024-003', 3, 3, 'Avenida 5N #23-50, Cali', 'Pedro López', '2024-02-10', '16:00', 'En Camino', 'En ruta de entrega'),
 ('DOM-2024-004', 5, 5, 'Carrera 15 #88-45, Bogotá', 'Pedro López', '2024-02-13', '11:00', 'Pendiente', 'Programado para entrega'),
-('DOM-2024-005', 7, 7, 'Carrera 100 #15-30, Cali', 'Pedro López', '2024-02-15', '15:30', 'Completado', 'Entrega exitosa');
+('DOM-2024-005', 7, 7, 'Carrera 100 #15-30, Cali', 'Pedro López', '2024-02-15', '15:30', 'Entregado', 'Entrega exitosa');
 
 -- Insertar compras a proveedores
-INSERT INTO compras (numero_compra, proveedor_id, fecha, subtotal, iva, total, estado) VALUES
-('COM-2024-001', 1, '2024-01-15', 5000000, 950000, 5950000, 'Recibida'),
-('COM-2024-002', 2, '2024-01-20', 3500000, 665000, 4165000, 'Recibida'),
-('COM-2024-003', 4, '2024-01-25', 2800000, 532000, 3332000, 'Recibida'),
-('COM-2024-004', 5, '2024-02-01', 1500000, 285000, 1785000, 'Pendiente'),
-('COM-2024-005', 3, '2024-02-05', 4200000, 798000, 4998000, 'Recibida');
+INSERT INTO compras (numero_compra, proveedor_id, fecha, subtotal, iva, total, estado, requiere_aprobacion, aprobacion_extraordinaria, motivo_aprobacion) VALUES
+('COM-2024-001', 1, '2024-01-15', 5000000, 950000, 5950000, 'Recibida', TRUE, TRUE, 'Compra semilla aprobada para pruebas iniciales'),
+('COM-2024-002', 2, '2024-01-20', 3500000, 665000, 4165000, 'Recibida', TRUE, TRUE, 'Compra semilla aprobada para pruebas iniciales'),
+('COM-2024-003', 4, '2024-01-25', 2800000, 532000, 3332000, 'Recibida', TRUE, TRUE, 'Compra semilla aprobada para pruebas iniciales'),
+('COM-2024-004', 5, '2024-02-01', 1500000, 285000, 1785000, 'Pendiente', TRUE, TRUE, 'Compra semilla aprobada para pruebas iniciales'),
+('COM-2024-005', 3, '2024-02-05', 4200000, 798000, 4998000, 'Recibida', TRUE, TRUE, 'Compra semilla aprobada para pruebas iniciales');
 
 -- Insertar detalles de compras
 INSERT INTO detalle_compras (compra_id, producto_id, cantidad, precio_unitario, subtotal) VALUES
@@ -736,12 +758,12 @@ INSERT INTO entregas_insumos (numero_entrega, insumo_id, cantidad, unidad, opera
 
 -- Insertar registros de producción
 INSERT INTO produccion (numero_produccion, producto_id, cantidad, fecha, responsable, estado, notes) VALUES
-('PROD-2024-001', 10, 50, '2024-02-01', 'Juan Martínez', 'Completada', 'Lote de mora procesado correctamente'),
-('PROD-2024-002', 6, 30, '2024-02-02', 'Juan Martínez', 'Completada', 'Crema de whisky lista para embotellar'),
-('PROD-2024-003', 7, 25, '2024-02-03', 'Juan Martínez', 'Completada', 'Crema de café con excelente aroma'),
-('PROD-2024-004', 11, 40, '2024-02-04', 'Juan Martínez', 'En Proceso', 'Maceración de lulo en proceso'),
-('PROD-2024-005', 13, 20, '2024-02-05', 'Juan Martínez', 'Pendiente', 'Pendiente adquisición de café premium'),
-('PROD-2024-006', 8, 35, '2024-02-06', 'Juan Martínez', 'Completada', 'Crema de arequipe terminada y embotellada');
+('PROD-2024-001', 10, 50, '2024-02-01', 'Juan Martínez', 'Orden Lista', 'Lote de mora procesado correctamente'),
+('PROD-2024-002', 6, 30, '2024-02-02', 'Juan Martínez', 'Orden Lista', 'Crema de whisky lista para embotellar'),
+('PROD-2024-003', 7, 25, '2024-02-03', 'Juan Martínez', 'Orden Lista', 'Crema de café con excelente aroma'),
+('PROD-2024-004', 11, 40, '2024-02-04', 'Juan Martínez', 'Orden en preparacion', 'Maceración de lulo en proceso'),
+('PROD-2024-005', 13, 20, '2024-02-05', 'Juan Martínez', 'Orden Recibida', 'Pendiente adquisición de café premium'),
+('PROD-2024-006', 8, 35, '2024-02-06', 'Juan Martínez', 'Orden Lista', 'Crema de arequipe terminada y embotellada');
 
 -- ========================================
 -- COMENTARIOS FINALES

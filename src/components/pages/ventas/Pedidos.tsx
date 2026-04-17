@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Button } from '../../Button';
 import { Form, FormField, FormActions } from '../../Form';
-import { Plus, Eye, Trash2, Minus, DollarSign } from 'lucide-react';
+import { Plus, Eye, Trash2, Minus, DollarSign, Search, RotateCcw } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
 import { pedidos as pedidosAPI, clientes as clientesAPI, productos as productosAPI } from '../../../services/api';
 
@@ -42,6 +42,11 @@ interface StateChangeRequest {
 export function Pedidos() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState({
+    query: '',
+    fecha: '',
+    estado: ''
+  });
   const [productosDisponibles, setProductosDisponibles] = useState<Producto[]>([]);
   const [clientesDisponibles, setClientesDisponibles] = useState<Array<{value: string, label: string}>>([]);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -137,7 +142,7 @@ export function Pedidos() {
           value={estado}
           onChange={(event) => handleEstadoChangeRequest(pedido, event.target.value as Pedido['estado'])}
           disabled={stateChangeSaving}
-          className={`px-3 py-1 rounded-full text-xs border-0 cursor-pointer ${
+          className={`min-h-8 rounded-lg border border-transparent px-2.5 py-1 text-xs font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring ${
             estado === 'Completado' ? 'bg-green-100 text-green-700' :
             estado === 'En Proceso' ? 'bg-blue-100 text-blue-700' :
             estado === 'Pendiente' ? 'bg-yellow-100 text-yellow-700' :
@@ -152,6 +157,20 @@ export function Pedidos() {
       )
     }
   ];
+
+  const pedidosFiltrados = useMemo(() => {
+    const normalizedQuery = filters.query.trim().toLowerCase();
+
+    return pedidos.filter((pedido) => {
+      const matchesQuery =
+        !normalizedQuery ||
+        String(pedido.numero_pedido || pedido.id).toLowerCase().includes(normalizedQuery) ||
+        String(pedido.cliente || '').toLowerCase().includes(normalizedQuery);
+      const matchesFecha = !filters.fecha || String(pedido.fecha || '').includes(filters.fecha);
+      const matchesEstado = !filters.estado || pedido.estado === filters.estado;
+      return matchesQuery && matchesFecha && matchesEstado;
+    });
+  }, [pedidos, filters]);
 
   // Calcular total del pedido
   const calcularTotal = () => {
@@ -490,9 +509,52 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         </Button>
       </div>
 
+      <div className="rounded-lg border border-border bg-white p-4 space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <input
+              type="text"
+              value={filters.query}
+              onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))}
+              placeholder="Buscar pedido por ID o cliente..."
+              className="w-full pl-10 pr-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <Button
+            variant="outline"
+            icon={<RotateCcw className="w-4 h-4" />}
+            onClick={() => setFilters({ query: '', fecha: '', estado: '' })}
+            disabled={!filters.query.trim() && !filters.fecha && !filters.estado}
+          >
+            Limpiar filtros
+          </Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filtrar por:</span>
+          <input
+            type="date"
+            value={filters.fecha}
+            onChange={(event) => setFilters((current) => ({ ...current, fecha: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          <select
+            value={filters.estado}
+            onChange={(event) => setFilters((current) => ({ ...current, estado: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Estado (todos)</option>
+            <option value="Pendiente">Pendiente</option>
+            <option value="En Proceso">En Proceso</option>
+            <option value="Completado">Completado</option>
+            <option value="Cancelado">Cancelado</option>
+          </select>
+        </div>
+      </div>
+
       <DataTable
         columns={columns}
-        data={pedidos}
+        data={pedidosFiltrados}
         actions={[
           commonActions.view((pedido) => {
             setSelectedPedido(pedido);
@@ -507,8 +569,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
           commonActions.edit(handleEdit),
           commonActions.pdf(handleGeneratePDF),
         ]}
-        onSearch={(query) => console.log('Searching:', query)}
-        searchPlaceholder="Buscar pedidos..."
       />
 
       <Modal

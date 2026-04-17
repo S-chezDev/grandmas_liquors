@@ -244,6 +244,8 @@ const normalizeDomicilioPayload = async (data: any) => {
 };
 
 const normalizeCompraPayload = async (data: any) => {
+  const total = toNumberOrZero(data?.total);
+  const requiereAprobacion = total >= 10000;
   const payload: any = {
     ...data,
     numero_compra: data?.numero_compra ?? `COM-${Date.now()}`,
@@ -251,8 +253,11 @@ const normalizeCompraPayload = async (data: any) => {
     fecha: data?.fecha ?? new Date().toISOString().split('T')[0],
     subtotal: toNumberOrZero(data?.subtotal),
     iva: toNumberOrZero(data?.iva),
-    total: toNumberOrZero(data?.total),
+    total,
     estado: data?.estado ?? 'Pendiente',
+    requiere_aprobacion: data?.requiere_aprobacion ?? requiereAprobacion,
+    aprobacion_extraordinaria: data?.aprobacion_extraordinaria ?? requiereAprobacion,
+    motivo_aprobacion: data?.motivo_aprobacion ?? null,
   };
 
   if (!payload.proveedor_id && typeof data?.proveedor === 'string' && data.proveedor.trim()) {

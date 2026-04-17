@@ -445,9 +445,9 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
         title="Restablecer contraseña"
         size="sm"
       >
-        <form onSubmit={handleChangePassword} className="space-y-4">
-          <div>
-            <label htmlFor="currentPassword" className="block text-sm font-medium mb-2">
+        <form onSubmit={handleChangePassword} className="space-y-3 sm:space-y-4">
+          <div className="space-y-1.5">
+            <label htmlFor="currentPassword" className="block text-sm font-medium leading-tight">
               Contraseña actual
             </label>
             <input
@@ -455,13 +455,13 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
               id="currentPassword"
               value={passwordData.currentPassword}
               onChange={(e) => setPasswordData(prev => ({ ...prev, currentPassword: e.target.value }))}
-              className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+              className="w-full min-h-9 rounded-lg border border-border bg-input-background px-3 py-2 text-sm transition-colors placeholder:text-muted-foreground/80 focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-10"
               required
             />
           </div>
           
-          <div>
-            <label htmlFor="newPassword" className="block text-sm font-medium mb-2">
+          <div className="space-y-1.5">
+            <label htmlFor="newPassword" className="block text-sm font-medium leading-tight">
               Nueva contraseña
             </label>
             <input
@@ -469,13 +469,13 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
               id="newPassword"
               value={passwordData.newPassword}
               onChange={(e) => setPasswordData(prev => ({ ...prev, newPassword: e.target.value }))}
-              className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+              className="w-full min-h-9 rounded-lg border border-border bg-input-background px-3 py-2 text-sm transition-colors placeholder:text-muted-foreground/80 focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-10"
               required
             />
           </div>
           
-          <div>
-            <label htmlFor="confirmPassword" className="block text-sm font-medium mb-2">
+          <div className="space-y-1.5">
+            <label htmlFor="confirmPassword" className="block text-sm font-medium leading-tight">
               Confirmar nueva contraseña
             </label>
             <input
@@ -483,22 +483,22 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
               id="confirmPassword"
               value={passwordData.confirmPassword}
               onChange={(e) => setPasswordData(prev => ({ ...prev, confirmPassword: e.target.value }))}
-              className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+              className="w-full min-h-9 rounded-lg border border-border bg-input-background px-3 py-2 text-sm transition-colors placeholder:text-muted-foreground/80 focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-10"
               required
             />
           </div>
           
-          <div className="flex gap-3 justify-end pt-4">
+          <div className="flex flex-col-reverse gap-2 pt-3 sm:flex-row sm:justify-end sm:pt-4">
             <button
               type="button"
               onClick={() => setIsChangePasswordOpen(false)}
-              className="px-4 py-2 border border-border rounded-lg hover:bg-accent transition-colors"
+              className="w-full rounded-lg border border-border px-4 py-2 transition-colors hover:bg-accent sm:w-auto"
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+              className="w-full rounded-lg bg-primary px-4 py-2 text-primary-foreground transition-colors hover:bg-primary/90 sm:w-auto"
             >
               Actualizar contraseña
             </button>

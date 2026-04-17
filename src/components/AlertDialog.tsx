@@ -14,6 +14,48 @@ interface AlertDialogProps {
   cancelText?: string;
 }
 
+type AlertVariant = 'warning' | 'info' | 'success' | 'danger';
+
+const alertVariants: Record<
+  AlertVariant,
+  {
+    icon: React.ReactNode;
+    iconBgClass: string;
+    iconColorClass: string;
+    panelClass: string;
+    buttonVariant: 'primary' | 'destructive';
+  }
+> = {
+  warning: {
+    icon: <AlertTriangle className="w-5 h-5" />,
+    iconBgClass: 'bg-yellow-100',
+    iconColorClass: 'text-yellow-700',
+    panelClass: 'border-yellow-200 bg-yellow-50',
+    buttonVariant: 'primary'
+  },
+  info: {
+    icon: <Info className="w-5 h-5" />,
+    iconBgClass: 'bg-primary/15',
+    iconColorClass: 'text-primary',
+    panelClass: 'border-primary/20 bg-primary/5',
+    buttonVariant: 'primary'
+  },
+  success: {
+    icon: <CheckCircle className="w-5 h-5" />,
+    iconBgClass: 'bg-green-100',
+    iconColorClass: 'text-green-700',
+    panelClass: 'border-green-200 bg-green-50',
+    buttonVariant: 'primary'
+  },
+  danger: {
+    icon: <Trash2 className="w-5 h-5" />,
+    iconBgClass: 'bg-destructive/15',
+    iconColorClass: 'text-destructive',
+    panelClass: 'border-destructive/20 bg-destructive/5',
+    buttonVariant: 'destructive'
+  }
+};
+
 export function AlertDialog({
   isOpen,
   onClose,
@@ -22,40 +64,14 @@ export function AlertDialog({
   description,
   type = 'warning',
   confirmText = 'Confirmar',
-  cancelText = 'Cancelar'
+  cancelText
 }: AlertDialogProps) {
   const handleConfirm = () => {
     onConfirm();
     onClose();
   };
-
-  const getIcon = () => {
-    switch (type) {
-      case 'danger':
-        return <Trash2 className="w-6 h-6 text-destructive" />;
-      case 'warning':
-        return <AlertTriangle className="w-6 h-6 text-yellow-600" />;
-      case 'success':
-        return <CheckCircle className="w-6 h-6 text-green-600" />;
-      case 'info':
-      default:
-        return <Info className="w-6 h-6 text-primary" />;
-    }
-  };
-
-  const getBgColor = () => {
-    switch (type) {
-      case 'danger':
-        return 'bg-destructive/10';
-      case 'warning':
-        return 'bg-yellow-100';
-      case 'success':
-        return 'bg-green-100';
-      case 'info':
-      default:
-        return 'bg-primary/10';
-    }
-  };
+  const variant = alertVariants[type];
+  const shouldShowCancel = typeof cancelText === 'string' && cancelText.trim().length > 0;
 
   return (
     <Modal
@@ -63,24 +79,32 @@ export function AlertDialog({
       onClose={onClose}
       title={title}
       size="sm"
+      contentClassName="pt-3"
+      zIndexClassName="z-[70]"
     >
       <div className="space-y-4">
-        <div className="flex items-start gap-4">
-          <div className={`p-3 rounded-lg ${getBgColor()}`}>
-            {getIcon()}
-          </div>
-          <div className="flex-1">
-            <p className="text-muted-foreground">{description}</p>
+        <div className={`rounded-xl border p-4 ${variant.panelClass}`}>
+          <div className="flex items-start gap-3">
+            <div className={`p-2 rounded-lg ${variant.iconBgClass} ${variant.iconColorClass}`}>
+              {variant.icon}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-foreground/90 max-h-56 overflow-y-auto pr-1 whitespace-pre-line">
+                {description}
+              </p>
+            </div>
           </div>
         </div>
 
-        <div className="flex gap-3 pt-4 justify-end border-t border-border">
-          <Button variant="outline" onClick={onClose}>
-            {cancelText}
-          </Button>
+        <div className="flex flex-wrap gap-2 pt-3 justify-end border-t border-border">
+          {shouldShowCancel ? (
+            <Button variant="outline" onClick={onClose}>
+              {cancelText}
+            </Button>
+          ) : null}
           <Button 
             onClick={handleConfirm}
-            variant={type === 'danger' ? 'destructive' : 'default'}
+            variant={variant.buttonVariant}
           >
             {confirmText}
           </Button>

@@ -4,7 +4,7 @@ import { Modal } from '../../Modal';
 import { Card } from '../../Card';
 import { Button } from '../../Button';
 import { Form, FormField, FormActions } from '../../Form';
-import { Plus, Shield, Check } from 'lucide-react';
+import { Plus, Shield, Check, RotateCcw, Search } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
 import { roles as rolesAPI } from '../../../services/api';
 
@@ -96,7 +96,6 @@ const MODULOS_CRITICOS = new Set(['Configuración', 'Usuarios', 'Ventas']);
 
 export function Roles() {
   const [roles, setRoles] = useState<Role[]>([]);
-  const [loading, setLoading] = useState(true);
   const [isPermissionsModalOpen, setIsPermissionsModalOpen] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -125,6 +124,9 @@ export function Roles() {
   const [createModuleFilter, setCreateModuleFilter] = useState('Todos');
   const [editModuleFilter, setEditModuleFilter] = useState('Todos');
   const [manageModuleFilter, setManageModuleFilter] = useState('Todos');
+  const [roleSearchQuery, setRoleSearchQuery] = useState('');
+  const [roleFilter, setRoleFilter] = useState('Todos');
+  const [roleStateFilter, setRoleStateFilter] = useState<'Todos' | 'Activo' | 'Inactivo'>('Todos');
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [roleToDelete, setRoleToDelete] = useState<Role | null>(null);
   const [deleteReason, setDeleteReason] = useState('');
@@ -141,6 +143,20 @@ export function Roles() {
     setCreatePermissions([]);
     setCreateNameError('');
     setCreateModuleFilter('Todos');
+  };
+
+  const resetEditForm = () => {
+    setSelectedRole(null);
+    setFormData({ nombre: '', descripcion: '', estado: 'Activo' });
+    setEditPermissions([]);
+    setEditNameError('');
+    setEditModuleFilter('Todos');
+  };
+
+  const resetRoleFilters = () => {
+    setRoleSearchQuery('');
+    setRoleFilter('Todos');
+    setRoleStateFilter('Todos');
   };
 
   const normalizeRoleName = (value: string) => value.trim().toLowerCase();
@@ -218,6 +234,21 @@ export function Roles() {
 
   const validatePermissionsCount = (permissions: string[]) =>
     permissions.length > 0 ? '' : 'Cada rol debe mantener al menos un permiso asignado.';
+
+  const createNameValidation = validateRoleName(createFormData.nombre);
+  const editNameValidation = validateRoleName(formData.nombre, selectedRole?.id);
+  const createStepOneValid =
+    Boolean(createFormData.nombre.trim()) &&
+    Boolean(createFormData.descripcion.trim()) &&
+    Boolean(createFormData.estado) &&
+    !createNameValidation;
+  const editFormValid =
+    Boolean(formData.nombre.trim()) &&
+    Boolean(formData.descripcion.trim()) &&
+    Boolean(formData.estado) &&
+    !editNameValidation;
+  const createCanSubmit = createStepOneValid && createPermissions.length > 0;
+  const editCanSubmit = editFormValid && editPermissions.length > 0;
 
   const shouldConfirmCriticalPermission = (permiso: string) => {
     const modulo = moduloPorPermiso.get(permiso);
@@ -332,13 +363,10 @@ export function Roles() {
 
   const loadRoles = async () => {
     try {
-      setLoading(true);
       const data = await rolesAPI.getAll();
       setRoles(data);
     } catch (error) {
       console.error('Error cargando roles:', error);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -375,7 +403,7 @@ export function Roles() {
         <select
           value={estado}
           onChange={(e) => handleEstadoChangeRequest(role, e.target.value as 'Activo' | 'Inactivo')}
-          className={`px-3 py-1 rounded-full text-xs border-0 cursor-pointer ${
+          className={`min-h-8 rounded-lg border border-transparent px-2.5 py-1 text-xs font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring ${
             estado === 'Activo' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
           }`}
         >
@@ -426,7 +454,7 @@ export function Roles() {
 
     try {
       setStateChangeSaving(true);
-      await rolesAPI.update(pendingStateChange.roleId, {
+      await rolesAPI.update(Number(pendingStateChange.roleId), {
         estado: pendingStateChange.nextState,
         motivo: stateChangeReason.trim() || undefined,
       });
@@ -472,6 +500,8 @@ export function Roles() {
 
   const handleCreateRole = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    setCreateNameError(createNameValidation);
 
     const nombreNormalizado = createFormData.nombre.trim();
     const nameValidationError = validateRoleName(nombreNormalizado);
@@ -534,6 +564,8 @@ export function Roles() {
   const handleUpdateRole = async (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedRole) {
+      setEditNameError(editNameValidation);
+
       const nombreNormalizado = formData.nombre.trim();
       const nameValidationError = validateRoleName(nombreNormalizado, selectedRole.id);
 
@@ -563,7 +595,7 @@ export function Roles() {
       }
 
       try {
-        await rolesAPI.update(selectedRole.id, {
+        await rolesAPI.update(Number(selectedRole.id), {
           nombre: nombreNormalizado,
           descripcion: formData.descripcion,
           estado: formData.estado,
@@ -739,7 +771,7 @@ export function Roles() {
       }
 
       try {
-        await rolesAPI.update(selectedRole.id, { permisos: selectedPermissions });
+        await rolesAPI.update(Number(selectedRole.id), { permisos: selectedPermissions });
         await loadRoles();
         setIsPermissionsModalOpen(false);
         showAlert({
@@ -796,15 +828,36 @@ export function Roles() {
   const editModuleEntries = getFilteredModuleEntries(editModuleFilter);
   const manageModuleEntries = getFilteredModuleEntries(manageModuleFilter);
 
-  const createHasErrors =
-    Boolean(createNameError) || !createFormData.nombre.trim() || createPermissions.length === 0;
-  const editHasErrors =
-    Boolean(editNameError) || !formData.nombre.trim() || editPermissions.length === 0;
+  const roleFilterOptions = React.useMemo(() => {
+    const uniqueRoles = Array.from(new Set(roles.map((role) => role.nombre))).sort((left, right) =>
+      left.localeCompare(right, 'es', { sensitivity: 'base' })
+    );
+
+    return ['Todos', ...uniqueRoles];
+  }, [roles]);
+
+  const filteredRoles = React.useMemo(() => {
+    const normalizedQuery = roleSearchQuery.trim().toLowerCase();
+
+    return roles.filter((role) => {
+      const matchesSearch =
+        !normalizedQuery ||
+        role.nombre.toLowerCase().includes(normalizedQuery) ||
+        role.descripcion.toLowerCase().includes(normalizedQuery) ||
+        role.estado.toLowerCase().includes(normalizedQuery);
+      const matchesRole = roleFilter === 'Todos' || role.nombre === roleFilter;
+      const matchesState = roleStateFilter === 'Todos' || role.estado === roleStateFilter;
+      return matchesSearch && matchesRole && matchesState;
+    });
+  }, [roles, roleSearchQuery, roleFilter, roleStateFilter]);
+
+  const createHasErrors = !createCanSubmit;
+  const editHasErrors = !editCanSubmit;
 
   return (
     <div className="space-y-6">
       {AlertComponent}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2>Gestión de Roles</h2>
           <p className="text-muted-foreground">Administra los roles y sus permisos en el sistema</p>
@@ -814,9 +867,56 @@ export function Roles() {
         </Button>
       </div>
 
+      <div className="rounded-lg border border-border bg-white p-4 space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <input
+              type="text"
+              value={roleSearchQuery}
+              onChange={(event) => setRoleSearchQuery(event.target.value)}
+              placeholder="Buscar rol por nombre, descripción o estado..."
+              className="w-full pl-10 pr-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            icon={<RotateCcw className="w-4 h-4" />}
+            onClick={resetRoleFilters}
+            disabled={!roleSearchQuery.trim() && roleFilter === 'Todos' && roleStateFilter === 'Todos'}
+          >
+            Limpiar filtros
+          </Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filtrar por:</span>
+          <select
+            value={roleStateFilter}
+            onChange={(event) => setRoleStateFilter(event.target.value as 'Todos' | 'Activo' | 'Inactivo')}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="Todos">Estado (todos)</option>
+            <option value="Activo">Activo</option>
+            <option value="Inactivo">Inactivo</option>
+          </select>
+          <select
+            value={roleFilter}
+            onChange={(event) => setRoleFilter(event.target.value)}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            {roleFilterOptions.map((role) => (
+              <option key={role} value={role}>
+                {role === 'Todos' ? 'Rol (todos)' : role}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
       <DataTable
         columns={columns}
-        data={roles}
+        data={filteredRoles}
         actions={[
           commonActions.view(handleView),
           {
@@ -828,8 +928,6 @@ export function Roles() {
           commonActions.edit(handleEdit),
           commonActions.delete(handleDelete)
         ]}
-        onSearch={(query) => console.log('Searching:', query)}
-        searchPlaceholder="Buscar roles..."
       />
 
       {/* Modal de Crear Rol */}
@@ -841,133 +939,8 @@ export function Roles() {
         }}
         title="Crear Nuevo Rol"
         size="lg"
-      >
-        <Form onSubmit={handleCreateRole}>
-          <FormField
-            label="Nombre del Rol"
-            name="nombre"
-            value={createFormData.nombre}
-            onChange={(value) => {
-              const nextName = value as string;
-              setCreateFormData({ ...createFormData, nombre: nextName });
-              setCreateNameError(validateRoleName(nextName));
-            }}
-            placeholder="Ej: Supervisor de bodega"
-            required
-          />
-          {createNameError ? <p className="text-sm text-destructive">{createNameError}</p> : null}
-
-          <FormField
-            label="Descripción"
-            name="descripcion"
-            type="textarea"
-            value={createFormData.descripcion}
-            onChange={(value) => setCreateFormData({ ...createFormData, descripcion: value as string })}
-            rows={3}
-            required
-          />
-
-          <FormField
-            label="Estado"
-            name="estado"
-            type="select"
-            value={createFormData.estado}
-            onChange={(value) => setCreateFormData({ ...createFormData, estado: value as 'Activo' | 'Inactivo' })}
-            options={[
-              { value: 'Activo', label: 'Activo' },
-              { value: 'Inactivo', label: 'Inactivo' }
-            ]}
-            required
-          />
-
-          <div className="space-y-3">
-            <div>
-              <p className="text-sm font-medium">Lista de permisos</p>
-              <p className="text-sm text-muted-foreground">Selecciona los permisos que tendrá este rol.</p>
-            </div>
-
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Filtrar por módulo</p>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={createModuleFilter === 'Todos' ? 'primary' : 'outline'}
-                  onClick={() => setCreateModuleFilter('Todos')}
-                >
-                  Todos
-                </Button>
-                {modulosOrdenados.map((modulo) => (
-                  <Button
-                    key={modulo}
-                    type="button"
-                    size="sm"
-                    variant={createModuleFilter === modulo ? 'primary' : 'outline'}
-                    onClick={() => setCreateModuleFilter(modulo)}
-                  >
-                    {modulo}
-                  </Button>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between p-3 bg-muted rounded-lg text-sm">
-              <span>
-                Permisos seleccionados: <strong>{createPermissions.length}</strong> de {todosLosPermisos.length}
-              </span>
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCreatePermissions(todosLosPermisos.map((p) => p.permiso))}
-                >
-                  Seleccionar todos
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCreatePermissions([])}
-                >
-                  Limpiar
-                </Button>
-              </div>
-            </div>
-
-            <div className="space-y-4 max-h-96 overflow-y-auto pr-1">
-              {createModuleEntries.map(([modulo, permisos]) => (
-                <Card key={modulo} className="p-4">
-                  <h4 className="mb-3 text-primary">{modulo}</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {permisos.map((permiso) => {
-                      const isSelected = createPermissions.includes(permiso);
-
-                      return (
-                        <label
-                          key={permiso}
-                          className={`flex items-center gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${
-                            isSelected ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => toggleCreatePermission(permiso)}
-                            className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
-                          />
-                          <span className={isSelected ? 'text-foreground' : 'text-muted-foreground'}>
-                            {permiso}
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </Card>
-              ))}
-            </div>
-          </div>
-
+        contentClassName="!p-2.5 sm:!p-3"
+        footer={
           <FormActions>
             <Button
               type="button"
@@ -979,10 +952,146 @@ export function Roles() {
             >
               Cancelar
             </Button>
-            <Button type="submit" disabled={createHasErrors}>
+            <Button
+              type="submit"
+              form="create-role-form"
+              disabled={createHasErrors}
+            >
               Crear Rol
             </Button>
           </FormActions>
+        }
+      >
+        <Form
+          id="create-role-form"
+          className="space-y-3"
+          onSubmit={handleCreateRole}
+          noValidate
+          style={{ zoom: 0.9 }}
+        >
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(180px,1fr)]">
+            <FormField
+              label="Nombre del Rol"
+              name="nombre"
+              value={createFormData.nombre}
+              onChange={(value) => {
+                const nextName = value as string;
+                setCreateFormData((prev) => ({ ...prev, nombre: nextName }));
+                setCreateNameError(validateRoleName(nextName));
+              }}
+              placeholder="Ej: Supervisor de bodega"
+              required
+            />
+
+            <FormField
+              label="Estado"
+              name="estado"
+              type="select"
+              value={createFormData.estado}
+              onChange={(value) => setCreateFormData((prev) => ({ ...prev, estado: value as 'Activo' | 'Inactivo' }))}
+              options={[
+                { value: 'Activo', label: 'Activo' },
+                { value: 'Inactivo', label: 'Inactivo' }
+              ]}
+              showEmptyOption={false}
+              required
+            />
+          </div>
+
+          <FormField
+            label="Descripción"
+            name="descripcion"
+            type="textarea"
+            value={createFormData.descripcion}
+            onChange={(value) => setCreateFormData((prev) => ({ ...prev, descripcion: value as string }))}
+            rows={3}
+            required
+          />
+
+          {createNameError ? <p className="text-sm text-destructive">{createNameError}</p> : null}
+
+          <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+            <span>Permisos seleccionados: <strong>{createPermissions.length}</strong> de {todosLosPermisos.length}</span>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                onClick={() => setCreatePermissions(todosLosPermisos.map((p) => p.permiso))}
+              >
+                Seleccionar Todos
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                onClick={() => setCreatePermissions([])}
+              >
+                Quitar Todos
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">Filtrar por módulo</p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={createModuleFilter === 'Todos' ? 'primary' : 'outline'}
+                onClick={() => setCreateModuleFilter('Todos')}
+              >
+                Todos
+              </Button>
+              {modulosOrdenados.map((modulo) => (
+                <Button
+                  key={modulo}
+                  type="button"
+                  size="sm"
+                  variant={createModuleFilter === modulo ? 'primary' : 'outline'}
+                  onClick={() => setCreateModuleFilter(modulo)}
+                >
+                  {modulo}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-4 max-h-96 overflow-y-auto">
+            {createModuleEntries.map(([modulo, permisos]) => (
+              <Card key={modulo}>
+                <h4 className="mb-3 text-primary">{modulo}</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {permisos.map((permiso) => {
+                    const isSelected = createPermissions.includes(permiso);
+                    return (
+                      <button
+                        key={permiso}
+                        type="button"
+                        onClick={() => toggleCreatePermission(permiso)}
+                        className={`flex items-center gap-3 p-3 rounded-lg border-2 transition-all ${
+                          isSelected
+                            ? 'border-primary bg-primary/5'
+                            : 'border-border hover:border-primary/50'
+                        }`}
+                      >
+                        <div className={`flex items-center justify-center w-5 h-5 rounded border-2 ${
+                          isSelected
+                            ? 'bg-primary border-primary'
+                            : 'border-muted-foreground'
+                        }`}>
+                          {isSelected && <Check className="w-3 h-3 text-white" />}
+                        </div>
+                        <span className={isSelected ? 'text-foreground' : 'text-muted-foreground'}>
+                          {permiso}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </Card>
+            ))}
+          </div>
         </Form>
       </Modal>
 
@@ -992,6 +1101,18 @@ export function Roles() {
         onClose={handleCancelStateChange}
         title={`Confirmar cambio de estado - ${pendingStateChange?.roleName}`}
         size="md"
+        footer={
+          pendingStateChange ? (
+            <FormActions>
+              <Button type="button" variant="outline" onClick={handleCancelStateChange} disabled={stateChangeSaving}>
+                Cancelar
+              </Button>
+              <Button type="button" onClick={handleConfirmStateChange} disabled={stateChangeSaving}>
+                Confirmar
+              </Button>
+            </FormActions>
+          ) : null
+        }
       >
         {pendingStateChange && (
           <div className="space-y-4">
@@ -1015,14 +1136,6 @@ export function Roles() {
               rows={3}
             />
 
-            <FormActions>
-              <Button type="button" variant="outline" onClick={handleCancelStateChange}>
-                Cancelar
-              </Button>
-              <Button type="button" onClick={handleConfirmStateChange} disabled={stateChangeSaving}>
-                Confirmar
-              </Button>
-            </FormActions>
           </div>
         )}
       </Modal>
@@ -1038,6 +1151,25 @@ export function Roles() {
         }}
         title={`Eliminar Rol - ${roleToDelete?.nombre}`}
         size="md"
+        footer={
+          <FormActions>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setIsDeleteModalOpen(false);
+                setRoleToDelete(null);
+                setDeleteReason('');
+                setDeleteReasonError('');
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button type="button" variant="destructive" onClick={handleConfirmDelete} disabled={deletingRole}>
+              Confirmar eliminación
+            </Button>
+          </FormActions>
+        }
       >
         <div className="space-y-4">
           <div className="p-4 bg-destructive/10 rounded-lg border border-destructive/30">
@@ -1062,23 +1194,6 @@ export function Roles() {
           />
           {deleteReasonError ? <p className="text-sm text-destructive">{deleteReasonError}</p> : null}
 
-          <FormActions>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setIsDeleteModalOpen(false);
-                setRoleToDelete(null);
-                setDeleteReason('');
-                setDeleteReasonError('');
-              }}
-            >
-              Cancelar
-            </Button>
-            <Button type="button" variant="destructive" onClick={handleConfirmDelete} disabled={deletingRole}>
-              Confirmar eliminación
-            </Button>
-          </FormActions>
         </div>
       </Modal>
 
@@ -1087,20 +1202,37 @@ export function Roles() {
         isOpen={isEditModalOpen}
         onClose={() => {
           setIsEditModalOpen(false);
-          setSelectedRole(null);
-          setFormData({ nombre: '', descripcion: '', estado: 'Activo' });
-          setEditPermissions([]);
-          setEditNameError('');
+          resetEditForm();
         }}
         title={`Editar Rol - ${selectedRole?.nombre}`}
         size="lg"
+        contentClassName="!p-2.5 sm:!p-3"
+        footer={
+          <FormActions>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setIsEditModalOpen(false);
+                resetEditForm();
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button type="submit" form="edit-role-form" disabled={editHasErrors}>
+              Guardar Cambios
+            </Button>
+          </FormActions>
+        }
       >
-        <div className="space-y-4">
-          <div className="p-3 bg-accent rounded-lg text-sm text-muted-foreground">
-            Ultima modificacion: <strong>{formatDateTime(selectedRole?.updated_at)}</strong>
-          </div>
+        <Form
+          id="edit-role-form"
+          className="space-y-3"
+          onSubmit={handleUpdateRole}
+          style={{ zoom: 0.9 }}
+        >
 
-          <Form onSubmit={handleUpdateRole}>
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(180px,1fr)]">
             <FormField
               label="Nombre del Rol"
               name="nombre"
@@ -1108,21 +1240,10 @@ export function Roles() {
               value={formData.nombre}
               onChange={(value) => {
                 const nextName = value as string;
-                setFormData({ ...formData, nombre: nextName });
+                setFormData((prev) => ({ ...prev, nombre: nextName }));
                 setEditNameError(validateRoleName(nextName, selectedRole?.id));
               }}
               placeholder="Ej: Supervisor de bodega"
-              required
-            />
-            {editNameError ? <p className="text-sm text-destructive">{editNameError}</p> : null}
-
-            <FormField
-              label="Descripción"
-              name="descripcion"
-              type="textarea"
-              value={formData.descripcion}
-              onChange={(value) => setFormData({ ...formData, descripcion: value as string })}
-              rows={3}
               required
             />
 
@@ -1131,122 +1252,110 @@ export function Roles() {
               name="estado"
               type="select"
               value={formData.estado}
-              onChange={(value) => setFormData({ ...formData, estado: value as 'Activo' | 'Inactivo' })}
+              onChange={(value) => setFormData((prev) => ({ ...prev, estado: value as 'Activo' | 'Inactivo' }))}
               options={[
                 { value: 'Activo', label: 'Activo' },
                 { value: 'Inactivo', label: 'Inactivo' }
               ]}
               required
             />
+          </div>
 
-            <div className="space-y-3">
-              <div>
-                <p className="text-sm font-medium">Lista de permisos</p>
-                <p className="text-sm text-muted-foreground">Actualiza los permisos asignados al rol.</p>
-              </div>
+          <FormField
+            label="Descripción"
+            name="descripcion"
+            type="textarea"
+            value={formData.descripcion}
+            onChange={(value) => setFormData((prev) => ({ ...prev, descripcion: value as string }))}
+            rows={4}
+            required
+          />
 
-              <div className="space-y-2">
-                <p className="text-sm text-muted-foreground">Filtrar por módulo</p>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={editModuleFilter === 'Todos' ? 'primary' : 'outline'}
-                    onClick={() => setEditModuleFilter('Todos')}
-                  >
-                    Todos
-                  </Button>
-                  {modulosOrdenados.map((modulo) => (
-                    <Button
-                      key={modulo}
-                      type="button"
-                      size="sm"
-                      variant={editModuleFilter === modulo ? 'primary' : 'outline'}
-                      onClick={() => setEditModuleFilter(modulo)}
-                    >
-                      {modulo}
-                    </Button>
-                  ))}
-                </div>
-              </div>
+          {editNameError ? <p className="text-sm text-destructive">{editNameError}</p> : null}
 
-              <div className="flex items-center justify-between p-3 bg-muted rounded-lg text-sm">
-                <span>
-                  Permisos seleccionados: <strong>{editPermissions.length}</strong> de {todosLosPermisos.length}
-                </span>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setEditPermissions(todosLosPermisos.map((p) => p.permiso))}
-                  >
-                    Seleccionar todos
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setEditPermissions([])}
-                  >
-                    Limpiar
-                  </Button>
-                </div>
-              </div>
-
-              <div className="space-y-4 max-h-80 overflow-y-auto pr-1">
-                {editModuleEntries.map(([modulo, permisos]) => (
-                  <Card key={modulo} className="p-4">
-                    <h4 className="mb-3 text-primary">{modulo}</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      {permisos.map((permiso) => {
-                        const isSelected = editPermissions.includes(permiso);
-
-                        return (
-                          <label
-                            key={permiso}
-                            className={`flex items-center gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${
-                              isSelected ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={() => toggleEditPermission(permiso)}
-                              className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
-                            />
-                            <span className={isSelected ? 'text-foreground' : 'text-muted-foreground'}>
-                              {permiso}
-                            </span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </Card>
-                ))}
-              </div>
+          <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+            <span>Permisos seleccionados: <strong>{editPermissions.length}</strong> de {todosLosPermisos.length}</span>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                onClick={() => setEditPermissions(todosLosPermisos.map((p) => p.permiso))}
+              >
+                Seleccionar Todos
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                onClick={() => setEditPermissions([])}
+              >
+                Quitar Todos
+              </Button>
             </div>
+          </div>
 
-            <FormActions>
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">Filtrar por módulo</p>
+            <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
-                variant="outline"
-                onClick={() => {
-                  setIsEditModalOpen(false);
-                  setSelectedRole(null);
-                  setFormData({ nombre: '', descripcion: '', estado: 'Activo' });
-                  setEditPermissions([]);
-                  setEditNameError('');
-                }}
+                size="sm"
+                variant={editModuleFilter === 'Todos' ? 'primary' : 'outline'}
+                onClick={() => setEditModuleFilter('Todos')}
               >
-                Cancelar
+                Todos
               </Button>
-              <Button type="submit" disabled={editHasErrors}>
-                Guardar Cambios
-              </Button>
-            </FormActions>
-          </Form>
-        </div>
+              {modulosOrdenados.map((modulo) => (
+                <Button
+                  key={modulo}
+                  type="button"
+                  size="sm"
+                  variant={editModuleFilter === modulo ? 'primary' : 'outline'}
+                  onClick={() => setEditModuleFilter(modulo)}
+                >
+                  {modulo}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-4 max-h-96 overflow-y-auto">
+            {editModuleEntries.map(([modulo, permisos]) => (
+              <Card key={modulo}>
+                <h4 className="mb-3 text-primary">{modulo}</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {permisos.map((permiso) => {
+                    const isSelected = editPermissions.includes(permiso);
+                    return (
+                      <button
+                        key={permiso}
+                        type="button"
+                        onClick={() => toggleEditPermission(permiso)}
+                        className={`flex items-center gap-3 p-3 rounded-lg border-2 transition-all ${
+                          isSelected
+                            ? 'border-primary bg-primary/5'
+                            : 'border-border hover:border-primary/50'
+                        }`}
+                      >
+                        <div className={`flex items-center justify-center w-5 h-5 rounded border-2 ${
+                          isSelected
+                            ? 'bg-primary border-primary'
+                            : 'border-muted-foreground'
+                        }`}>
+                          {isSelected && <Check className="w-3 h-3 text-white" />}
+                        </div>
+                        <span className={isSelected ? 'text-foreground' : 'text-muted-foreground'}>
+                          {permiso}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </Card>
+            ))}
+          </div>
+        </Form>
       </Modal>
 
       {/* Modal de Detalle */}

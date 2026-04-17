@@ -16,6 +16,20 @@ const ensureProductoImageColumn = async () => {
   }
 };
 
+const groupRowsBy = (rows, key) => {
+  const grouped = new Map();
+
+  for (const row of rows) {
+    const groupKey = row[key];
+    if (!grouped.has(groupKey)) {
+      grouped.set(groupKey, []);
+    }
+    grouped.get(groupKey).push(row);
+  }
+
+  return grouped;
+};
+
 /**
  * FUNCIONES GENÉRICAS PARA CONSULTAS A LA BD POSTGRESQL
  */
@@ -990,18 +1004,24 @@ const Ventas = {
       LEFT JOIN clientes c ON v.cliente_id = c.id
       ORDER BY v.fecha DESC
     `);
-    
-    // Obtener detalles para cada venta
-    for (let venta of result.rows) {
-      const detalles = await pool.query(`
-        SELECT dv.*, p.nombre as producto
-        FROM detalle_ventas dv
-        JOIN productos p ON dv.producto_id = p.id
-        WHERE dv.venta_id = $1
-      `, [venta.id]);
-      venta.items = detalles.rows;
+
+    const ventaIds = result.rows.map((venta) => venta.id);
+    if (ventaIds.length > 0) {
+      const detalles = await pool.query(
+        `SELECT dv.*, p.nombre as producto
+         FROM detalle_ventas dv
+         JOIN productos p ON dv.producto_id = p.id
+         WHERE dv.venta_id = ANY($1::int[])
+         ORDER BY dv.venta_id ASC, dv.id ASC`,
+        [ventaIds]
+      );
+
+      const detallesPorVenta = groupRowsBy(detalles.rows, 'venta_id');
+      for (const venta of result.rows) {
+        venta.items = detallesPorVenta.get(venta.id) || [];
+      }
     }
-    
+
     return result.rows;
   },
   getById: async (id) => {
@@ -1177,15 +1197,21 @@ const Compras = {
       ORDER BY c.fecha DESC
     `);
 
-    for (const compra of result.rows) {
-      const detalles = await pool.query(`
-        SELECT dc.*, p.nombre AS producto
-        FROM detalle_compras dc
-        JOIN productos p ON p.id = dc.producto_id
-        WHERE dc.compra_id = $1
-        ORDER BY dc.id ASC
-      `, [compra.id]);
-      compra.items = detalles.rows;
+    const compraIds = result.rows.map((compra) => compra.id);
+    if (compraIds.length > 0) {
+      const detalles = await pool.query(
+        `SELECT dc.*, p.nombre AS producto
+         FROM detalle_compras dc
+         JOIN productos p ON p.id = dc.producto_id
+         WHERE dc.compra_id = ANY($1::int[])
+         ORDER BY dc.compra_id ASC, dc.id ASC`,
+        [compraIds]
+      );
+
+      const detallesPorCompra = groupRowsBy(detalles.rows, 'compra_id');
+      for (const compra of result.rows) {
+        compra.items = detallesPorCompra.get(compra.id) || [];
+      }
     }
 
     return result.rows;
@@ -1857,7 +1883,7 @@ const consumePasswordResetToken = async ({ email, tokenHash }) => {
 
 const getLoginAttemptRecord = async (email) => {
   await ensureUserLoginAttemptsTable();
-  const result = await pool.query('SELECT * FROM usuarios_login_intentos WHERE LOWER(email) = LOWER($1) LIMIT 1', [email]);
+  const result = await pool.query('SELECT * FROM usuarios_login_intentos WHERE email = LOWER($1) LIMIT 1', [email]);
   return result.rows[0] || null;
 };
 
@@ -1970,12 +1996,14 @@ const getUserDeletionBlockers = async (usuario) => {
     },
   ];
 
-  for (const item of counts) {
+  const results = await Promise.all(counts.map(async (item) => {
     const result = await pool.query(item.query, [linkedCliente.id]);
     const total = Number(result.rows[0]?.total || 0);
-    if (total > 0) {
-      blockers.push({ key: item.key, label: item.label, total });
-    }
+    return total > 0 ? { key: item.key, label: item.label, total } : null;
+  }));
+
+  for (const blocker of results) {
+    if (blocker) blockers.push(blocker);
   }
 
   return blockers;
@@ -2200,9 +2228,16 @@ const Roles = {
   getAll: async () => {
     const result = await pool.query(`
       SELECT r.*, 
-             (SELECT COUNT(*) FROM usuarios WHERE rol_id = r.id AND (estado IS NULL OR estado <> 'Eliminado')) as usuarios,
-             (SELECT COUNT(*) FROM usuarios WHERE rol_id = r.id AND estado = 'Activo') as usuarios_activos
-      FROM roles r 
+             COALESCE(u.usuarios, 0) AS usuarios,
+             COALESCE(u.usuarios_activos, 0) AS usuarios_activos
+      FROM roles r
+      LEFT JOIN (
+        SELECT rol_id,
+               COUNT(*) FILTER (WHERE estado IS NULL OR estado <> 'Eliminado') AS usuarios,
+               COUNT(*) FILTER (WHERE estado = 'Activo') AS usuarios_activos
+        FROM usuarios
+        GROUP BY rol_id
+      ) u ON u.rol_id = r.id
       ORDER BY r.nombre
     `);
     return result.rows;
@@ -2352,7 +2387,19 @@ const Usuarios = {
         : '';
 
     const result = await pool.query(`
-      SELECT u.*, r.nombre as rol
+      SELECT u.id,
+             u.nombre,
+             u.apellido,
+             u.tipo_documento,
+             u.documento,
+             u.direccion,
+             u.email,
+             u.telefono,
+             u.rol_id,
+             u.estado,
+             u.created_at,
+             u.updated_at,
+             r.nombre AS rol
       FROM usuarios u
       LEFT JOIN roles r ON u.rol_id = r.id
       ${whereClause}
