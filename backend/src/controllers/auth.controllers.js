@@ -89,7 +89,7 @@ module.exports = {
       const identifier = getLoginIdentifier(email);
       const blocked = await models.Usuarios.isLoginBlocked(identifier);
       if (blocked) {
-        return res.status(429).json({ success: false, message: 'Cuenta bloqueada temporalmente por intentos fallidos' });
+        return res.status(429).json({ success: false, message: 'Cuenta bloqueada temporalmente por 15 minutos tras 5 intentos fallidos' });
       }
 
       const usuario = await models.Usuarios.getByEmailLogin(identifier);
@@ -99,7 +99,7 @@ module.exports = {
       }
 
       if (usuario.estado !== 'Activo') {
-        return res.status(403).json({ success: false, message: 'La cuenta esta inactiva' });
+        return res.status(403).json({ success: false, message: 'La cuenta se encuentra inactiva y no puede iniciar sesion' });
       }
 
       const isValid = await bcrypt.compare(password, usuario.password_hash || '');
@@ -220,7 +220,7 @@ module.exports = {
       }
 
       if (!isStrongPassword(newPassword)) {
-        return res.status(400).json({ success: false, message: 'La nueva contraseña no cumple con los requisitos de seguridad' });
+        return res.status(400).json({ success: false, message: 'La nueva contraseña debe tener minimo 8 caracteres, una mayuscula y un numero' });
       }
 
       const usuario = await models.Usuarios.getById(userId);
@@ -236,7 +236,7 @@ module.exports = {
       const passwordHistory = await models.Usuarios.getPasswordHistory(userId, 3);
       for (const storedHash of passwordHistory) {
         if (await bcrypt.compare(newPassword, storedHash)) {
-          return res.status(409).json({ success: false, message: 'No puedes reutilizar una contraseña reciente' });
+          return res.status(409).json({ success: false, message: 'La nueva contraseña no puede ser igual a las ultimas 3 utilizadas' });
         }
       }
 
@@ -295,7 +295,7 @@ module.exports = {
       }
 
       if (!isStrongPassword(newPassword)) {
-        return res.status(400).json({ success: false, message: 'La nueva contraseña no cumple con los requisitos de seguridad' });
+        return res.status(400).json({ success: false, message: 'La nueva contraseña debe tener minimo 8 caracteres, una mayuscula y un numero' });
       }
 
       const resetRow = await models.Usuarios.consumePasswordResetToken({
@@ -315,7 +315,7 @@ module.exports = {
       const passwordHistory = await models.Usuarios.getPasswordHistory(usuario.id, 3);
       for (const storedHash of passwordHistory) {
         if (await bcrypt.compare(newPassword, storedHash)) {
-          return res.status(409).json({ success: false, message: 'No puedes reutilizar una contraseña reciente' });
+          return res.status(409).json({ success: false, message: 'La nueva contraseña no puede ser igual a las ultimas 3 utilizadas' });
         }
       }
 

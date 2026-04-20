@@ -133,6 +133,18 @@ export function Proveedores() {
   const [deleteSaving, setDeleteSaving] = useState(false);
   const { showAlert, AlertComponent } = useAlertDialog();
 
+  const stateChangeReasonTrimmed = stateChangeReason.trim();
+  const stateChangeReasonLength = stateChangeReasonTrimmed.length;
+  const isStateChangeReasonValid = stateChangeReasonLength >= 10 && stateChangeReasonLength <= 500;
+  const stateChangeReasonError =
+    stateChangeReasonLength === 0
+      ? 'El motivo es obligatorio para cambiar el estado.'
+      : stateChangeReasonLength < 10
+      ? 'El motivo debe tener al menos 10 caracteres.'
+      : stateChangeReasonLength > 500
+      ? 'El motivo no puede superar los 500 caracteres.'
+      : '';
+
   useEffect(() => {
     void loadProveedores();
   }, []);
@@ -397,6 +409,17 @@ export function Proveedores() {
     setEmailValidationState({ checking: false, message: '', ok: false });
     setPhoneValidationState({ checking: false, message: '', ok: false });
     setIsFormModalOpen(true);
+
+    showAlert({
+      title: 'RUC bloqueado en edición',
+      description:
+        proveedor.tipo_persona === 'Juridica'
+          ? 'El RUC/NIT no se puede editar para mantener trazabilidad. Si es incorrecto, crea un proveedor nuevo y desactiva el anterior.'
+          : 'El RUC/Documento no se puede editar para mantener trazabilidad. Si es incorrecto, crea un proveedor nuevo y desactiva el anterior.',
+      type: 'info',
+      confirmText: 'Entendido',
+      onConfirm: () => {},
+    });
   };
 
   const handleEstadoChangeRequest = async (proveedor: Proveedor, nuevoEstado: ProveedorEstado) => {
@@ -643,11 +666,22 @@ export function Proveedores() {
   const handleConfirmStateChange = async () => {
     if (!pendingStateChange) return;
 
+    if (!isStateChangeReasonValid) {
+      showAlert({
+        title: 'Motivo inválido',
+        description: stateChangeReasonError,
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
     try {
       setStateChangeSaving(true);
       const response = await proveedoresAPI.updateStatus(Number(pendingStateChange.proveedorId), {
         estado: pendingStateChange.nextState,
-        motivo: stateChangeReason.trim(),
+        motivo: stateChangeReasonTrimmed,
       });
       const updatedEstado =
         ((response as { estado?: ProveedorEstado })?.estado || pendingStateChange.nextState) as ProveedorEstado;
@@ -671,7 +705,7 @@ export function Proveedores() {
 
       showAlert({
         title: 'Estado actualizado',
-        description: `El proveedor ${pendingStateChange.proveedorNombre} cambió a ${updatedEstado} correctamente.${stateChangeReason.trim() ? ` Motivo registrado: ${stateChangeReason.trim()}.` : ''}`,
+        description: `El proveedor ${pendingStateChange.proveedorNombre} cambió a ${updatedEstado} correctamente.${stateChangeReasonTrimmed ? ` Motivo registrado: ${stateChangeReasonTrimmed}.` : ''}`,
         type: 'success',
         confirmText: 'Entendido',
         onConfirm: () => {},
@@ -854,20 +888,23 @@ export function Proveedores() {
             </div>
 
             <FormField
-              label="Motivo opcional"
+              label="Motivo (obligatorio)"
               name="motivo-estado-proveedor"
               type="textarea"
               value={stateChangeReason}
               onChange={(value) => setStateChangeReason(value as string)}
-              placeholder="Ej: ajuste operativo, proveedor temporalmente no disponible"
+              placeholder="Describe el motivo del cambio de estado (10 a 500 caracteres)"
               rows={3}
+              required
+              error={stateChangeReason ? stateChangeReasonError || undefined : undefined}
+              helperText={`Caracteres: ${stateChangeReasonLength}/500`}
             />
 
             <FormActions>
               <Button type="button" variant="outline" onClick={handleCancelStateChange}>
                 Cancelar
               </Button>
-              <Button type="button" onClick={handleConfirmStateChange} disabled={stateChangeSaving}>
+              <Button type="button" onClick={handleConfirmStateChange} disabled={stateChangeSaving || !isStateChangeReasonValid}>
                 Confirmar
               </Button>
             </FormActions>
@@ -930,7 +967,7 @@ export function Proveedores() {
                 error={nitValidationState.message.includes('registrado') ? nitValidationState.message : undefined}
                 helperText={
                   isEditing
-                    ? 'El RUC no se puede editar.'
+                    ? 'Bloqueado: el RUC no se puede editar para mantener trazabilidad.'
                     : nitValidationState.checking
                     ? 'Validando NIT en tiempo real...'
                     : nitValidationState.ok
@@ -984,6 +1021,7 @@ export function Proveedores() {
                   required
                   readOnly={isEditing}
                   error={nitValidationState.message.includes('registrado') ? nitValidationState.message : undefined}
+                  helperText={isEditing ? 'Bloqueado: el RUC/Documento no se puede editar para mantener trazabilidad.' : undefined}
                 />
               </div>
             </>

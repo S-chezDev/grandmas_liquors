@@ -14,14 +14,15 @@ module.exports = {
       const compra = await models.Compras.getById(req.params.id);
       if (!compra) return res.status(404).json({ success: false, message: 'Compra no encontrada' });
       const detalles = await models.Compras.getDetalles(req.params.id);
-      res.json({ success: true, data: { ...compra, detalles } });
+      const historial_estados = await models.Compras.getEstadoHistorial(req.params.id);
+      res.json({ success: true, data: { ...compra, detalles, historial_estados } });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
     }
   },
   create: async (req, res) => {
     try {
-      const id = await models.Compras.create(req.body);
+      const id = await models.Compras.create(req.body, { usuarioId: req.user?.id || null });
       res.status(201).json({ success: true, id, message: 'Compra creada exitosamente' });
     } catch (error) {
       res.status(error.statusCode || 500).json({ success: false, message: error.message, details: error.details });
@@ -57,7 +58,9 @@ module.exports = {
         });
       }
 
-      const updatedCompra = await models.Compras.updateStatus(req.params.id, req.body);
+      const updatedCompra = await models.Compras.updateStatus(req.params.id, req.body, {
+        usuarioId: req.user?.id || null,
+      });
       return res.json({
         success: true,
         data: updatedCompra,

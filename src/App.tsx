@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { AuthProvider, useAuth } from './components/AuthContext';
+import type { AuthLoginResult } from './components/AuthContext';
 import { useAlertDialog } from './components/AlertDialog';
 import { subscribeApiLoading } from './services/api';
 
@@ -163,13 +164,25 @@ function AppContent() {
     }
   };
 
-  const handleLogin = async (email: string, password: string, rememberMe = false): Promise<boolean> => {
-    const success = await login(email, password, rememberMe);
-    if (success) {
+  const handleLogin = async (email: string, password: string, rememberMe = false): Promise<AuthLoginResult> => {
+    const result = await login(email, password, rememberMe);
+    if (result.success) {
       console.log('Login exitoso');
-      return true;
     }
-    return false;
+    return result;
+  };
+
+  const handleLogout = () => {
+    showAlert({
+      title: 'Confirmar cierre de sesión',
+      description: '¿Estás seguro de que deseas cerrar la sesión actual?',
+      type: 'warning',
+      confirmText: 'Sí, cerrar sesión',
+      cancelText: 'Cancelar',
+      onConfirm: () => {
+        logout();
+      },
+    });
   };
 
   if (isAuthLoading) {
@@ -200,7 +213,7 @@ function AppContent() {
       <Sidebar currentPath={currentPath} onNavigate={handleNavigate} />
       
       <div className="flex-1 flex flex-col overflow-hidden">
-        <Header title={pageTitle} userName={`${user.nombre} ${user.apellido}`} userRole={user.rol} onLogout={logout} />
+        <Header title={pageTitle} userName={`${user.nombre} ${user.apellido}`} userRole={user.rol} onLogout={handleLogout} />
         
         <main className="flex-1 overflow-y-auto p-6">
           <Suspense fallback={null}>

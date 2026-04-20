@@ -6,9 +6,10 @@ import { LogIn, UserPlus, Upload, KeyRound } from 'lucide-react';
 import { Modal } from '../Modal';
 import { AlertDialog } from '../AlertDialog';
 import { auth } from '../../services/api';
+import type { AuthLoginResult } from '../AuthContext';
 
 interface LoginProps {
-  onLogin: (email: string, password: string) => Promise<boolean>;
+  onLogin: (email: string, password: string) => Promise<AuthLoginResult>;
 }
 
 export function Login({ onLogin }: LoginProps) {
@@ -42,9 +43,9 @@ export function Login({ onLogin }: LoginProps) {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const success = await onLogin(loginData.email, loginData.password);
+    const result = await onLogin(loginData.email, loginData.password);
 
-    if (success) {
+    if (result.success) {
       setAlertState({
         isOpen: true,
         title: 'Bienvenido',
@@ -58,10 +59,12 @@ export function Login({ onLogin }: LoginProps) {
         setAlertState((prev: any) => ({ ...prev, isOpen: false }));
       }, 3000);
     } else {
+      const fallbackMessage = 'Credenciales incorrectas. Por favor verifica tu email y contraseña.';
+      const backendMessage = result.message?.trim() || fallbackMessage;
       setAlertState({
         isOpen: true,
         title: 'Error de autenticación',
-        description: 'Credenciales incorrectas. Por favor verifica tu email y contraseña.',
+        description: backendMessage,
         type: 'danger',
         onConfirm: () => {}
       });

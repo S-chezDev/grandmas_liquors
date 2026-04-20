@@ -3,7 +3,7 @@ import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, Trash2, RotateCcw, Search } from 'lucide-react';
+import { Plus, Trash2, RotateCcw, Search, FileText } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
 import { compras as comprasAPI, productos as productosAPI, proveedores as proveedoresAPI } from '../../../services/api';
 import { useAuth } from '../../AuthContext';
@@ -43,6 +43,18 @@ interface Compra {
   total: number;
   estado: string;
   observaciones?: string;
+  historialEstados?: CompraEstadoHistorial[];
+}
+
+interface CompraEstadoHistorial {
+  id: number;
+  estado_anterior: string | null;
+  estado_nuevo: string;
+  motivo: string | null;
+  usuario_nombre?: string | null;
+  usuario_apellido?: string | null;
+  usuario_email?: string | null;
+  created_at?: string;
 }
 
 interface ComprasFilters {
@@ -156,6 +168,7 @@ export function Compras() {
         total: Number(compra.total || 0),
         estado: normalizeEstadoCompra(compra.estado),
         observaciones: compra.observaciones || '',
+        historialEstados: [],
       }));
 
       setCompras(normalizedCompras);
@@ -306,6 +319,19 @@ export function Compras() {
           }))
         : compra.items;
 
+      const historialEstados = Array.isArray((detalle as any)?.historial_estados)
+        ? (detalle as any).historial_estados.map((entry: any) => ({
+            id: Number(entry.id || 0),
+            estado_anterior: entry.estado_anterior ? normalizeEstadoCompra(entry.estado_anterior) : null,
+            estado_nuevo: normalizeEstadoCompra(entry.estado_nuevo),
+            motivo: entry.motivo || null,
+            usuario_nombre: entry.usuario_nombre || null,
+            usuario_apellido: entry.usuario_apellido || null,
+            usuario_email: entry.usuario_email || null,
+            created_at: entry.created_at || '',
+          }))
+        : [];
+
       setSelectedCompra({
         ...compra,
         fecha: toDateOnly((detalle as any)?.fecha ?? compra.fecha),
@@ -317,6 +343,7 @@ export function Compras() {
         total: Number((detalle as any)?.total ?? compra.total),
         estado: normalizeEstadoCompra((detalle as any)?.estado ?? compra.estado),
         observaciones: String((detalle as any)?.observaciones || compra.observaciones || ''),
+        historialEstados,
       });
     } catch {
       setSelectedCompra(compra);
@@ -704,7 +731,11 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         data={comprasFiltradas}
         actions={[
           commonActions.view(handleView),
-          commonActions.pdf(handleGeneratePDF),
+          {
+            label: 'Factura',
+            icon: <FileText className="w-4 h-4" />,
+            onClick: handleGeneratePDF,
+          },
         ]}
       />
 
@@ -927,7 +958,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
               {stateChangeSaving
                 ? 'Guardando...'
                 : pendingStateChange?.to === 'Cancelada'
-                  ? 'Confirmar cancelación de pedido'
+                  ? 'Confirmar cancelación de compra'
                   : 'Confirmar'}
             </Button>
           </FormActions>
@@ -1019,6 +1050,44 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                 </tbody>
               </table>
             </div>
+
+            <div className="space-y-2">
+              <h4>Historial de estado</h4>
+              {Array.isArray(selectedCompra.historialEstados) && selectedCompra.historialEstados.length > 0 ? (
+                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                  {selectedCompra.historialEstados.map((entry) => (
+                    <div key={entry.id} className="rounded-lg border border-border bg-white p-3 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-medium">
+                          {entry.estado_anterior ? `${entry.estado_anterior} → ${entry.estado_nuevo}` : `Inicial: ${entry.estado_nuevo}`}
+                        </p>
+                        <span className="text-xs text-muted-foreground">
+                          {entry.created_at ? new Date(entry.created_at).toLocaleString('es-CO') : ''}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {entry.usuario_nombre || entry.usuario_apellido
+                          ? `Por: ${[entry.usuario_nombre, entry.usuario_apellido].filter(Boolean).join(' ')}`
+                          : entry.usuario_email
+                            ? `Por: ${entry.usuario_email}`
+                            : 'Por: Sistema'}
+                      </p>
+                      <p className="text-sm text-muted-foreground">{entry.motivo || 'Sin motivo registrado'}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
+                  No hay historial de estado registrado para esta compra.
+                </div>
+              )}
+            </div>
+
+            <FormActions>
+              <Button type="button" variant="outline" onClick={() => setIsDetailModalOpen(false)}>
+                Cerrar
+              </Button>
+            </FormActions>
           </div>
         )}
       </Modal>

@@ -17,9 +17,15 @@ interface AuthContextType {
   user: User | null;
   isAuthLoading: boolean;
   sessionWarningVersion: number;
-  login: (email: string, password: string, rememberMe?: boolean) => Promise<boolean>;
+  login: (email: string, password: string, rememberMe?: boolean) => Promise<AuthLoginResult>;
   logout: () => void;
   hasPermission: (module: string, action?: string) => boolean;
+}
+
+export interface AuthLoginResult {
+  success: boolean;
+  message?: string;
+  status?: number;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -270,19 +276,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [user?.id, sessionExpiresAtMs]);
 
-  const login = async (email: string, password: string, rememberMe = false): Promise<boolean> => {
+  const login = async (email: string, password: string, rememberMe = false): Promise<AuthLoginResult> => {
     try {
       const result = await auth.login(email, password, rememberMe);
       const mappedUser = mapUser(result);
       if (mappedUser) {
         setUser(mappedUser);
         setSessionExpiresAtMs(resolveSessionExpiresAt(result));
-        return true;
+        return {
+          success: true,
+          message: 'Inicio de sesión exitoso',
+        };
       }
-      return false;
+      return {
+        success: false,
+        message: 'No se pudo iniciar sesión con las credenciales proporcionadas',
+      };
     } catch (error) {
       console.error('Error de login:', error);
-      return false;
+      return {
+        success: false,
+        message:
+          typeof (error as any)?.message === 'string' && (error as any).message.trim()
+            ? (error as any).message
+            : 'No se pudo iniciar sesión. Intenta nuevamente.',
+        status: Number.isFinite(Number((error as any)?.status)) ? Number((error as any).status) : undefined,
+      };
     }
   };
 
