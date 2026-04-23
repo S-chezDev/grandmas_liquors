@@ -10,7 +10,17 @@ import { entregas_insumos as entregasAPI } from '../../../services/api';
 interface EntregaInsumo {
   id: string;
   numero_entrega: string;
-  insumo_id: number;
+  insumo: string;
+  cantidad: number;
+  unidad: string;
+  operario: string;
+  fecha: string;
+  hora: string;
+}
+
+interface EntregaInsumoForm {
+  numero_entrega: string;
+  insumo: string;
   cantidad: number;
   unidad: string;
   operario: string;
@@ -27,6 +37,36 @@ export function Insumos() {
     fecha: ''
   });
 
+  const formatDate = (value: string) => {
+    if (!value) return '';
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return new Intl.DateTimeFormat('es-CO', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      }).format(parsed);
+    }
+
+    const [year, month, day] = value.split('-');
+    if (year && month && day) return `${day}/${month}/${year}`;
+    return value;
+  };
+
+  const formatTime = (value: string) => {
+    if (!value) return '';
+    const [hours, minutes] = value.split(':');
+    if (hours === undefined || minutes === undefined) return value;
+
+    const parsed = new Date();
+    parsed.setHours(Number(hours), Number(minutes), 0, 0);
+    return new Intl.DateTimeFormat('es-CO', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    }).format(parsed);
+  };
+
   useEffect(() => {
     loadEntregas();
   }, []);
@@ -35,7 +75,13 @@ export function Insumos() {
     try {
       setLoading(true);
       const data = await entregasAPI.getAll();
-      setEntregas(data);
+      const normalized = Array.isArray(data)
+        ? data.map((entrega: any) => ({
+            ...entrega,
+            insumo: entrega.insumo || entrega.insumo_nombre || ''
+          }))
+        : [];
+      setEntregas(normalized);
     } catch (error) {
       console.error('Error al cargar entregas:', error);
     } finally {
@@ -47,9 +93,9 @@ export function Insumos() {
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
   const [pdfContent, setPdfContent] = useState('');
   const [selectedEntrega, setSelectedEntrega] = useState<EntregaInsumo | null>(null);
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<EntregaInsumoForm>({
     numero_entrega: '',
-    insumo_id: 0,
+    insumo: '',
     cantidad: 0,
     unidad: '',
     operario: '',
@@ -60,15 +106,23 @@ export function Insumos() {
 
   const columns: Column[] = [
     { key: 'numero_entrega', label: 'ID' },
-    { key: 'insumo_id', label: 'Insumo ID' },
-    { 
-      key: 'cantidad', 
+    { key: 'insumo', label: 'Producto' },
+    {
+      key: 'cantidad',
       label: 'Cantidad',
       render: (cantidad: number, row: EntregaInsumo) => `${cantidad} ${row.unidad}`
     },
     { key: 'operario', label: 'Operario' },
-    { key: 'fecha', label: 'Fecha' },
-    { key: 'hora', label: 'Hora' }
+    {
+      key: 'fecha',
+      label: 'Fecha',
+      render: (fecha: string) => formatDate(fecha)
+    },
+    {
+      key: 'hora',
+      label: 'Hora',
+      render: (hora: string) => formatTime(hora)
+    }
   ];
 
   const operariosOptions = useMemo(
@@ -90,11 +144,11 @@ export function Insumos() {
 
   const handleAdd = () => {
     setSelectedEntrega(null);
-    setFormData({ 
+    setFormData({
       numero_entrega: `ENT-${Date.now()}`,
-      insumo_id: 0,
-      cantidad: 0, 
-      unidad: 'Unidades', 
+      insumo: '',
+      cantidad: 0,
+      unidad: 'Unidades',
       operario: '',
       fecha: new Date().toISOString().split('T')[0],
       hora: new Date().toTimeString().slice(0, 5)
@@ -108,18 +162,17 @@ export function Insumos() {
   };
 
   const handleGeneratePDF = (entrega: EntregaInsumo) => {
-    // Crear contenido del PDF
     const content = `
 ╔════════════════════════════════════════════════════════════╗
 ║         GRANDMA'S LIQUEURS - ENTREGA DE INSUMOS           ║
 ╚════════════════════════════════════════════════════════════╝
 
 ID Entrega:         ${entrega.id}
-Insumo:             ${entrega.insumo}
+Producto:           ${entrega.insumo}
 Cantidad:           ${entrega.cantidad} ${entrega.unidad}
 Operario:           ${entrega.operario}
-Fecha:              ${entrega.fecha}
-Hora:               ${entrega.hora}
+Fecha:              ${formatDate(entrega.fecha)}
+Hora:               ${formatTime(entrega.hora)}
 
 ────────────────────────────────────────────────────────────
 Firma Operario:     _______________________
@@ -130,24 +183,23 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
 ────────────────────────────────────────────────────────────
     `.trim();
 
-    // Mostrar en modal en lugar de descargar
     setPdfContent(content);
     setIsPdfModalOpen(true);
   };
 
-  const handleDelete = async (entrega: EntregaInsumo) => {
+  const handleAnular = async (entrega: EntregaInsumo) => {
     showAlert({
-      title: '¿Eliminar entrega?',
-      description: `¿Está seguro de eliminar la entrega ${entrega.numero_entrega}?`,
+      title: '¿Anular entrega?',
+      description: `¿Está seguro de anular la entrega ${entrega.numero_entrega}? Esta acción no se puede revertir.`,
       type: 'danger',
-      confirmText: 'Eliminar',
+      confirmText: 'Anular',
       cancelText: 'Cancelar',
       onConfirm: async () => {
         try {
           await entregasAPI.delete(Number(entrega.id));
           await loadEntregas();
         } catch (error) {
-          console.error('Error al eliminar:', error);
+          console.error('Error al anular:', error);
         }
       }
     });
@@ -228,7 +280,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         actions={[
           commonActions.view(handleViewDetail),
           commonActions.pdf(handleGeneratePDF),
-          commonActions.delete(handleDelete)
+          commonActions.cancel(handleAnular)
         ]}
       />
 
@@ -242,7 +294,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         <Form onSubmit={handleSubmit}>
           <div className="grid grid-cols-2 gap-4">
             <FormField
-              label="Insumo"
+              label="Producto"
               name="insumo"
               type="select"
               value={formData.insumo}
@@ -357,7 +409,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
             {/* Información general */}
             <div className="grid grid-cols-2 gap-6">
               <div>
-                <label className="text-sm text-muted-foreground">Insumo</label>
+                <label className="text-sm text-muted-foreground">Producto</label>
                 <p className="mt-1">{selectedEntrega.insumo}</p>
               </div>
               <div>
