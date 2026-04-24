@@ -1,9 +1,9 @@
 -- Normaliza contraseñas de usuarios semilla para login real con bcrypt
-UPDATE usuarios SET password_hash = '$2b$10$daRpprFSigFXU34AXr373.Gvdt0RlgdxpfUQVJfEVryy9GelL44D.' WHERE email = 'admin@grandmas.com';
-UPDATE usuarios SET password_hash = '$2b$10$fCleeax8rmS4IUK0r8EGIeUqiIPwvOFnwtZcEwkSNwyYxPdXTAJgi' WHERE email = 'asesor@grandmas.com';
-UPDATE usuarios SET password_hash = '$2b$10$BqMzPs/8cfg.zBsMFN74BO.DvY6tLytfLC9bTHguSrRS9D/fvHlmC' WHERE email = 'productor@grandmas.com';
-UPDATE usuarios SET password_hash = '$2b$10$0Vp0jalq0.0S/vJGca7clOMzV56viKWQ7gFZ9JDv/EiHUeIMenwCS' WHERE email = 'repartidor@grandmas.com';
-UPDATE usuarios SET password_hash = '$2b$10$eWo/CIcCUCYGPLz6FjfH..KqPEDBbRWOlfKkZNkyEQACGsyC3Wn8O' WHERE email = 'cliente@grandmas.com';
+UPDATE usuarios SET password_hash = '$2b$10$4GJ/dyScA5T.oe5YXNh7ROx56KVYDkdLmQNcOpOGz3v3Hw7/XCHny' WHERE email = 'admin@grandmas.com';
+UPDATE usuarios SET password_hash = '$2b$10$5tQd1StaI0uEPVpKh8pcNO6ERWJuZXVcA8qSVHY3w4cxKAkzs3Qz.' WHERE email = 'asesor@grandmas.com';
+UPDATE usuarios SET password_hash = '$2b$10$vKe0cbnBT4BF7Xsu/.icPefxJGx8LwrYyV924uYvIcLo19/Nt0NX.' WHERE email = 'productor@grandmas.com';
+UPDATE usuarios SET password_hash = '$2b$10$xLA7gMJp3iyU2kAJQaE9auEcqCrtZXpH9t3Vv59IWvH8KACUReYDG' WHERE email = 'repartidor@grandmas.com';
+UPDATE usuarios SET password_hash = '$2b$10$fqDuOAL0nDlyypAENBdxTeY/KDrg0k69JrjVSH8DIgJKyKkkWvh.K' WHERE email = 'cliente@grandmas.com';
 
 -- Asegura unicidad de email en clientes (solo cuando no es null)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clientes_email_unique

@@ -290,11 +290,14 @@ CREATE TABLE produccion (
     id SERIAL PRIMARY KEY,
     numero_produccion VARCHAR(50) UNIQUE NOT NULL,
     producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE RESTRICT,
-    cantidad INTEGER NOT NULL,
+    pedido_id INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
+    cantidad INTEGER NOT NULL CHECK (cantidad > 0),
     fecha DATE NOT NULL,
     responsable VARCHAR(100),
+    tiempo_preparacion_minutos INTEGER DEFAULT 1 CHECK (tiempo_preparacion_minutos > 0),
     estado VARCHAR(30) DEFAULT 'Orden Recibida', -- Orden Recibida, Orden en preparacion, Orden Lista, Cancelada
     notes TEXT,
+    insumos_gastados JSONB DEFAULT '[]'::jsonb,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -463,6 +466,7 @@ CREATE INDEX idx_compras_proveedor_fecha ON compras(proveedor_id, fecha DESC);
 CREATE INDEX idx_insumos_nombre ON insumos(nombre);
 CREATE INDEX idx_entregas_insumos_fecha ON entregas_insumos(fecha DESC);
 CREATE INDEX idx_produccion_fecha ON produccion(fecha DESC);
+CREATE INDEX idx_produccion_pedido ON produccion(pedido_id);
 
 -- Índices para detalles
 CREATE INDEX idx_detalle_pedidos_pedido ON detalle_pedidos(pedido_id);
@@ -508,11 +512,11 @@ INSERT INTO roles (nombre, descripcion, permisos, estado) VALUES
 -- Insertar usuarios del sistema (contraseñas hasheadas con bcrypt)
 -- Contraseñas: admin123, asesor123, productor123, repartidor123, cliente123
 INSERT INTO usuarios (nombre, apellido, tipo_documento, documento, direccion, email, telefono, password_hash, rol_id, estado) VALUES
-('Carlos', 'Rodríguez', 'CC', '1010123456', 'Carrera 50 #20-30, Bogotá', 'admin@grandmas.com', '3001234567', '$2b$10$daRpprFSigFXU34AXr373.Gvdt0RlgdxpfUQVJfEVryy9GelL44D.', 1, 'Activo'),
-('María', 'González', 'CC', '1020234567', 'Calle 45 #12-15, Medellín', 'asesor@grandmas.com', '3009876543', '$2b$10$fCleeax8rmS4IUK0r8EGIeUqiIPwvOFnwtZcEwkSNwyYxPdXTAJgi', 2, 'Activo'),
-('Juan', 'Martínez', 'CC', '1030345678', 'Avenida 6 #8-20, Cali', 'productor@grandmas.com', '3158765432', '$2b$10$BqMzPs/8cfg.zBsMFN74BO.DvY6tLytfLC9bTHguSrRS9D/fvHlmC', 3, 'Activo'),
-('Pedro', 'López', 'CC', '1040456789', 'Calle 10 #5-10, Barranquilla', 'repartidor@grandmas.com', '3207654321', '$2b$10$0Vp0jalq0.0S/vJGca7clOMzV56viKWQ7gFZ9JDv/EiHUeIMenwCS', 4, 'Activo'),
-('Ana', 'Pérez', 'CC', '1050567890', 'Carrera 7 #14-25, Bogotá', 'cliente@grandmas.com', '3156543210', '$2b$10$eWo/CIcCUCYGPLz6FjfH..KqPEDBbRWOlfKkZNkyEQACGsyC3Wn8O', 5, 'Activo');
+('Carlos', 'Rodríguez', 'CC', '1010123456', 'Carrera 50 #20-30, Bogotá', 'admin@grandmas.com', '3001234567', '$2b$10$4GJ/dyScA5T.oe5YXNh7ROx56KVYDkdLmQNcOpOGz3v3Hw7/XCHny', 1, 'Activo'),
+('María', 'González', 'CC', '1020234567', 'Calle 45 #12-15, Medellín', 'asesor@grandmas.com', '3009876543', '$2b$10$5tQd1StaI0uEPVpKh8pcNO6ERWJuZXVcA8qSVHY3w4cxKAkzs3Qz.', 2, 'Activo'),
+('Juan', 'Martínez', 'CC', '1030345678', 'Avenida 6 #8-20, Cali', 'productor@grandmas.com', '3158765432', '$2b$10$vKe0cbnBT4BF7Xsu/.icPefxJGx8LwrYyV924uYvIcLo19/Nt0NX.', 3, 'Activo'),
+('Pedro', 'López', 'CC', '1040456789', 'Calle 10 #5-10, Barranquilla', 'repartidor@grandmas.com', '3207654321', '$2b$10$xLA7gMJp3iyU2kAJQaE9auEcqCrtZXpH9t3Vv59IWvH8KACUReYDG', 4, 'Activo'),
+('Ana', 'Pérez', 'CC', '1050567890', 'Carrera 7 #14-25, Bogotá', 'cliente@grandmas.com', '3156543210', '$2b$10$fqDuOAL0nDlyypAENBdxTeY/KDrg0k69JrjVSH8DIgJKyKkkWvh.K', 5, 'Activo');
 
 -- Insertar categorías de licores colombianos
 INSERT INTO categorias (nombre, descripcion, estado) VALUES

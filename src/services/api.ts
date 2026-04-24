@@ -309,9 +309,11 @@ const normalizeProduccionPayload = async (data: any) => {
     ...data,
     numero_produccion: data?.numero_produccion ?? `PROD-${Date.now()}`,
     producto_id: toNumberOrUndefined(data?.producto_id),
+    pedido_id: toNumberOrUndefined(data?.pedido_id),
     cantidad: toNumberOrZero(data?.cantidad),
     fecha: data?.fecha ?? data?.fechaInicio ?? new Date().toISOString().split('T')[0],
     responsable: data?.responsable ?? data?.operario,
+    tiempo_preparacion_minutos: toNumberOrZero(data?.tiempo_preparacion_minutos),
     estado: data?.estado ?? 'Orden Recibida',
     notes: data?.notes ?? data?.detalle ?? data?.lote ?? null,
   };
@@ -637,11 +639,14 @@ export const produccion = {
   create: (data: {
     numero_produccion: string;
     producto_id: number;
+    pedido_id?: number | null;
     cantidad: number;
     fecha: string;
     responsable?: string;
+    tiempo_preparacion_minutos?: number;
     estado?: string;
     notes?: string;
+    insumos_gastados?: Array<any>;
   }) => normalizeProduccionPayload(data).then((payload) => apiCall('/api/produccion', 'POST', payload)),
   update: async (id: number, data: any) => {
     const merged = await mergeWithCurrent(`/api/produccion/${id}`, data);
