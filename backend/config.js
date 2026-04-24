@@ -33,7 +33,7 @@ const config = {
     database: process.env.DB_DATABASE || process.env.DB_NAME,
   },
   server: {
-    port: process.env.PORT || 5000,
+    port: process.env.PORT || 3002,
     env: process.env.NODE_ENV || 'development',
   },
   auth: {
