@@ -184,10 +184,14 @@ export function Clientes() {
           });
         } catch (error) {
           console.error('Error al eliminar cliente:', error);
+          const errorMessage =
+            error instanceof Error && error.message
+              ? error.message
+              : 'No se pudo eliminar el cliente';
           setAlertState({
             isOpen: true,
             title: 'Error',
-            description: 'No se pudo eliminar el cliente',
+            description: errorMessage,
             onConfirm: () => {}
           });
         }

@@ -76,6 +76,9 @@ const todosLosPermisos = [
   { modulo: 'Producción', permiso: 'Entregar Insumos' },
   { modulo: 'Producción', permiso: 'Ver Producción' },
   { modulo: 'Producción', permiso: 'Registrar Producción' },
+
+  // Cliente
+  { modulo: 'Cliente', permiso: 'Ver Mis Pedidos' },
   
   // Ventas
   { modulo: 'Ventas', permiso: 'Ver Clientes' },

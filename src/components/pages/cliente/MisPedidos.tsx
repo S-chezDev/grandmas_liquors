@@ -7,6 +7,7 @@ import { Edit, Eye, Package, RotateCcw, Search } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
 import { useAlertDialog } from '../../AlertDialog';
 import { clientes as clientesAPI, pedidos as pedidosAPI } from '../../../services/api';
+import { formatDateEsCo } from '../../../utils/date';
 
 interface Pedido {
   id: number;
@@ -124,7 +125,7 @@ export function MisPedidos() {
       label: 'Pedido',
       render: (_: unknown, row: Pedido) => row.numero_pedido || `PED-${row.id}`
     },
-    { key: 'fecha', label: 'Fecha' },
+    { key: 'fecha', label: 'Fecha', render: (fecha: string) => formatDateEsCo(fecha) },
     {
       key: 'total',
       label: 'Total',

@@ -74,9 +74,19 @@ module.exports = {
   },
   delete: async (req, res) => {
     try {
-      await models.Clientes.delete(req.params.id);
+      const deleted = await models.Clientes.delete(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ success: false, message: 'Cliente no encontrado' });
+      }
       res.json({ success: true, message: 'Cliente eliminado exitosamente' });
     } catch (error) {
+      if (error?.code === '23503') {
+        return res.status(409).json({
+          success: false,
+          message:
+            'No se pudo eliminar el cliente por dependencias relacionadas. Contacta al administrador para revisar las relaciones restantes.',
+        });
+      }
       res.status(500).json({ success: false, message: error.message });
     }
   }
