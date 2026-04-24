@@ -4,17 +4,43 @@ import { Modal } from '../../Modal';
 import { Card } from '../../Card';
 import { Button } from '../../Button';
 import { Form, FormField, FormActions } from '../../Form';
-import { Plus, Shield, Check, X } from 'lucide-react';
+import { Plus, Shield, Check, RotateCcw, Search } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
 import { roles as rolesAPI } from '../../../services/api';
 
 interface Role {
   id: string;
-  nombre: 'Administrador' | 'Asesor' | 'Productor' | 'Repartidor' | 'Cliente';
+  nombre: string;
   descripcion: string;
   permisos: string[];
   estado: 'Activo' | 'Inactivo';
   usuarios: number;
+  usuarios_activos?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface RoleAuditEntry {
+  id: number;
+  rol_id: number;
+  accion: 'CREATE' | 'UPDATE' | 'DELETE';
+  usuario_id?: number | null;
+  usuario_nombre?: string | null;
+  usuario_apellido?: string | null;
+  cambios: {
+    before?: any;
+    after?: any;
+    changedFields?: Record<string, { before: any; after: any }>;
+  };
+  created_at: string;
+}
+
+interface StateChangeRequest {
+  roleId: string;
+  roleName: string;
+  currentState: 'Activo' | 'Inactivo';
+  nextState: 'Activo' | 'Inactivo';
+  assignedUsers: number;
 }
 
 // Lista de todos los permisos disponibles en el sistema
@@ -50,6 +76,9 @@ const todosLosPermisos = [
   { modulo: 'Producción', permiso: 'Entregar Insumos' },
   { modulo: 'Producción', permiso: 'Ver Producción' },
   { modulo: 'Producción', permiso: 'Registrar Producción' },
+
+  // Cliente
+  { modulo: 'Cliente', permiso: 'Ver Mis Pedidos' },
   
   // Ventas
   { modulo: 'Ventas', permiso: 'Ver Clientes' },
@@ -66,20 +95,270 @@ const todosLosPermisos = [
   { modulo: 'Ventas', permiso: 'Gestionar Domicilios' },
 ];
 
+const MODULOS_CRITICOS = new Set(['Configuración', 'Usuarios', 'Ventas']);
+
 export function Roles() {
   const [roles, setRoles] = useState<Role[]>([]);
-  const [loading, setLoading] = useState(true);
   const [isPermissionsModalOpen, setIsPermissionsModalOpen] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
+  const [editPermissions, setEditPermissions] = useState<string[]>([]);
   const [formData, setFormData] = useState({
-    nombre: '' as 'Administrador' | 'Asesor' | 'Productor' | 'Repartidor' | 'Cliente',
-    descripcion: ''
+    nombre: '',
+    descripcion: '',
+    estado: 'Activo' as 'Activo' | 'Inactivo'
   });
+  const [createFormData, setCreateFormData] = useState({
+    nombre: '',
+    descripcion: '',
+    estado: 'Activo' as 'Activo' | 'Inactivo'
+  });
+  const [createPermissions, setCreatePermissions] = useState<string[]>([]);
+  const [createNameError, setCreateNameError] = useState('');
+  const [editNameError, setEditNameError] = useState('');
+  const [roleAudit, setRoleAudit] = useState<RoleAuditEntry[]>([]);
+  const [loadingRoleAudit, setLoadingRoleAudit] = useState(false);
+  const [pendingStateChange, setPendingStateChange] = useState<StateChangeRequest | null>(null);
+  const [stateChangeReason, setStateChangeReason] = useState('');
+  const [stateChangeSaving, setStateChangeSaving] = useState(false);
+  const [createModuleFilter, setCreateModuleFilter] = useState('Todos');
+  const [editModuleFilter, setEditModuleFilter] = useState('Todos');
+  const [manageModuleFilter, setManageModuleFilter] = useState('Todos');
+  const [roleSearchQuery, setRoleSearchQuery] = useState('');
+  const [roleFilter, setRoleFilter] = useState('Todos');
+  const [roleStateFilter, setRoleStateFilter] = useState<'Todos' | 'Activo' | 'Inactivo'>('Todos');
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [roleToDelete, setRoleToDelete] = useState<Role | null>(null);
+  const [deleteReason, setDeleteReason] = useState('');
+  const [deleteReasonError, setDeleteReasonError] = useState('');
+  const [deletingRole, setDeletingRole] = useState(false);
   const { showAlert, AlertComponent } = useAlertDialog();
+
+  const resetCreateForm = () => {
+    setCreateFormData({
+      nombre: '',
+      descripcion: '',
+      estado: 'Activo'
+    });
+    setCreatePermissions([]);
+    setCreateNameError('');
+    setCreateModuleFilter('Todos');
+  };
+
+  const resetEditForm = () => {
+    setSelectedRole(null);
+    setFormData({ nombre: '', descripcion: '', estado: 'Activo' });
+    setEditPermissions([]);
+    setEditNameError('');
+    setEditModuleFilter('Todos');
+  };
+
+  const resetRoleFilters = () => {
+    setRoleSearchQuery('');
+    setRoleFilter('Todos');
+    setRoleStateFilter('Todos');
+  };
+
+  const normalizeRoleName = (value: string) => value.trim().toLowerCase();
+
+  const isRoleNameInUse = (name: string, currentRoleId?: string) => {
+    const normalizedName = normalizeRoleName(name);
+
+    if (!normalizedName) return false;
+
+    return roles.some((role) => {
+      if (currentRoleId && role.id === currentRoleId) return false;
+      return normalizeRoleName(role.nombre) === normalizedName;
+    });
+  };
+
+  const validateRoleName = (name: string, currentRoleId?: string) => {
+    const trimmedName = name.trim();
+
+    if (!trimmedName) return 'El nombre del rol es obligatorio.';
+    if (trimmedName.length < 3) return 'El nombre del rol debe tener al menos 3 caracteres.';
+    if (isRoleNameInUse(trimmedName, currentRoleId)) return 'Ya existe un rol con ese nombre.';
+
+    return '';
+  };
+
+  const formatDateTime = (value?: string) => {
+    if (!value) return 'Sin registro';
+
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return 'Sin registro';
+
+    return parsed.toLocaleString('es-CO', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const actionLabelMap: Record<string, string> = {
+    CREATE: 'Creacion',
+    UPDATE: 'Actualizacion',
+    DELETE: 'Eliminacion',
+  };
+
+  const moduloPorPermiso = React.useMemo(
+    () =>
+      new Map<string, string>(
+        todosLosPermisos.map(({ modulo, permiso }) => [permiso, modulo])
+      ),
+    []
+  );
+
+  const getPermissionRemovalError = (permissions: string[], permiso: string) => {
+    if (!permissions.includes(permiso)) return '';
+
+    if (permissions.length <= 1) {
+      return 'Cada rol debe mantener al menos un permiso asignado.';
+    }
+
+    const modulo = moduloPorPermiso.get(permiso);
+    if (!modulo || !MODULOS_CRITICOS.has(modulo)) return '';
+
+    const hasOtherPermissionInModule = permissions.some(
+      (item) => item !== permiso && moduloPorPermiso.get(item) === modulo
+    );
+
+    if (!hasOtherPermissionInModule) {
+      return `No puedes eliminar el unico permiso del modulo critico ${modulo}.`;
+    }
+
+    return '';
+  };
+
+  const validatePermissionsCount = (permissions: string[]) =>
+    permissions.length > 0 ? '' : 'Cada rol debe mantener al menos un permiso asignado.';
+
+  const createNameValidation = validateRoleName(createFormData.nombre);
+  const editNameValidation = validateRoleName(formData.nombre, selectedRole?.id);
+  const createStepOneValid =
+    Boolean(createFormData.nombre.trim()) &&
+    Boolean(createFormData.descripcion.trim()) &&
+    Boolean(createFormData.estado) &&
+    !createNameValidation;
+  const editFormValid =
+    Boolean(formData.nombre.trim()) &&
+    Boolean(formData.descripcion.trim()) &&
+    Boolean(formData.estado) &&
+    !editNameValidation;
+  const createCanSubmit = createStepOneValid && createPermissions.length > 0;
+  const editCanSubmit = editFormValid && editPermissions.length > 0;
+
+  const shouldConfirmCriticalPermission = (permiso: string) => {
+    const modulo = moduloPorPermiso.get(permiso);
+    return Boolean(modulo && MODULOS_CRITICOS.has(modulo));
+  };
+
+  const getCriticalPermissionMessage = (permiso: string, action: 'agregar' | 'quitar') => {
+    const modulo = moduloPorPermiso.get(permiso) || 'Critico';
+    return `Vas a ${action} el permiso "${permiso}" del modulo critico ${modulo}. ¿Deseas continuar?`;
+  };
+
+  const validateDeleteReason = (reason: string) => {
+    const trimmed = reason.trim();
+    if (!trimmed) return 'El motivo de eliminación es obligatorio.';
+    if (trimmed.length < 10) return 'El motivo debe tener al menos 10 caracteres.';
+    if (trimmed.length > 200) return 'El motivo no puede superar los 200 caracteres.';
+    return '';
+  };
+
+  const loadRoleAudit = async (roleId: string) => {
+    try {
+      setLoadingRoleAudit(true);
+      const audit = await rolesAPI.getAuditById(Number(roleId));
+      setRoleAudit(Array.isArray(audit) ? audit : []);
+    } catch (error) {
+      console.error('Error cargando auditoria del rol:', error);
+      setRoleAudit([]);
+    } finally {
+      setLoadingRoleAudit(false);
+    }
+  };
+
+  const toggleCreatePermission = (permiso: string) => {
+    const isSelected = createPermissions.includes(permiso);
+
+    if (isSelected) {
+      const error = getPermissionRemovalError(createPermissions, permiso);
+      if (error) {
+        showAlert({
+          title: 'Regla de permisos',
+          description: error,
+          type: 'warning',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
+        return;
+      }
+    }
+
+    const applyToggle = () => {
+      setCreatePermissions((prev) =>
+        prev.includes(permiso) ? prev.filter((item) => item !== permiso) : [...prev, permiso]
+      );
+    };
+
+    if (shouldConfirmCriticalPermission(permiso)) {
+      showAlert({
+        title: 'Confirmar permiso critico',
+        description: getCriticalPermissionMessage(permiso, isSelected ? 'quitar' : 'agregar'),
+        type: 'warning',
+        confirmText: 'Confirmar',
+        cancelText: 'Cancelar',
+        onConfirm: applyToggle
+      });
+      return;
+    }
+
+    applyToggle();
+  };
+
+  const toggleEditPermission = (permiso: string) => {
+    const isSelected = editPermissions.includes(permiso);
+
+    if (isSelected) {
+      const error = getPermissionRemovalError(editPermissions, permiso);
+      if (error) {
+        showAlert({
+          title: 'Regla de permisos',
+          description: error,
+          type: 'warning',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
+        return;
+      }
+    }
+
+    const applyToggle = () => {
+      setEditPermissions((prev) =>
+        prev.includes(permiso) ? prev.filter((item) => item !== permiso) : [...prev, permiso]
+      );
+    };
+
+    if (shouldConfirmCriticalPermission(permiso)) {
+      showAlert({
+        title: 'Confirmar permiso critico',
+        description: getCriticalPermissionMessage(permiso, isSelected ? 'quitar' : 'agregar'),
+        type: 'warning',
+        confirmText: 'Confirmar',
+        cancelText: 'Cancelar',
+        onConfirm: applyToggle
+      });
+      return;
+    }
+
+    applyToggle();
+  };
 
   useEffect(() => {
     loadRoles();
@@ -87,13 +366,10 @@ export function Roles() {
 
   const loadRoles = async () => {
     try {
-      setLoading(true);
       const data = await rolesAPI.getAll();
       setRoles(data);
     } catch (error) {
       console.error('Error cargando roles:', error);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -114,7 +390,14 @@ export function Roles() {
     { 
       key: 'usuarios', 
       label: 'Usuarios',
-      render: (value: number) => `${value} usuario${value !== 1 ? 's' : ''}`
+      render: (value: number, role: Role) => (
+        <div className="space-y-1">
+          <p>{value} usuario{value !== 1 ? 's' : ''}</p>
+          <p className="text-xs text-muted-foreground">
+            {role.usuarios_activos ?? 0} activo{(role.usuarios_activos ?? 0) !== 1 ? 's' : ''}
+          </p>
+        </div>
+      )
     },
     { 
       key: 'estado', 
@@ -122,8 +405,8 @@ export function Roles() {
       render: (estado: string, role: Role) => (
         <select
           value={estado}
-          onChange={(e) => handleEstadoChange(role.id, e.target.value as 'Activo' | 'Inactivo')}
-          className={`px-3 py-1 rounded-full text-xs border-0 cursor-pointer ${
+          onChange={(e) => handleEstadoChangeRequest(role, e.target.value as 'Activo' | 'Inactivo')}
+          className={`min-h-8 rounded-lg border border-transparent px-2.5 py-1 text-xs font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring ${
             estado === 'Activo' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
           }`}
         >
@@ -131,38 +414,137 @@ export function Roles() {
           <option value="Inactivo">Inactivo</option>
         </select>
       )
+    },
+    {
+      key: 'updated_at',
+      label: 'Ultima modificacion',
+      render: (value: string) => (
+        <span className="text-xs text-muted-foreground">{formatDateTime(value)}</span>
+      )
     }
   ];
 
-  const handleEstadoChange = async (id: string, nuevoEstado: 'Activo' | 'Inactivo') => {
-    try {
-      await rolesAPI.update(id, { estado: nuevoEstado });
-      await loadRoles();
-    } catch (error) {
-      console.error('Error cambiando estado:', error);
+  const handleEstadoChangeRequest = (role: Role, nuevoEstado: 'Activo' | 'Inactivo') => {
+    if (nuevoEstado === role.estado) return;
+
+    const assignedUsers = role.usuarios ?? 0;
+
+    if (nuevoEstado === 'Inactivo' && assignedUsers > 0) {
       showAlert({
-        title: 'Error',
-        description: 'No se pudo cambiar el estado del rol',
+        title: 'No se puede desactivar',
+        description: `El rol ${role.nombre} tiene ${assignedUsers} usuario${assignedUsers !== 1 ? 's' : ''} asignado${assignedUsers !== 1 ? 's' : ''}. Debes reasignar o quitar esos usuarios del rol antes de cambiar su estado.`,
         type: 'warning',
         confirmText: 'Entendido',
         onConfirm: () => {}
       });
+      return;
     }
+
+    setPendingStateChange({
+      roleId: role.id,
+      roleName: role.nombre,
+      currentState: role.estado,
+      nextState: nuevoEstado,
+      assignedUsers
+    });
+    setStateChangeReason('');
+  };
+
+  const handleConfirmStateChange = async () => {
+    if (!pendingStateChange) return;
+
+    const shouldRefreshAudit = selectedRole?.id === pendingStateChange.roleId;
+
+    try {
+      setStateChangeSaving(true);
+      await rolesAPI.update(Number(pendingStateChange.roleId), {
+        estado: pendingStateChange.nextState,
+        motivo: stateChangeReason.trim() || undefined,
+      });
+      await loadRoles();
+
+      const refreshedRole = await rolesAPI.getById(Number(pendingStateChange.roleId));
+      if (refreshedRole) {
+        setSelectedRole((prev) => (prev && prev.id === pendingStateChange.roleId ? refreshedRole : prev));
+      }
+
+      if (shouldRefreshAudit) {
+        await loadRoleAudit(pendingStateChange.roleId);
+      }
+
+      setPendingStateChange(null);
+      setStateChangeReason('');
+
+      showAlert({
+        title: 'Estado actualizado',
+        description: `El rol ${pendingStateChange.roleName} cambió a ${pendingStateChange.nextState} correctamente.${stateChangeReason.trim() ? ` Motivo registrado: ${stateChangeReason.trim()}.` : ''}`,
+        type: 'success',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
+    } catch (error) {
+      console.error('Error cambiando estado:', error);
+      showAlert({
+        title: 'Error',
+        description: (error as any)?.message || 'No se pudo cambiar el estado del rol',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
+    } finally {
+      setStateChangeSaving(false);
+    }
+  };
+
+  const handleCancelStateChange = () => {
+    setPendingStateChange(null);
+    setStateChangeReason('');
   };
 
   const handleCreateRole = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    setCreateNameError(createNameValidation);
+
+    const nombreNormalizado = createFormData.nombre.trim();
+    const nameValidationError = validateRoleName(nombreNormalizado);
+
+    setCreateNameError(nameValidationError);
+
+    if (nameValidationError) {
+      showAlert({
+        title: 'Nombre requerido',
+        description: nameValidationError,
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
+      return;
+    }
+
+    const permissionsValidationError = validatePermissionsCount(createPermissions);
+    if (permissionsValidationError) {
+      showAlert({
+        title: 'Permisos requeridos',
+        description: permissionsValidationError,
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
+      return;
+    }
+
     try {
       const newRole = {
-        nombre: formData.nombre,
-        descripcion: formData.descripcion,
-        permisos: [],
-        estado: 'Activo'
+        nombre: nombreNormalizado,
+        descripcion: createFormData.descripcion,
+        permisos: createPermissions,
+        estado: createFormData.estado
       };
       await rolesAPI.create(newRole);
       await loadRoles();
       setIsCreateModalOpen(false);
-      setFormData({ nombre: '' as any, descripcion: '' });
+      resetCreateForm();
       showAlert({
         title: 'Éxito',
         description: 'Rol creado correctamente',
@@ -185,15 +567,49 @@ export function Roles() {
   const handleUpdateRole = async (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedRole) {
+      setEditNameError(editNameValidation);
+
+      const nombreNormalizado = formData.nombre.trim();
+      const nameValidationError = validateRoleName(nombreNormalizado, selectedRole.id);
+
+      setEditNameError(nameValidationError);
+
+      if (nameValidationError) {
+        showAlert({
+          title: 'Nombre requerido',
+          description: nameValidationError,
+          type: 'warning',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
+        return;
+      }
+
+      const permissionsValidationError = validatePermissionsCount(editPermissions);
+      if (permissionsValidationError) {
+        showAlert({
+          title: 'Permisos requeridos',
+          description: permissionsValidationError,
+          type: 'warning',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
+        return;
+      }
+
       try {
-        await rolesAPI.update(selectedRole.id, {
-          nombre: formData.nombre,
-          descripcion: formData.descripcion
+        await rolesAPI.update(Number(selectedRole.id), {
+          nombre: nombreNormalizado,
+          descripcion: formData.descripcion,
+          estado: formData.estado,
+          permisos: editPermissions,
         });
         await loadRoles();
         setIsEditModalOpen(false);
         setSelectedRole(null);
-        setFormData({ nombre: '' as any, descripcion: '' });
+        setFormData({ nombre: '', descripcion: '', estado: 'Activo' });
+        setEditPermissions([]);
+        setEditNameError('');
         showAlert({
           title: 'Éxito',
           description: 'Rol actualizado correctamente',
@@ -215,8 +631,23 @@ export function Roles() {
   };
 
   const handleEdit = (role: Role) => {
+    if (role.estado !== 'Activo') {
+      showAlert({
+        title: 'Rol desactivado',
+        description: 'No puedes editar un rol desactivado. Actívalo primero para modificarlo.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
+      return;
+    }
+
     setSelectedRole(role);
-    setFormData({ nombre: role.nombre, descripcion: role.descripcion });
+    setFormData({ nombre: role.nombre, descripcion: role.descripcion, estado: role.estado || 'Activo' });
+    setEditPermissions(Array.isArray(role.permisos) ? role.permisos : []);
+    setEditNameError('');
+    setEditModuleFilter('Todos');
+    loadRoleAudit(role.id);
     setIsEditModalOpen(true);
   };
 
@@ -231,53 +662,119 @@ export function Roles() {
       });
       return;
     }
-    showAlert({
-      title: '¿Eliminar rol?',
-      description: `¿Está seguro de eliminar el rol ${role.nombre}?`,
-      type: 'danger',
-      confirmText: 'Eliminar',
-      cancelText: 'Cancelar',
-      onConfirm: async () => {
-        try {
-          await rolesAPI.delete(role.id);
-          await loadRoles();
-        } catch (error) {
-          console.error('Error eliminando rol:', error);
-          showAlert({
-            title: 'Error',
-            description: 'No se pudo eliminar el rol',
-            type: 'warning',
-            confirmText: 'Entendido',
-            onConfirm: () => {}
-          });
-        }
-      }
-    });
+
+    setRoleToDelete(role);
+    setDeleteReason('');
+    setDeleteReasonError('');
+    setIsDeleteModalOpen(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!roleToDelete) return;
+
+    const reasonError = validateDeleteReason(deleteReason);
+    setDeleteReasonError(reasonError);
+    if (reasonError) return;
+
+    try {
+      setDeletingRole(true);
+      await rolesAPI.delete(Number(roleToDelete.id), { motivo: deleteReason.trim() });
+      await loadRoles();
+
+      setIsDeleteModalOpen(false);
+      setRoleToDelete(null);
+      setDeleteReason('');
+      setDeleteReasonError('');
+
+      showAlert({
+        title: 'Rol eliminado',
+        description: `El rol ${roleToDelete.nombre} fue eliminado correctamente. Motivo registrado: ${deleteReason.trim()}.`,
+        type: 'success',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
+    } catch (error) {
+      console.error('Error eliminando rol:', error);
+      showAlert({
+        title: 'Error al eliminar',
+        description: (error as any)?.message || 'No se pudo eliminar el rol',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
+    } finally {
+      setDeletingRole(false);
+    }
   };
 
   const handleView = (role: Role) => {
     setSelectedRole(role);
+    loadRoleAudit(role.id);
     setIsDetailModalOpen(true);
   };
 
   const handleManagePermissions = (role: Role) => {
     setSelectedRole(role);
     setSelectedPermissions(role.permisos);
+    setManageModuleFilter('Todos');
+    loadRoleAudit(role.id);
     setIsPermissionsModalOpen(true);
   };
 
   const togglePermission = (permiso: string) => {
-    setSelectedPermissions(prev =>
-      prev.includes(permiso)
-        ? prev.filter(p => p !== permiso)
-        : [...prev, permiso]
-    );
+    const isSelected = selectedPermissions.includes(permiso);
+
+    if (isSelected) {
+      const error = getPermissionRemovalError(selectedPermissions, permiso);
+      if (error) {
+        showAlert({
+          title: 'Regla de permisos',
+          description: error,
+          type: 'warning',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
+        return;
+      }
+    }
+
+    const applyToggle = () => {
+      setSelectedPermissions((prev) =>
+        prev.includes(permiso) ? prev.filter((item) => item !== permiso) : [...prev, permiso]
+      );
+    };
+
+    if (shouldConfirmCriticalPermission(permiso)) {
+      showAlert({
+        title: 'Confirmar permiso critico',
+        description: getCriticalPermissionMessage(permiso, isSelected ? 'quitar' : 'agregar'),
+        type: 'warning',
+        confirmText: 'Confirmar',
+        cancelText: 'Cancelar',
+        onConfirm: applyToggle
+      });
+      return;
+    }
+
+    applyToggle();
   };
 
   const handleSavePermissions = async () => {
     if (selectedRole) {
+      const permissionsValidationError = validatePermissionsCount(selectedPermissions);
+      if (permissionsValidationError) {
+        showAlert({
+          title: 'Permisos requeridos',
+          description: permissionsValidationError,
+          type: 'warning',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
+        return;
+      }
+
       try {
-        await rolesAPI.update(selectedRole.id, { permisos: selectedPermissions });
+        await rolesAPI.update(Number(selectedRole.id), { permisos: selectedPermissions });
         await loadRoles();
         setIsPermissionsModalOpen(false);
         showAlert({
@@ -301,16 +798,69 @@ export function Roles() {
   };
 
   // Agrupar permisos por módulo
-  const permisosPorModulo = todosLosPermisos.reduce((acc, { modulo, permiso }) => {
-    if (!acc[modulo]) acc[modulo] = [];
-    acc[modulo].push(permiso);
-    return acc;
-  }, {} as { [key: string]: string[] });
+  const permisosPorModulo = React.useMemo(() => {
+    const grouped = todosLosPermisos.reduce((acc, { modulo, permiso }) => {
+      if (!acc[modulo]) acc[modulo] = [];
+      acc[modulo].push(permiso);
+      return acc;
+    }, {} as { [key: string]: string[] });
+
+    Object.keys(grouped).forEach((modulo) => {
+      grouped[modulo] = [...grouped[modulo]].sort((a, b) =>
+        a.localeCompare(b, 'es', { sensitivity: 'base' })
+      );
+    });
+
+    return grouped;
+  }, []);
+
+  const modulosOrdenados = React.useMemo(
+    () =>
+      Object.keys(permisosPorModulo).sort((a, b) =>
+        a.localeCompare(b, 'es', { sensitivity: 'base' })
+      ),
+    [permisosPorModulo]
+  );
+
+  const getFilteredModuleEntries = (moduleFilter: string) =>
+    modulosOrdenados
+      .filter((modulo) => moduleFilter === 'Todos' || modulo === moduleFilter)
+      .map((modulo) => [modulo, permisosPorModulo[modulo]] as const);
+
+  const createModuleEntries = getFilteredModuleEntries(createModuleFilter);
+  const editModuleEntries = getFilteredModuleEntries(editModuleFilter);
+  const manageModuleEntries = getFilteredModuleEntries(manageModuleFilter);
+
+  const roleFilterOptions = React.useMemo(() => {
+    const uniqueRoles = Array.from(new Set(roles.map((role) => role.nombre))).sort((left, right) =>
+      left.localeCompare(right, 'es', { sensitivity: 'base' })
+    );
+
+    return ['Todos', ...uniqueRoles];
+  }, [roles]);
+
+  const filteredRoles = React.useMemo(() => {
+    const normalizedQuery = roleSearchQuery.trim().toLowerCase();
+
+    return roles.filter((role) => {
+      const matchesSearch =
+        !normalizedQuery ||
+        role.nombre.toLowerCase().includes(normalizedQuery) ||
+        role.descripcion.toLowerCase().includes(normalizedQuery) ||
+        role.estado.toLowerCase().includes(normalizedQuery);
+      const matchesRole = roleFilter === 'Todos' || role.nombre === roleFilter;
+      const matchesState = roleStateFilter === 'Todos' || role.estado === roleStateFilter;
+      return matchesSearch && matchesRole && matchesState;
+    });
+  }, [roles, roleSearchQuery, roleFilter, roleStateFilter]);
+
+  const createHasErrors = !createCanSubmit;
+  const editHasErrors = !editCanSubmit;
 
   return (
     <div className="space-y-6">
       {AlertComponent}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2>Gestión de Roles</h2>
           <p className="text-muted-foreground">Administra los roles y sus permisos en el sistema</p>
@@ -320,9 +870,56 @@ export function Roles() {
         </Button>
       </div>
 
+      <div className="rounded-lg border border-border bg-white p-4 space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <input
+              type="text"
+              value={roleSearchQuery}
+              onChange={(event) => setRoleSearchQuery(event.target.value)}
+              placeholder="Buscar rol por nombre, descripción o estado..."
+              className="w-full pl-10 pr-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            icon={<RotateCcw className="w-4 h-4" />}
+            onClick={resetRoleFilters}
+            disabled={!roleSearchQuery.trim() && roleFilter === 'Todos' && roleStateFilter === 'Todos'}
+          >
+            Limpiar filtros
+          </Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filtrar por:</span>
+          <select
+            value={roleStateFilter}
+            onChange={(event) => setRoleStateFilter(event.target.value as 'Todos' | 'Activo' | 'Inactivo')}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="Todos">Estado (todos)</option>
+            <option value="Activo">Activo</option>
+            <option value="Inactivo">Inactivo</option>
+          </select>
+          <select
+            value={roleFilter}
+            onChange={(event) => setRoleFilter(event.target.value)}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            {roleFilterOptions.map((role) => (
+              <option key={role} value={role}>
+                {role === 'Todos' ? 'Rol (todos)' : role}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
       <DataTable
         columns={columns}
-        data={roles}
+        data={filteredRoles}
         actions={[
           commonActions.view(handleView),
           {
@@ -334,8 +931,6 @@ export function Roles() {
           commonActions.edit(handleEdit),
           commonActions.delete(handleDelete)
         ]}
-        onSearch={(query) => console.log('Searching:', query)}
-        searchPlaceholder="Buscar roles..."
       />
 
       {/* Modal de Crear Rol */}
@@ -343,53 +938,266 @@ export function Roles() {
         isOpen={isCreateModalOpen}
         onClose={() => {
           setIsCreateModalOpen(false);
-          setFormData({ nombre: '' as any, descripcion: '' });
+          resetCreateForm();
         }}
         title="Crear Nuevo Rol"
-        size="md"
-      >
-        <Form onSubmit={handleCreateRole}>
-          <FormField
-            label="Nombre del Rol"
-            name="nombre"
-            type="select"
-            value={formData.nombre}
-            onChange={(value) => setFormData({ ...formData, nombre: value as any })}
-            options={[
-              { value: 'Administrador', label: 'Administrador' },
-              { value: 'Asesor', label: 'Asesor' },
-              { value: 'Productor', label: 'Productor' },
-              { value: 'Repartidor', label: 'Repartidor' },
-              { value: 'Cliente', label: 'Cliente' }
-            ]}
-            required
-          />
-          
-          <FormField
-            label="Descripción"
-            name="descripcion"
-            type="textarea"
-            value={formData.descripcion}
-            onChange={(value) => setFormData({ ...formData, descripcion: value as string })}
-            rows={3}
-            required
-          />
-          
+        size="lg"
+        contentClassName="!p-2.5 sm:!p-3"
+        footer={
           <FormActions>
-            <Button 
-              variant="outline" 
+            <Button
+              type="button"
+              variant="outline"
               onClick={() => {
                 setIsCreateModalOpen(false);
-                setFormData({ nombre: '' as any, descripcion: '' });
+                resetCreateForm();
               }}
             >
               Cancelar
             </Button>
-            <Button type="submit">
+            <Button
+              type="submit"
+              form="create-role-form"
+              disabled={createHasErrors}
+            >
               Crear Rol
             </Button>
           </FormActions>
+        }
+      >
+        <Form
+          id="create-role-form"
+          className="space-y-3"
+          onSubmit={handleCreateRole}
+          noValidate
+          style={{ zoom: 0.9 }}
+        >
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(180px,1fr)]">
+            <FormField
+              label="Nombre del Rol"
+              name="nombre"
+              value={createFormData.nombre}
+              onChange={(value) => {
+                const nextName = value as string;
+                setCreateFormData((prev) => ({ ...prev, nombre: nextName }));
+                setCreateNameError(validateRoleName(nextName));
+              }}
+              placeholder="Ej: Supervisor de bodega"
+              required
+            />
+
+            <FormField
+              label="Estado"
+              name="estado"
+              type="select"
+              value={createFormData.estado}
+              onChange={(value) => setCreateFormData((prev) => ({ ...prev, estado: value as 'Activo' | 'Inactivo' }))}
+              options={[
+                { value: 'Activo', label: 'Activo' },
+                { value: 'Inactivo', label: 'Inactivo' }
+              ]}
+              showEmptyOption={false}
+              required
+            />
+          </div>
+
+          <FormField
+            label="Descripción"
+            name="descripcion"
+            type="textarea"
+            value={createFormData.descripcion}
+            onChange={(value) => setCreateFormData((prev) => ({ ...prev, descripcion: value as string }))}
+            rows={3}
+            required
+          />
+
+          {createNameError ? <p className="text-sm text-destructive">{createNameError}</p> : null}
+
+          <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+            <span>Permisos seleccionados: <strong>{createPermissions.length}</strong> de {todosLosPermisos.length}</span>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                onClick={() => setCreatePermissions(todosLosPermisos.map((p) => p.permiso))}
+              >
+                Seleccionar Todos
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                onClick={() => setCreatePermissions([])}
+              >
+                Quitar Todos
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">Filtrar por módulo</p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={createModuleFilter === 'Todos' ? 'primary' : 'outline'}
+                onClick={() => setCreateModuleFilter('Todos')}
+              >
+                Todos
+              </Button>
+              {modulosOrdenados.map((modulo) => (
+                <Button
+                  key={modulo}
+                  type="button"
+                  size="sm"
+                  variant={createModuleFilter === modulo ? 'primary' : 'outline'}
+                  onClick={() => setCreateModuleFilter(modulo)}
+                >
+                  {modulo}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-4 max-h-96 overflow-y-auto">
+            {createModuleEntries.map(([modulo, permisos]) => (
+              <Card key={modulo}>
+                <h4 className="mb-3 text-primary">{modulo}</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {permisos.map((permiso) => {
+                    const isSelected = createPermissions.includes(permiso);
+                    return (
+                      <button
+                        key={permiso}
+                        type="button"
+                        onClick={() => toggleCreatePermission(permiso)}
+                        className={`flex items-center gap-3 p-3 rounded-lg border-2 transition-all ${
+                          isSelected
+                            ? 'border-primary bg-primary/5'
+                            : 'border-border hover:border-primary/50'
+                        }`}
+                      >
+                        <div className={`flex items-center justify-center w-5 h-5 rounded border-2 ${
+                          isSelected
+                            ? 'bg-primary border-primary'
+                            : 'border-muted-foreground'
+                        }`}>
+                          {isSelected && <Check className="w-3 h-3 text-white" />}
+                        </div>
+                        <span className={isSelected ? 'text-foreground' : 'text-muted-foreground'}>
+                          {permiso}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </Card>
+            ))}
+          </div>
         </Form>
+      </Modal>
+
+      {/* Modal de Cambio de Estado */}
+      <Modal
+        isOpen={Boolean(pendingStateChange)}
+        onClose={handleCancelStateChange}
+        title={`Confirmar cambio de estado - ${pendingStateChange?.roleName}`}
+        size="md"
+        footer={
+          pendingStateChange ? (
+            <FormActions>
+              <Button type="button" variant="outline" onClick={handleCancelStateChange} disabled={stateChangeSaving}>
+                Cancelar
+              </Button>
+              <Button type="button" onClick={handleConfirmStateChange} disabled={stateChangeSaving}>
+                Confirmar
+              </Button>
+            </FormActions>
+          ) : null
+        }
+      >
+        {pendingStateChange && (
+          <div className="space-y-4">
+            <div className="p-4 bg-accent/50 rounded-lg space-y-2">
+              <p className="text-sm text-muted-foreground">
+                Vas a cambiar el estado de <strong>{pendingStateChange.roleName}</strong> de{' '}
+                <strong>{pendingStateChange.currentState}</strong> a <strong>{pendingStateChange.nextState}</strong>.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Usuarios asignados: <strong>{pendingStateChange.assignedUsers}</strong>
+              </p>
+            </div>
+
+            <FormField
+              label="Motivo opcional"
+              name="motivo-estado"
+              type="textarea"
+              value={stateChangeReason}
+              onChange={(value) => setStateChangeReason(value as string)}
+              placeholder="Ej: reorganizacion del equipo, cambio temporal, ajuste operativo"
+              rows={3}
+            />
+
+          </div>
+        )}
+      </Modal>
+
+      {/* Modal de Eliminación de Rol */}
+      <Modal
+        isOpen={isDeleteModalOpen}
+        onClose={() => {
+          setIsDeleteModalOpen(false);
+          setRoleToDelete(null);
+          setDeleteReason('');
+          setDeleteReasonError('');
+        }}
+        title={`Eliminar Rol - ${roleToDelete?.nombre}`}
+        size="md"
+        footer={
+          <FormActions>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setIsDeleteModalOpen(false);
+                setRoleToDelete(null);
+                setDeleteReason('');
+                setDeleteReasonError('');
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button type="button" variant="destructive" onClick={handleConfirmDelete} disabled={deletingRole}>
+              Confirmar eliminación
+            </Button>
+          </FormActions>
+        }
+      >
+        <div className="space-y-4">
+          <div className="p-4 bg-destructive/10 rounded-lg border border-destructive/30">
+            <p className="text-sm text-destructive">
+              Advertencia: esta acción eliminará el rol de forma permanente. Verifica que realmente deseas continuar.
+            </p>
+          </div>
+
+          <FormField
+            label="Motivo eliminación"
+            name="motivo-eliminacion"
+            type="textarea"
+            value={deleteReason}
+            onChange={(value) => {
+              const nextReason = value as string;
+              setDeleteReason(nextReason);
+              setDeleteReasonError(validateDeleteReason(nextReason));
+            }}
+            placeholder="Describe por qué se elimina este rol (10 a 200 caracteres)"
+            rows={4}
+            required
+          />
+          {deleteReasonError ? <p className="text-sm text-destructive">{deleteReasonError}</p> : null}
+
+        </div>
       </Modal>
 
       {/* Modal de Editar Rol */}
@@ -397,60 +1205,165 @@ export function Roles() {
         isOpen={isEditModalOpen}
         onClose={() => {
           setIsEditModalOpen(false);
-          setSelectedRole(null);
-          setFormData({ nombre: '' as any, descripcion: '' });
+          resetEditForm();
         }}
         title={`Editar Rol - ${selectedRole?.nombre}`}
-        size="md"
+        size="lg"
+        contentClassName="!p-2.5 sm:!p-3"
+        footer={
+          <FormActions>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setIsEditModalOpen(false);
+                resetEditForm();
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button type="submit" form="edit-role-form" disabled={editHasErrors}>
+              Guardar Cambios
+            </Button>
+          </FormActions>
+        }
       >
-        <Form onSubmit={handleUpdateRole}>
-          <FormField
-            label="Nombre del Rol"
-            name="nombre"
-            type="select"
-            value={formData.nombre}
-            onChange={(value) => setFormData({ ...formData, nombre: value as any })}
-            options={[
-              { value: 'Administrador', label: 'Administrador' },
-              { value: 'Asesor', label: 'Asesor' },
-              { value: 'Productor', label: 'Productor' },
-              { value: 'Repartidor', label: 'Repartidor' },
-              { value: 'Cliente', label: 'Cliente' }
-            ]}
-            required
-          />
-          
+        <Form
+          id="edit-role-form"
+          className="space-y-3"
+          onSubmit={handleUpdateRole}
+          style={{ zoom: 0.9 }}
+        >
+
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(180px,1fr)]">
+            <FormField
+              label="Nombre del Rol"
+              name="nombre"
+              type="text"
+              value={formData.nombre}
+              onChange={(value) => {
+                const nextName = value as string;
+                setFormData((prev) => ({ ...prev, nombre: nextName }));
+                setEditNameError(validateRoleName(nextName, selectedRole?.id));
+              }}
+              placeholder="Ej: Supervisor de bodega"
+              required
+            />
+
+            <FormField
+              label="Estado"
+              name="estado"
+              type="select"
+              value={formData.estado}
+              onChange={(value) => setFormData((prev) => ({ ...prev, estado: value as 'Activo' | 'Inactivo' }))}
+              options={[
+                { value: 'Activo', label: 'Activo' },
+                { value: 'Inactivo', label: 'Inactivo' }
+              ]}
+              required
+            />
+          </div>
+
           <FormField
             label="Descripción"
             name="descripcion"
             type="textarea"
             value={formData.descripcion}
-            onChange={(value) => setFormData({ ...formData, descripcion: value as string })}
-            rows={3}
+            onChange={(value) => setFormData((prev) => ({ ...prev, descripcion: value as string }))}
+            rows={4}
             required
           />
-          
-          <FormActions>
-            <Button 
-              variant="outline" 
-              onClick={() => {
-                setIsEditModalOpen(false);
-                setSelectedRole(null);
-                setFormData({ nombre: '' as any, descripcion: '' });
-              }}
-            >
-              Cancelar
-            </Button>
-            <Button type="submit">
-              Guardar Cambios
-            </Button>
-          </FormActions>
+
+          {editNameError ? <p className="text-sm text-destructive">{editNameError}</p> : null}
+
+          <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+            <span>Permisos seleccionados: <strong>{editPermissions.length}</strong> de {todosLosPermisos.length}</span>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                onClick={() => setEditPermissions(todosLosPermisos.map((p) => p.permiso))}
+              >
+                Seleccionar Todos
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                onClick={() => setEditPermissions([])}
+              >
+                Quitar Todos
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">Filtrar por módulo</p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={editModuleFilter === 'Todos' ? 'primary' : 'outline'}
+                onClick={() => setEditModuleFilter('Todos')}
+              >
+                Todos
+              </Button>
+              {modulosOrdenados.map((modulo) => (
+                <Button
+                  key={modulo}
+                  type="button"
+                  size="sm"
+                  variant={editModuleFilter === modulo ? 'primary' : 'outline'}
+                  onClick={() => setEditModuleFilter(modulo)}
+                >
+                  {modulo}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-4 max-h-96 overflow-y-auto">
+            {editModuleEntries.map(([modulo, permisos]) => (
+              <Card key={modulo}>
+                <h4 className="mb-3 text-primary">{modulo}</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {permisos.map((permiso) => {
+                    const isSelected = editPermissions.includes(permiso);
+                    return (
+                      <button
+                        key={permiso}
+                        type="button"
+                        onClick={() => toggleEditPermission(permiso)}
+                        className={`flex items-center gap-3 p-3 rounded-lg border-2 transition-all ${
+                          isSelected
+                            ? 'border-primary bg-primary/5'
+                            : 'border-border hover:border-primary/50'
+                        }`}
+                      >
+                        <div className={`flex items-center justify-center w-5 h-5 rounded border-2 ${
+                          isSelected
+                            ? 'bg-primary border-primary'
+                            : 'border-muted-foreground'
+                        }`}>
+                          {isSelected && <Check className="w-3 h-3 text-white" />}
+                        </div>
+                        <span className={isSelected ? 'text-foreground' : 'text-muted-foreground'}>
+                          {permiso}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </Card>
+            ))}
+          </div>
         </Form>
       </Modal>
 
       {/* Modal de Detalle */}
-      <Modal 
-        isOpen={isDetailModalOpen} 
+      <Modal
+        isOpen={isDetailModalOpen}
         onClose={() => {
           setIsDetailModalOpen(false);
           setSelectedRole(null);
@@ -487,6 +1400,10 @@ export function Roles() {
                   {selectedRole.permisos.length} permisos
                 </span>
               </div>
+              <div className="col-span-2">
+                <p className="text-sm text-muted-foreground">Ultima modificacion</p>
+                <p>{formatDateTime(selectedRole.updated_at)}</p>
+              </div>
             </div>
 
             <div className="p-4 bg-accent/50 rounded-lg">
@@ -505,9 +1422,34 @@ export function Roles() {
               )}
             </div>
 
+            <div className="p-4 bg-accent/50 rounded-lg">
+              <p className="text-sm text-muted-foreground mb-3">Auditoria de cambios</p>
+              {loadingRoleAudit ? (
+                <p className="text-sm text-muted-foreground">Cargando auditoria...</p>
+              ) : roleAudit.length === 0 ? (
+                <p className="text-sm text-muted-foreground italic">No hay cambios registrados para este rol.</p>
+              ) : (
+                <div className="space-y-2 max-h-56 overflow-y-auto">
+                  {roleAudit.map((entry) => (
+                    <div key={entry.id} className="p-3 bg-background rounded border text-sm">
+                      <div className="flex items-center justify-between">
+                        <p className="font-medium">{actionLabelMap[entry.accion] || entry.accion}</p>
+                        <span className="text-xs text-muted-foreground">{formatDateTime(entry.created_at)}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {entry.usuario_nombre || entry.usuario_apellido
+                          ? `Usuario: ${entry.usuario_nombre || ''} ${entry.usuario_apellido || ''}`.trim()
+                          : 'Usuario: Sistema'}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="flex justify-end pt-4 border-t">
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 onClick={() => {
                   setIsDetailModalOpen(false);
                   setSelectedRole(null);
@@ -555,8 +1497,33 @@ export function Roles() {
             </div>
           </div>
 
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">Filtrar por módulo</p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={manageModuleFilter === 'Todos' ? 'primary' : 'outline'}
+                onClick={() => setManageModuleFilter('Todos')}
+              >
+                Todos
+              </Button>
+              {modulosOrdenados.map((modulo) => (
+                <Button
+                  key={modulo}
+                  type="button"
+                  size="sm"
+                  variant={manageModuleFilter === modulo ? 'primary' : 'outline'}
+                  onClick={() => setManageModuleFilter(modulo)}
+                >
+                  {modulo}
+                </Button>
+              ))}
+            </div>
+          </div>
+
           <div className="space-y-4 max-h-96 overflow-y-auto">
-            {Object.entries(permisosPorModulo).map(([modulo, permisos]) => (
+            {manageModuleEntries.map(([modulo, permisos]) => (
               <Card key={modulo}>
                 <h4 className="mb-3 text-primary">{modulo}</h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -594,7 +1561,7 @@ export function Roles() {
             <Button variant="outline" onClick={() => setIsPermissionsModalOpen(false)} className="flex-1">
               Cancelar
             </Button>
-            <Button onClick={handleSavePermissions} className="flex-1">
+            <Button onClick={handleSavePermissions} className="flex-1" disabled={selectedPermissions.length === 0}>
               Guardar Permisos
             </Button>
           </div>

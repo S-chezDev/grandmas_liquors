@@ -19,7 +19,6 @@ import {
   ClipboardList,
   Home,
   Settings,
-  Store,
   User,
   KeyRound
 } from 'lucide-react';
@@ -48,8 +47,8 @@ const menuItems: MenuItem[] = [
     name: 'Inicio',
     icon: <Home className="w-5 h-5" />,
     path: '/',
-    module: 'dashboard',
-    roles: ['Administrador', 'Asesor', 'Productor', 'Repartidor']
+    module: 'home',
+    roles: ['Administrador', 'Asesor', 'Productor', 'Repartidor', 'Cliente']
   },
   {
     name: 'Dashboard',
@@ -73,10 +72,10 @@ const menuItems: MenuItem[] = [
     module: 'compras',
     roles: ['Administrador', 'Asesor', 'Productor'],
     subItems: [
-      { name: 'Proveedores', icon: <Building2 className="w-4 h-4" />, path: '/compras/proveedores', module: 'compras' },
-      { name: 'Compras', icon: <ShoppingCart className="w-4 h-4" />, path: '/compras/compras', module: 'compras' },
+      { name: 'Proveedores', icon: <Building2 className="w-4 h-4" />, path: '/compras/proveedores', module: 'compras/proveedores' },
+      { name: 'Compras', icon: <ShoppingCart className="w-4 h-4" />, path: '/compras/compras', module: 'compras/compras' },
       { name: 'Productos', icon: <Package className="w-4 h-4" />, path: '/compras/productos', module: 'compras/productos' },
-      { name: 'Categorías de Producto', icon: <Tags className="w-4 h-4" />, path: '/compras/categorias', module: 'compras' }
+      { name: 'Categorías de Producto', icon: <Tags className="w-4 h-4" />, path: '/compras/categorias', module: 'compras/categorias' }
     ]
   },
   {
@@ -85,8 +84,8 @@ const menuItems: MenuItem[] = [
     module: 'produccion',
     roles: ['Administrador', 'Productor'],
     subItems: [
-      { name: 'Entrega de Insumos', icon: <Truck className="w-4 h-4" />, path: '/produccion/insumos', module: 'produccion' },
-      { name: 'Producción', icon: <Boxes className="w-4 h-4" />, path: '/produccion/produccion', module: 'produccion' }
+      { name: 'Entrega de Insumos', icon: <Truck className="w-4 h-4" />, path: '/produccion/insumos', module: 'produccion/insumos' },
+      { name: 'Producción', icon: <Boxes className="w-4 h-4" />, path: '/produccion/produccion', module: 'produccion/produccion' }
     ]
   },
   {
@@ -95,33 +94,26 @@ const menuItems: MenuItem[] = [
     module: 'ventas',
     roles: ['Administrador', 'Asesor', 'Repartidor'],
     subItems: [
-      { name: 'Clientes', icon: <UserCircle className="w-4 h-4" />, path: '/ventas/clientes', module: 'ventas' },
-      { name: 'Ventas', icon: <Receipt className="w-4 h-4" />, path: '/ventas/ventas', module: 'ventas' },
-      { name: 'Abonos', icon: <CreditCard className="w-4 h-4" />, path: '/ventas/abonos', module: 'ventas' },
+      { name: 'Clientes', icon: <UserCircle className="w-4 h-4" />, path: '/ventas/clientes', module: 'ventas/clientes' },
+      { name: 'Ventas', icon: <Receipt className="w-4 h-4" />, path: '/ventas/ventas', module: 'ventas/ventas' },
+      { name: 'Abonos', icon: <CreditCard className="w-4 h-4" />, path: '/ventas/abonos', module: 'ventas/abonos' },
       { name: 'Pedidos', icon: <ClipboardList className="w-4 h-4" />, path: '/ventas/pedidos', module: 'ventas/pedidos' },
       { name: 'Domicilios', icon: <Truck className="w-4 h-4" />, path: '/ventas/domicilios', module: 'ventas/domicilios' }
     ]
   },
   // Menú exclusivo para Cliente
   {
-    name: 'Tienda',
-    icon: <Store className="w-5 h-5" />,
-    path: '/cliente/tienda',
-    module: 'cliente',
-    roles: ['Cliente']
-  },
-  {
     name: 'Mis Pedidos',
     icon: <ClipboardList className="w-5 h-5" />,
     path: '/cliente/pedidos',
-    module: 'cliente',
+    module: 'cliente/pedidos',
     roles: ['Cliente']
   },
   {
     name: 'Mi Perfil',
     icon: <User className="w-5 h-5" />,
     path: '/cliente/perfil',
-    module: 'cliente',
+    module: 'cliente/perfil',
     roles: ['Cliente']
   }
 ];
@@ -242,23 +234,30 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
     });
   };
 
-  // Filtrar los items del menú según los permisos del usuario y rol
-  const filteredMenuItems = menuItems.filter(item => {
-    // Si el item especifica roles, verificar que el usuario tenga uno de ellos
-    if (item.roles && user && !item.roles.includes(user.rol)) {
-      return false;
-    }
-    
-    if (item.module && !hasPermission(item.module)) {
-      return false;
-    }
-    if (item.subItems) {
-      // Filtrar sub-items según permisos
-      item.subItems = item.subItems.filter(subItem => hasPermission(subItem.module));
-      return item.subItems.length > 0;
-    }
-    return true;
-  });
+  // Filtrar los items del menú según permisos reales del rol en la BD.
+  const canViewPath = (path?: string) => {
+    if (!path) return false;
+    if (path === '/') return Boolean(user);
+    return hasPermission(path.slice(1));
+  };
+
+  const filteredMenuItems = menuItems
+    .map((item) => {
+      const subItems = item.subItems?.filter((subItem) => canViewPath(subItem.path)) ?? [];
+      return {
+        ...item,
+        subItems: subItems.length > 0 ? subItems : undefined,
+      };
+    })
+    .filter((item) => {
+      if (!user) return false;
+
+      if (item.path) {
+        return canViewPath(item.path);
+      }
+
+      return Boolean(item.subItems?.length);
+    });
 
   return (
     <div 
@@ -348,7 +347,7 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
       </nav>
 
       {/* Configuration at bottom - Para Administrador con submenú */}
-      {user && user.rol === 'Administrador' && configurationItem.roles?.includes(user.rol) && hasPermission(configurationItem.module!) && (
+      {user && (user.rol === 'Administrador' || hasPermission('configuracion/roles')) && (
         <div className="p-2 border-t border-sidebar-border">
           <div className="mb-1">
             <button
@@ -393,7 +392,7 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
       )}
 
       {/* Configuration at bottom - Para otros roles (simple) */}
-      {user && user.rol !== 'Administrador' && simpleConfigurationItem.roles?.includes(user.rol) && (
+      {user && user.rol !== 'Administrador' && hasPermission('configuracion/roles') && (
         <div className="p-2 border-t border-sidebar-border">
           <div className="mb-1" ref={configDropdownRef}>
             <div className="relative">
@@ -439,9 +438,9 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
         title="Restablecer contraseña"
         size="sm"
       >
-        <form onSubmit={handleChangePassword} className="space-y-4">
-          <div>
-            <label htmlFor="currentPassword" className="block text-sm font-medium mb-2">
+        <form onSubmit={handleChangePassword} className="space-y-3 sm:space-y-4">
+          <div className="space-y-1.5">
+            <label htmlFor="currentPassword" className="block text-sm font-medium leading-tight">
               Contraseña actual
             </label>
             <input
@@ -449,13 +448,13 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
               id="currentPassword"
               value={passwordData.currentPassword}
               onChange={(e) => setPasswordData(prev => ({ ...prev, currentPassword: e.target.value }))}
-              className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+              className="w-full min-h-9 rounded-lg border border-border bg-input-background px-3 py-2 text-sm transition-colors placeholder:text-muted-foreground/80 focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-10"
               required
             />
           </div>
           
-          <div>
-            <label htmlFor="newPassword" className="block text-sm font-medium mb-2">
+          <div className="space-y-1.5">
+            <label htmlFor="newPassword" className="block text-sm font-medium leading-tight">
               Nueva contraseña
             </label>
             <input
@@ -463,13 +462,13 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
               id="newPassword"
               value={passwordData.newPassword}
               onChange={(e) => setPasswordData(prev => ({ ...prev, newPassword: e.target.value }))}
-              className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+              className="w-full min-h-9 rounded-lg border border-border bg-input-background px-3 py-2 text-sm transition-colors placeholder:text-muted-foreground/80 focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-10"
               required
             />
           </div>
           
-          <div>
-            <label htmlFor="confirmPassword" className="block text-sm font-medium mb-2">
+          <div className="space-y-1.5">
+            <label htmlFor="confirmPassword" className="block text-sm font-medium leading-tight">
               Confirmar nueva contraseña
             </label>
             <input
@@ -477,22 +476,22 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
               id="confirmPassword"
               value={passwordData.confirmPassword}
               onChange={(e) => setPasswordData(prev => ({ ...prev, confirmPassword: e.target.value }))}
-              className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+              className="w-full min-h-9 rounded-lg border border-border bg-input-background px-3 py-2 text-sm transition-colors placeholder:text-muted-foreground/80 focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-10"
               required
             />
           </div>
           
-          <div className="flex gap-3 justify-end pt-4">
+          <div className="flex flex-col-reverse gap-2 pt-3 sm:flex-row sm:justify-end sm:pt-4">
             <button
               type="button"
               onClick={() => setIsChangePasswordOpen(false)}
-              className="px-4 py-2 border border-border rounded-lg hover:bg-accent transition-colors"
+              className="w-full rounded-lg border border-border px-4 py-2 transition-colors hover:bg-accent sm:w-auto"
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+              className="w-full rounded-lg bg-primary px-4 py-2 text-primary-foreground transition-colors hover:bg-primary/90 sm:w-auto"
             >
               Actualizar contraseña
             </button>

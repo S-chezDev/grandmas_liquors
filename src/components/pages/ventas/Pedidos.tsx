@@ -1,10 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Button } from '../../Button';
 import { Form, FormField, FormActions } from '../../Form';
-import { Plus, Eye, Trash2, Minus, DollarSign } from 'lucide-react';
+import { Plus, Eye, Trash2, Minus, DollarSign, Search, RotateCcw, Download } from 'lucide-react';
+import { useAlertDialog } from '../../AlertDialog';
 import { pedidos as pedidosAPI, clientes as clientesAPI, productos as productosAPI } from '../../../services/api';
+import { formatDateEsCo } from '../../../utils/date';
+import { downloadPdfText } from '../../../utils/pdf';
 
 interface Pedido {
   id: string;
@@ -32,9 +35,28 @@ interface ProductoEnPedido {
   subtotal: number;
 }
 
+interface PedidoDetalleApi {
+  producto_id: number | string;
+  cantidad: number;
+  precio_unitario: number;
+  subtotal?: number;
+  producto_nombre?: string;
+}
+
+interface StateChangeRequest {
+  pedido: Pedido;
+  from: Pedido['estado'];
+  to: Pedido['estado'];
+}
+
 export function Pedidos() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState({
+    query: '',
+    fecha: '',
+    estado: ''
+  });
   const [productosDisponibles, setProductosDisponibles] = useState<Producto[]>([]);
   const [clientesDisponibles, setClientesDisponibles] = useState<Array<{value: string, label: string}>>([]);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -42,10 +64,14 @@ export function Pedidos() {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [selectedPedido, setSelectedPedido] = useState<Pedido | null>(null);
   const [selectedEstado, setSelectedEstado] = useState<'Pendiente' | 'En Proceso' | 'Completado' | 'Cancelado'>('Pendiente');
+  const [pendingStateChange, setPendingStateChange] = useState<StateChangeRequest | null>(null);
+  const [stateChangeReason, setStateChangeReason] = useState('');
+  const [stateChangeSaving, setStateChangeSaving] = useState(false);
   const [isAbonosModalOpen, setIsAbonosModalOpen] = useState(false);
   const [pedidoParaAbonos, setPedidoParaAbonos] = useState<Pedido | null>(null);
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
   const [pdfContent, setPdfContent] = useState('');
+  const { showAlert, AlertComponent } = useAlertDialog();
   
   // Form data para crear/editar
   const [formData, setFormData] = useState({
@@ -103,6 +129,15 @@ export function Pedidos() {
     }).format(value);
   };
 
+  const formatDate = (value?: string) => {
+    if (!value) return 'N/A';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleDateString('es-CO');
+  };
+
+  const isPedidoFinalizado = (estado?: Pedido['estado']) => estado === 'Cancelado' || estado === 'Completado';
+
   const columns: Column[] = [
     { key: 'numero_pedido', label: 'ID Pedido' },
     { key: 'cliente', label: 'Cliente' },
@@ -116,23 +151,45 @@ export function Pedidos() {
       label: 'Total',
       render: (total: number) => formatCurrency(total)
     },
-    { key: 'fecha', label: 'Fecha Pedido' },
+    { key: 'fecha', label: 'Fecha Pedido', render: (fecha: string) => formatDateEsCo(fecha) },
     { key: 'fecha_entrega', label: 'Fecha Entrega' },
     { 
       key: 'estado', 
       label: 'Estado',
-      render: (estado: string) => (
-        <span className={`px-3 py-1 rounded-full text-xs ${
-          estado === 'Completado' ? 'bg-green-100 text-green-700' :
-          estado === 'En Proceso' ? 'bg-blue-100 text-blue-700' :
-          estado === 'Pendiente' ? 'bg-yellow-100 text-yellow-700' :
-          'bg-red-100 text-red-700'
-        }`}>
-          {estado}
-        </span>
+      render: (estado: string, pedido: Pedido) => (
+        <select
+          value={estado}
+          onChange={(event) => handleEstadoChangeRequest(pedido, event.target.value as Pedido['estado'])}
+          disabled={stateChangeSaving}
+          className={`min-h-8 rounded-lg border border-transparent px-2.5 py-1 text-xs font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring ${
+            estado === 'Completado' ? 'bg-green-100 text-green-700' :
+            estado === 'En Proceso' ? 'bg-blue-100 text-blue-700' :
+            estado === 'Pendiente' ? 'bg-yellow-100 text-yellow-700' :
+            'bg-red-100 text-red-700'
+          }`}
+        >
+          <option value="Pendiente">Pendiente</option>
+          <option value="En Proceso">En Proceso</option>
+          <option value="Completado">Completado</option>
+          <option value="Cancelado">Cancelado</option>
+        </select>
       )
     }
   ];
+
+  const pedidosFiltrados = useMemo(() => {
+    const normalizedQuery = filters.query.trim().toLowerCase();
+
+    return pedidos.filter((pedido) => {
+      const matchesQuery =
+        !normalizedQuery ||
+        String(pedido.numero_pedido || pedido.id).toLowerCase().includes(normalizedQuery) ||
+        String(pedido.cliente || '').toLowerCase().includes(normalizedQuery);
+      const matchesFecha = !filters.fecha || String(pedido.fecha || '').includes(filters.fecha);
+      const matchesEstado = !filters.estado || pedido.estado === filters.estado;
+      return matchesQuery && matchesFecha && matchesEstado;
+    });
+  }, [pedidos, filters]);
 
   // Calcular total del pedido
   const calcularTotal = () => {
@@ -141,8 +198,8 @@ export function Pedidos() {
 
   // Agregar producto al pedido
   const handleAgregarProducto = () => {
-    setProductosEnPedido([
-      ...productosEnPedido,
+    setProductosEnPedido((current) => [
+      ...current,
       {
         producto_id: '',
         nombre: '',
@@ -163,11 +220,11 @@ export function Pedidos() {
     const newProductos = [...productosEnPedido];
     
     if (field === 'producto_id') {
-      const producto = productosDisponibles.find(p => p.id === value);
+      const producto = productosDisponibles.find((p) => String(p.id) === String(value));
       if (producto) {
         newProductos[index] = {
           ...newProductos[index],
-          producto_id: producto.id,
+          producto_id: String(producto.id),
           nombre: producto.nombre,
           precio_unitario: producto.precio,
           subtotal: producto.precio * newProductos[index].cantidad
@@ -197,22 +254,36 @@ export function Pedidos() {
     e.preventDefault();
     
     if (productosEnPedido.length === 0) {
-      alert('Debe agregar al menos un producto al pedido');
+      showAlert({
+        title: 'Pedido sin productos',
+        description: 'Debe agregar al menos un producto al pedido.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
       return;
     }
     
     if (productosEnPedido.some(p => !p.producto_id)) {
-      alert('Debe seleccionar un producto para cada fila');
+      showAlert({
+        title: 'Producto faltante',
+        description: 'Debe seleccionar un producto para cada fila.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
       return;
     }
     
     try {
       const newPedido = {
+        numero_pedido: `PED-${Date.now()}`,
         cliente_id: formData.cliente_id,
         total: calcularTotal(),
         fecha: formData.fecha,
         fecha_entrega: formData.fecha_entrega,
-        estado: 'Pendiente' as const
+        estado: 'Pendiente' as const,
+        detalles: productosEnPedido,
       };
 
       const createResult: any = await pedidosAPI.create(newPedido);
@@ -243,88 +314,171 @@ export function Pedidos() {
         fecha_entrega: new Date().toISOString().split('T')[0],
       });
       setProductosEnPedido([]);
+      showAlert({
+        title: 'Éxito',
+        description: 'Pedido creado correctamente.',
+        type: 'success',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
     } catch (error) {
       console.error('Error creando pedido:', error);
-      alert('Error al crear el pedido');
+      showAlert({
+        title: 'Error',
+        description: 'No se pudo crear el pedido.',
+        type: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
     }
   };
 
-  const handleChangeState = async (pedido: Pedido) => {
-    const states: Array<'Pendiente' | 'En Proceso' | 'Completado'> = ['Pendiente', 'En Proceso', 'Completado'];
-    const currentIndex = states.indexOf(pedido.estado as any);
-    const nextState = states[(currentIndex + 1) % states.length];
-    
+  const handleEstadoChangeRequest = (pedido: Pedido, nuevoEstado: Pedido['estado']) => {
+    if (pedido.estado === nuevoEstado) return;
+
+    setPendingStateChange({
+      pedido,
+      from: pedido.estado,
+      to: nuevoEstado,
+    });
+    setStateChangeReason('');
+  };
+
+  const handleConfirmEstadoChange = async () => {
+    if (!pendingStateChange) return;
+
+    if (pendingStateChange.to === 'Cancelado' && stateChangeReason.trim().length < 10) {
+      showAlert({
+        title: 'Motivo requerido',
+        description: 'Para cancelar el pedido debes indicar un motivo de al menos 10 caracteres.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
     try {
-      await pedidosAPI.update(Number(pedido.id), { estado: nextState });
+      setStateChangeSaving(true);
+      await pedidosAPI.update(Number(pendingStateChange.pedido.id), { estado: pendingStateChange.to });
       await loadPedidos();
+      setPendingStateChange(null);
+      setStateChangeReason('');
     } catch (error) {
       console.error('Error actualizando estado:', error);
+    } finally {
+      setStateChangeSaving(false);
     }
   };
 
-  const handleEdit = (pedido: Pedido) => {
-    setSelectedPedido(pedido);
-    setSelectedEstado(pedido.estado);
-    setFormData({
-      cliente_id: pedido.cliente_id,
-      fecha: pedido.fecha,
-      fecha_entrega: pedido.fecha_entrega
-    });
-    // Inicializar con productos de ejemplo
-    setProductosEnPedido([
-      {
-        producto_id: 'PROD-001',
-        nombre: 'Producto ejemplo',
-        cantidad: 2,
-        precio_unitario: 120000,
-        subtotal: 240000
-      }
-    ]);
-    setIsEditModalOpen(true);
+  const handleCancelEstadoChange = () => {
+    setPendingStateChange(null);
+    setStateChangeReason('');
+  };
+
+  const handleEdit = async (pedido: Pedido) => {
+    if (isPedidoFinalizado(pedido.estado)) {
+      showAlert({
+        title: 'Pedido bloqueado',
+        description: 'No se puede editar un pedido Completado o Cancelado.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
+    try {
+      const pedidoCompleto: any = await pedidosAPI.getById(Number(pedido.id));
+      const detalles = Array.isArray(pedidoCompleto?.detalles)
+        ? pedidoCompleto.detalles
+        : [];
+
+      setSelectedPedido(pedidoCompleto || pedido);
+      setSelectedEstado((pedidoCompleto?.estado || pedido.estado) as Pedido['estado']);
+      setFormData({
+        cliente_id: Number(pedidoCompleto?.cliente_id ?? pedido.cliente_id),
+        fecha: pedidoCompleto?.fecha ?? pedido.fecha,
+        fecha_entrega: pedidoCompleto?.fecha_entrega ?? pedido.fecha_entrega
+      });
+      setProductosEnPedido(
+        detalles.map((detalle: PedidoDetalleApi) => ({
+          producto_id: String(detalle.producto_id),
+          nombre: detalle.producto_nombre || '',
+          cantidad: Number(detalle.cantidad),
+          precio_unitario: Number(detalle.precio_unitario),
+          subtotal: Number(detalle.subtotal ?? Number(detalle.cantidad) * Number(detalle.precio_unitario)),
+        }))
+      );
+      setIsEditModalOpen(true);
+    } catch (error) {
+      console.error('Error cargando pedido para edición:', error);
+      showAlert({
+        title: 'Error',
+        description: 'No se pudo cargar el pedido para editarlo.',
+        type: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+    }
   };
 
   const handleUpdatePedido = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (productosEnPedido.length === 0) {
-      alert('Debe agregar al menos un producto al pedido');
+      showAlert({
+        title: 'Pedido sin productos',
+        description: 'Debe agregar al menos un producto al pedido.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
       return;
     }
     
     if (productosEnPedido.some(p => !p.producto_id)) {
-      alert('Debe seleccionar un producto para cada fila');
+      showAlert({
+        title: 'Producto faltante',
+        description: 'Debe seleccionar un producto para cada fila.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
       return;
     }
     
     if (selectedPedido) {
       try {
         await pedidosAPI.update(Number(selectedPedido.id), {
+          numero_pedido: selectedPedido.numero_pedido || `PED-${selectedPedido.id}`,
           cliente_id: formData.cliente_id,
           fecha: formData.fecha,
           fecha_entrega: formData.fecha_entrega,
           total: calcularTotal(),
-          estado: selectedEstado
+          estado: selectedEstado,
+          detalles: productosEnPedido,
         });
         await loadPedidos();
         setIsEditModalOpen(false);
         setSelectedPedido(null);
         setProductosEnPedido([]);
+        showAlert({
+          title: 'Éxito',
+          description: 'Pedido actualizado correctamente.',
+          type: 'success',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
       } catch (error) {
         console.error('Error actualizando pedido:', error);
-        alert('Error al actualizar el pedido');
-      }
-    }
-  };
-
-  const handleCancelar = async () => {
-    if (selectedPedido && confirm(`¿Está seguro de cancelar el pedido ${selectedPedido.numero_pedido || selectedPedido.id}?`)) {
-      try {
-        await pedidosAPI.update(Number(selectedPedido.id), { estado: 'Cancelado' });
-        await loadPedidos();
-        setIsEditModalOpen(false);
-      } catch (error) {
-        console.error('Error cancelando pedido:', error);
-        alert('Error al cancelar el pedido');
+        showAlert({
+          title: 'Error',
+          description: 'No se pudo actualizar el pedido.',
+          type: 'danger',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
       }
     }
   };
@@ -339,7 +493,7 @@ export function Pedidos() {
     return mockAbonos.filter(a => a.pedido === pedidoParaAbonos.id);
   };
 
-  const handleGeneratePDF = (pedido: Pedido) => {
+  const buildPdfContent = (pedido: Pedido) => {
     const abonos = mockAbonos.filter(a => a.pedido === pedido.id);
     const totalAbonado = abonos.reduce((sum, a) => sum + a.monto, 0);
     const saldoPendiente = pedido.total - totalAbonado;
@@ -350,7 +504,7 @@ export function Pedidos() {
         ).join('\n')
       : 'Sin abonos registrados';
 
-    const content = `
+    return `
 ╔════════════════════════════════════════════════════════════╗
 ║           GRANDMA'S LIQUEURS - DETALLE DE PEDIDO          ║
 ╚════════════════════════════════════════════════════════════╝
@@ -386,13 +540,20 @@ Firma Autorizado:   _______________________
 Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
 ──────���─────────────────────────────────────────────────────
     `.trim();
+  };
 
-    setPdfContent(content);
+  const handleGeneratePDF = (pedido: Pedido) => {
+    setPdfContent(buildPdfContent(pedido));
     setIsPdfModalOpen(true);
+  };
+
+  const handleDownloadPDF = (pedido: Pedido) => {
+    downloadPdfText(buildPdfContent(pedido), `pedido-${pedido.numero_pedido || pedido.id}.pdf`);
   };
 
   return (
     <div className="space-y-6">
+      {AlertComponent}
       <div className="flex items-center justify-between">
         <div>
           <h2>Gestión de Pedidos</h2>
@@ -403,9 +564,52 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         </Button>
       </div>
 
+      <div className="rounded-lg border border-border bg-white p-4 space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <input
+              type="text"
+              value={filters.query}
+              onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))}
+              placeholder="Buscar pedido por ID o cliente..."
+              className="w-full pl-10 pr-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <Button
+            variant="outline"
+            icon={<RotateCcw className="w-4 h-4" />}
+            onClick={() => setFilters({ query: '', fecha: '', estado: '' })}
+            disabled={!filters.query.trim() && !filters.fecha && !filters.estado}
+          >
+            Limpiar filtros
+          </Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filtrar por:</span>
+          <input
+            type="date"
+            value={filters.fecha}
+            onChange={(event) => setFilters((current) => ({ ...current, fecha: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          <select
+            value={filters.estado}
+            onChange={(event) => setFilters((current) => ({ ...current, estado: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Estado (todos)</option>
+            <option value="Pendiente">Pendiente</option>
+            <option value="En Proceso">En Proceso</option>
+            <option value="Completado">Completado</option>
+            <option value="Cancelado">Cancelado</option>
+          </select>
+        </div>
+      </div>
+
       <DataTable
         columns={columns}
-        data={pedidos}
+        data={pedidosFiltrados}
         actions={[
           commonActions.view((pedido) => {
             setSelectedPedido(pedido);
@@ -419,20 +623,44 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
           },
           commonActions.edit(handleEdit),
           commonActions.pdf(handleGeneratePDF),
-          commonActions.cancel(async (pedido) => {
-            if (confirm(`¿Cancelar pedido ${pedido.numero_pedido || pedido.id}?`)) {
-              try {
-                await pedidosAPI.update(Number(pedido.id), { estado: 'Cancelado' });
-                await loadPedidos();
-              } catch (error) {
-                console.error('Error:', error);
-              }
-            }
-          })
         ]}
-        onSearch={(query) => console.log('Searching:', query)}
-        searchPlaceholder="Buscar pedidos..."
       />
+
+      <Modal
+        isOpen={Boolean(pendingStateChange)}
+        onClose={handleCancelEstadoChange}
+        title={`Cambiar estado - Pedido ${pendingStateChange?.pedido.numero_pedido || pendingStateChange?.pedido.id || ''}`}
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-accent/30 p-4 space-y-1">
+            <p className="text-sm text-muted-foreground">Estado actual: {pendingStateChange?.from || 'N/A'}</p>
+            <p className="text-sm text-muted-foreground">Nuevo estado: {pendingStateChange?.to || 'N/A'}</p>
+          </div>
+
+          {pendingStateChange?.to === 'Cancelado' ? (
+            <FormField
+              label="Motivo del cambio"
+              name="motivo-cambio-pedido"
+              type="textarea"
+              value={stateChangeReason}
+              onChange={(value) => setStateChangeReason(String(value))}
+              rows={3}
+              required
+              placeholder="Explica por qué se cancela el pedido (mínimo 10 caracteres)"
+            />
+          ) : null}
+
+          <FormActions>
+            <Button variant="outline" onClick={handleCancelEstadoChange} disabled={stateChangeSaving}>
+              Cancelar
+            </Button>
+            <Button onClick={handleConfirmEstadoChange} disabled={stateChangeSaving}>
+              {stateChangeSaving ? 'Guardando...' : 'Confirmar'}
+            </Button>
+          </FormActions>
+        </div>
+      </Modal>
 
       {loading && (
         <div className="text-center py-8">
@@ -523,7 +751,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                           >
                             <option value="">Seleccionar producto...</option>
                             {productosDisponibles.map(p => (
-                              <option key={p.id} value={p.id}>{p.nombre}</option>
+                              <option key={p.id} value={String(p.id)}>{p.nombre}</option>
                             ))}
                           </select>
                         </td>
@@ -696,19 +924,10 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
               />
             </div>
 
-            <div>
-              <label className="text-sm text-muted-foreground block mb-2">Estado del Pedido</label>
-              <select
-                className="w-full px-3 py-2 border rounded-lg"
-                value={selectedEstado}
-                onChange={(e) => setSelectedEstado(e.target.value as any)}
-                disabled={selectedPedido.estado === 'Cancelado'}
-              >
-                <option value="Pendiente">Pendiente</option>
-                <option value="En Proceso">En Proceso</option>
-                <option value="Completado">Completado</option>
-                <option value="Cancelado">Cancelado</option>
-              </select>
+            <div className="rounded-lg border border-border bg-accent/20 px-3 py-2">
+              <label className="text-sm text-muted-foreground block">Estado del Pedido</label>
+              <p className="text-sm">{selectedPedido.estado}</p>
+              <p className="text-xs text-muted-foreground mt-1">Para cambiar el estado usa el selector de la tabla.</p>
             </div>
 
             <div className="space-y-3">
@@ -748,7 +967,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                             >
                               <option value="">Seleccionar producto...</option>
                               {productosDisponibles.map(p => (
-                                <option key={p.id} value={p.id}>{p.nombre}</option>
+                                <option key={p.id} value={String(p.id)}>{p.nombre}</option>
                               ))}
                             </select>
                           </td>
@@ -806,19 +1025,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
               )}
             </div>
 
-            {/* Botones de acción */}
-            <div className="flex gap-3">
-              <Button 
-                type="button"
-                variant="destructive"
-                onClick={handleCancelar}
-                className="flex-1"
-                disabled={selectedPedido.estado === 'Cancelado'}
-              >
-                Cancelar Pedido
-              </Button>
-            </div>
-
             {/* Acciones del modal */}
             <FormActions>
               <Button 
@@ -828,12 +1034,13 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                   setSelectedPedido(null);
                   setProductosEnPedido([]);
                 }}
+                type="button"
               >
                 Cerrar
               </Button>
               <Button 
                 type="submit"
-                disabled={selectedPedido.estado === 'Cancelado'}
+                disabled={isPedidoFinalizado(selectedPedido.estado)}
               >
                 Guardar Cambios
               </Button>
@@ -909,6 +1116,20 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         onClose={() => setIsPdfModalOpen(false)}
         title={`PDF del Pedido ${selectedPedido?.id}`}
         size="lg"
+        footer={
+          <FormActions>
+            <Button
+              variant="outline"
+              icon={<Download className="w-4 h-4" />}
+              onClick={() => selectedPedido && handleDownloadPDF(selectedPedido)}
+            >
+              Descargar PDF
+            </Button>
+            <Button variant="outline" onClick={() => setIsPdfModalOpen(false)}>
+              Cerrar
+            </Button>
+          </FormActions>
+        }
       >
         <div className="space-y-4">
           <pre className="p-4 bg-accent rounded-lg text-sm">

@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, ShoppingBag, Trash2 } from 'lucide-react';
-import { AlertDialog } from '../../AlertDialog';
-import { ventas as ventasAPI, clientes as clientesAPI, productos as productosAPI } from '../../../services/api';
+import { Plus, ShoppingBag, Trash2, Search, RotateCcw, Download } from 'lucide-react';
+import { useAlertDialog } from '../../AlertDialog';
+import { ventas as ventasAPI, clientes as clientesAPI, productos as productosAPI, pedidos as pedidosAPI } from '../../../services/api';
+import { downloadPdfText } from '../../../utils/pdf';
 
 interface VentaItem {
   producto: string;
@@ -33,6 +34,14 @@ interface Cliente {
   nombre: string;
   apellido: string;
   documento: string;
+  estado?: 'Activo' | 'Inactivo';
+}
+
+interface PedidoCliente {
+  id: number;
+  numero_pedido?: string;
+  fecha?: string;
+  estado?: string;
 }
 
 interface Producto {
@@ -42,11 +51,25 @@ interface Producto {
   stock: number;
 }
 
+interface StateChangeRequest {
+  venta: Venta;
+  from: string;
+  to: string;
+}
+
 export function Ventas() {
   const [ventas, setVentas] = useState<Venta[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
+  const [pedidosCliente, setPedidosCliente] = useState<PedidoCliente[]>([]);
+  const [loadingPedidosCliente, setLoadingPedidosCliente] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState({
+    query: '',
+    fecha: '',
+    metodopago: '',
+    estado: ''
+  });
 
   useEffect(() => {
     loadVentas();
@@ -84,17 +107,28 @@ export function Ventas() {
     }
   };
 
+  const loadPedidosByCliente = async (clienteId: number) => {
+    try {
+      setLoadingPedidosCliente(true);
+      const data = await pedidosAPI.getByCliente(clienteId);
+      setPedidosCliente(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Error al cargar pedidos del cliente:', error);
+      setPedidosCliente([]);
+    } finally {
+      setLoadingPedidosCliente(false);
+    }
+  };
+
   const [selectedVenta, setSelectedVenta] = useState<Venta | null>(null);
+  const [pendingStateChange, setPendingStateChange] = useState<StateChangeRequest | null>(null);
+  const [stateChangeReason, setStateChangeReason] = useState('');
+  const [stateChangeSaving, setStateChangeSaving] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
   const [pdfContent, setPdfContent] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [alertState, setAlertState] = useState({
-    isOpen: false,
-    title: '',
-    description: '',
-    onConfirm: () => {}
-  });
+  const { showAlert, AlertComponent } = useAlertDialog();
   const [formData, setFormData] = useState({
     tipo: 'Directa' as 'Directa' | 'Por Pedido',
     cliente_id: '',
@@ -117,11 +151,27 @@ export function Ventas() {
     }).format(value);
   };
 
+  const formatDate = (value?: string) => {
+    if (!value) return 'N/A';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleDateString('es-CO');
+  };
+
+  const clientesActivos = useMemo(
+    () => clientes.filter((cliente) => String(cliente.estado || 'Activo') === 'Activo'),
+    [clientes]
+  );
+
   const columns: Column[] = [
     { key: 'numero_venta', label: 'Número Venta' },
     { key: 'tipo', label: 'Tipo' },
     { key: 'cliente', label: 'Cliente' },
-    { key: 'fecha', label: 'Fecha' },
+    {
+      key: 'fecha',
+      label: 'Fecha',
+      render: (fecha: string) => formatDate(fecha)
+    },
     { 
       key: 'items', 
       label: 'Items',
@@ -136,40 +186,96 @@ export function Ventas() {
     { 
       key: 'estado', 
       label: 'Estado',
-      render: (estado: string) => (
-        <span className={`px-3 py-1 rounded-full text-xs ${
-          estado === 'Completada' ? 'bg-green-100 text-green-700' :
-          estado === 'Pendiente' ? 'bg-yellow-100 text-yellow-700' :
-          'bg-red-100 text-red-700'
-        }`}>
-          {estado}
-        </span>
+      render: (estado: string, venta: Venta) => (
+        <select
+          value={estado}
+          onChange={(event) => handleEstadoChangeRequest(venta, event.target.value)}
+          disabled={stateChangeSaving}
+          className={`min-h-8 rounded-lg border border-transparent px-2.5 py-1 text-xs font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring ${
+            estado === 'Completada' ? 'bg-green-100 text-green-700' :
+            estado === 'Pendiente' ? 'bg-yellow-100 text-yellow-700' :
+            'bg-red-100 text-red-700'
+          }`}
+        >
+          <option value="Pendiente">Pendiente</option>
+          <option value="Completada">Completada</option>
+          <option value="Cancelada">Cancelada</option>
+        </select>
       )
     }
   ];
+
+  const ventasFiltradas = useMemo(() => {
+    const normalizedQuery = filters.query.trim().toLowerCase();
+
+    return ventas.filter((venta) => {
+      const matchesQuery =
+        !normalizedQuery ||
+        String(venta.numero_venta || '').toLowerCase().includes(normalizedQuery) ||
+        String(venta.cliente || '').toLowerCase().includes(normalizedQuery);
+      const matchesFecha = !filters.fecha || String(venta.fecha || '').includes(filters.fecha);
+      const matchesMetodo = !filters.metodopago || venta.metodopago === filters.metodopago;
+      const matchesEstado = !filters.estado || venta.estado === filters.estado;
+      return matchesQuery && matchesFecha && matchesMetodo && matchesEstado;
+    });
+  }, [ventas, filters]);
 
   const handleView = (venta: Venta) => {
     setSelectedVenta(venta);
     setIsDetailModalOpen(true);
   };
 
-  const handleAnular = async (venta: Venta) => {
-    setAlertState({
-      isOpen: true,
-      title: 'Confirmar anulación',
-      description: `¿Está seguro de anular la venta ${venta.numero_venta}? Esta acción no se puede deshacer.`,
-      onConfirm: async () => {
-        try {
-          await ventasAPI.update(venta.id, { estado: 'Cancelada' });
-          await loadVentas();
-        } catch (error) {
-          console.error('Error al anular venta:', error);
-        }
-      }
+  const handleEstadoChangeRequest = (venta: Venta, nuevoEstado: string) => {
+    if (venta.estado === nuevoEstado) return;
+
+    setPendingStateChange({
+      venta,
+      from: venta.estado,
+      to: nuevoEstado,
     });
+    setStateChangeReason('');
   };
 
-  const handleGeneratePDF = (venta: Venta) => {
+  const handleConfirmEstadoChange = async () => {
+    if (!pendingStateChange) return;
+
+    if (pendingStateChange.to === 'Cancelada' && stateChangeReason.trim().length < 10) {
+      showAlert({
+        title: 'Motivo requerido',
+        description: 'Para cancelar la venta debes indicar un motivo de al menos 10 caracteres.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
+    try {
+      setStateChangeSaving(true);
+      await ventasAPI.update(pendingStateChange.venta.id, { estado: pendingStateChange.to });
+      await loadVentas();
+      setPendingStateChange(null);
+      setStateChangeReason('');
+    } catch (error) {
+      console.error('Error actualizando estado de venta:', error);
+      showAlert({
+        title: 'Error',
+        description: 'No se pudo actualizar el estado de la venta.',
+        type: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+    } finally {
+      setStateChangeSaving(false);
+    }
+  };
+
+  const handleCancelEstadoChange = () => {
+    setPendingStateChange(null);
+    setStateChangeReason('');
+  };
+
+  const buildPdfContent = (venta: Venta) => {
     const itemsDetail = venta.items && venta.items.length > 0 ? venta.items.map((item, index) => 
       `${index + 1}. ${item.producto}
    Cantidad: ${item.cantidad} unidades
@@ -177,7 +283,7 @@ export function Ventas() {
    Subtotal: ${formatCurrency(item.subtotal)}`
     ).join('\n\n') : 'Sin items';
 
-    const content = `
+    return `
 ╔════════════════════════════════════════════════════════════╗
 ║           GRANDMA'S LIQUEURS - FACTURA DE VENTA           ║
 ╚════════════════════════════════════════════════════════════╝
@@ -203,9 +309,15 @@ Gracias por su compra
 Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
 ────────────────────────────────────────────────────────────
     `.trim();
+  };
 
-    setPdfContent(content);
+  const handleGeneratePDF = (venta: Venta) => {
+    setPdfContent(buildPdfContent(venta));
     setIsPdfModalOpen(true);
+  };
+
+  const handleDownloadPDF = (venta: Venta) => {
+    downloadPdfText(buildPdfContent(venta), `venta-${venta.numero_venta || venta.id}.pdf`);
   };
 
   const handleAddItem = () => {
@@ -223,6 +335,16 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
     }
   };
 
+  useEffect(() => {
+    if (!formData.cliente_id) {
+      setPedidosCliente([]);
+      setFormData((current) => ({ ...current, pedido: '' }));
+      return;
+    }
+
+    void loadPedidosByCliente(Number(formData.cliente_id));
+  }, [formData.cliente_id]);
+
   const handleRemoveItem = (index: number) => {
     setFormData({
       ...formData,
@@ -233,6 +355,21 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
   const handleSaveVenta = async () => {
     if (formData.cliente_id && formData.items.length > 0) {
       try {
+        const clienteActivoSeleccionado = clientesActivos.some(
+          (cliente) => String(cliente.id) === formData.cliente_id
+        );
+
+        if (!clienteActivoSeleccionado) {
+          showAlert({
+            title: 'Cliente no permitido',
+            description: 'El cliente seleccionado esta inactivo. Selecciona un cliente activo para continuar.',
+            type: 'warning',
+            confirmText: 'Entendido',
+            onConfirm: () => {}
+          });
+          return;
+        }
+
         const newVenta = {
           numero_venta: `VEN-${Date.now()}`,
           tipo: formData.tipo,
@@ -276,12 +413,31 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
           metodopago: 'Efectivo',
           items: []
         });
+        showAlert({
+          title: 'Éxito',
+          description: 'Venta guardada correctamente.',
+          type: 'success',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
       } catch (error) {
         console.error('Error al guardar venta:', error);
-        alert('Error al guardar la venta');
+        showAlert({
+          title: 'Error',
+          description: 'No se pudo guardar la venta.',
+          type: 'danger',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
       }
     } else {
-      alert('Debe seleccionar un cliente y agregar al menos un producto');
+        showAlert({
+          title: 'Datos incompletos',
+          description: 'Debe seleccionar un cliente y agregar al menos un producto.',
+          type: 'warning',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
     }
   };
 
@@ -306,6 +462,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
 
   return (
     <div className="space-y-6">
+      {AlertComponent}
       <div className="flex items-center justify-between">
         <div>
           <h2>Gestión de Ventas</h2>
@@ -316,17 +473,103 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         </Button>
       </div>
 
+      <div className="rounded-lg border border-border bg-white p-4 space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <input
+              type="text"
+              value={filters.query}
+              onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))}
+              placeholder="Buscar venta por número o cliente..."
+              className="w-full pl-10 pr-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <Button
+            variant="outline"
+            icon={<RotateCcw className="w-4 h-4" />}
+            onClick={() => setFilters({ query: '', fecha: '', metodopago: '', estado: '' })}
+            disabled={!filters.query.trim() && !filters.fecha && !filters.metodopago && !filters.estado}
+          >
+            Limpiar filtros
+          </Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filtrar por:</span>
+          <input
+            type="date"
+            value={filters.fecha}
+            onChange={(event) => setFilters((current) => ({ ...current, fecha: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          <select
+            value={filters.metodopago}
+            onChange={(event) => setFilters((current) => ({ ...current, metodopago: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Metodo de Pago (todos)</option>
+            <option value="Efectivo">Efectivo</option>
+            <option value="Tarjeta">Tarjeta</option>
+            <option value="Transferencia">Transferencia</option>
+            <option value="Credito">Credito</option>
+          </select>
+          <select
+            value={filters.estado}
+            onChange={(event) => setFilters((current) => ({ ...current, estado: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Estado (todos)</option>
+            <option value="Pendiente">Pendiente</option>
+            <option value="Completada">Completada</option>
+            <option value="Cancelada">Cancelada</option>
+          </select>
+        </div>
+      </div>
+
       <DataTable
         columns={columns}
-        data={ventas}
+        data={ventasFiltradas}
         actions={[
           commonActions.view(handleView),
           commonActions.pdf(handleGeneratePDF),
-          commonActions.cancel(handleAnular)
         ]}
-        onSearch={(query) => console.log('Searching:', query)}
-        searchPlaceholder="Buscar ventas..."
       />
+
+      <Modal
+        isOpen={Boolean(pendingStateChange)}
+        onClose={handleCancelEstadoChange}
+        title={`Cambiar estado - Venta ${pendingStateChange?.venta.numero_venta || ''}`}
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-accent/30 p-4 space-y-1">
+            <p className="text-sm text-muted-foreground">Estado actual: {pendingStateChange?.from || 'N/A'}</p>
+            <p className="text-sm text-muted-foreground">Nuevo estado: {pendingStateChange?.to || 'N/A'}</p>
+          </div>
+
+          {pendingStateChange?.to === 'Cancelada' ? (
+            <FormField
+              label="Motivo del cambio"
+              name="motivo-cambio-venta"
+              type="textarea"
+              value={stateChangeReason}
+              onChange={(value) => setStateChangeReason(String(value))}
+              rows={3}
+              required
+              placeholder="Explica por qué se cancela la venta (mínimo 10 caracteres)"
+            />
+          ) : null}
+
+          <FormActions>
+            <Button variant="outline" onClick={handleCancelEstadoChange} disabled={stateChangeSaving}>
+              Cancelar
+            </Button>
+            <Button onClick={handleConfirmEstadoChange} disabled={stateChangeSaving}>
+              {stateChangeSaving ? 'Guardando...' : 'Confirmar'}
+            </Button>
+          </FormActions>
+        </div>
+      </Modal>
 
       <Modal
         isOpen={isDetailModalOpen}
@@ -401,6 +644,16 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         onClose={() => setIsPdfModalOpen(false)}
         title="Factura de Venta"
         size="lg"
+        footer={
+          <FormActions>
+            <Button variant="outline" icon={<Download className="w-4 h-4" />} onClick={() => selectedVenta && handleDownloadPDF(selectedVenta)}>
+              Descargar PDF
+            </Button>
+            <Button variant="outline" onClick={() => setIsPdfModalOpen(false)}>
+              Cerrar
+            </Button>
+          </FormActions>
+        }
       >
         <pre className="p-4 bg-accent/50 rounded-lg text-sm">
           {pdfContent}
@@ -432,10 +685,12 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
             name="cliente_id"
             type="select"
             value={formData.cliente_id}
-            onChange={(value) => setFormData({ ...formData, cliente_id: value as string })}
+            onChange={(value) =>
+              setFormData((current) => ({ ...current, cliente_id: value as string, pedido: '' }))
+            }
             options={[
               { value: '', label: 'Seleccionar cliente...' },
-              ...clientes.map(c => ({
+              ...clientesActivos.map(c => ({
                 value: c.id.toString(),
                 label: `${c.nombre} ${c.apellido} - ${c.documento}`
               }))
@@ -448,9 +703,26 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
             <FormField
               label="Número de Pedido"
               name="pedido"
+              type="select"
               value={formData.pedido}
               onChange={(value) => setFormData({ ...formData, pedido: value as string })}
-              placeholder="PED-001"
+              options={[
+                {
+                  value: '',
+                  label: !formData.cliente_id
+                    ? 'Selecciona primero un cliente activo'
+                    : loadingPedidosCliente
+                      ? 'Cargando pedidos...'
+                      : pedidosCliente.length === 0
+                        ? 'Este cliente no tiene pedidos'
+                        : 'Seleccionar pedido...'
+                },
+                ...pedidosCliente.map((pedido) => ({
+                  value: String(pedido.id),
+                  label: `${pedido.numero_pedido || `PED-${pedido.id}`} | ${formatDate(pedido.fecha)} | ${pedido.estado || 'N/A'}`
+                }))
+              ]}
+              disabled={!formData.cliente_id || loadingPedidosCliente || pedidosCliente.length === 0}
               required
             />
           )}
@@ -565,14 +837,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         </div>
       </Modal>
 
-      <AlertDialog
-        isOpen={alertState.isOpen}
-        onClose={() => setAlertState({ isOpen: false, title: '', description: '', onConfirm: () => {} })}
-        title={alertState.title}
-        description={alertState.description}
-        onConfirm={alertState.onConfirm}
-        type="warning"
-      />
     </div>
   );
 }

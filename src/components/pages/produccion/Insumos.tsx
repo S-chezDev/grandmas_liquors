@@ -1,16 +1,28 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, Truck, FileText } from 'lucide-react';
+import { Plus, Truck, FileText, Search, RotateCcw, Download } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
 import { entregas_insumos as entregasAPI } from '../../../services/api';
+import { formatDateEsCo } from '../../../utils/date';
+import { downloadPdfText } from '../../../utils/pdf';
 
 interface EntregaInsumo {
   id: string;
   numero_entrega: string;
-  insumo_id: number;
+  insumo: string;
+  cantidad: number;
+  unidad: string;
+  operario: string;
+  fecha: string;
+  hora: string;
+}
+
+interface EntregaInsumoForm {
+  numero_entrega: string;
+  insumo: string;
   cantidad: number;
   unidad: string;
   operario: string;
@@ -21,6 +33,41 @@ interface EntregaInsumo {
 export function Insumos() {
   const [entregas, setEntregas] = useState<EntregaInsumo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState({
+    id: '',
+    operario: '',
+    fecha: ''
+  });
+
+  const formatDate = (value: string) => {
+    if (!value) return '';
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return new Intl.DateTimeFormat('es-CO', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      }).format(parsed);
+    }
+
+    const [year, month, day] = value.split('-');
+    if (year && month && day) return `${day}/${month}/${year}`;
+    return value;
+  };
+
+  const formatTime = (value: string) => {
+    if (!value) return '';
+    const [hours, minutes] = value.split(':');
+    if (hours === undefined || minutes === undefined) return value;
+
+    const parsed = new Date();
+    parsed.setHours(Number(hours), Number(minutes), 0, 0);
+    return new Intl.DateTimeFormat('es-CO', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    }).format(parsed);
+  };
 
   useEffect(() => {
     loadEntregas();
@@ -30,7 +77,13 @@ export function Insumos() {
     try {
       setLoading(true);
       const data = await entregasAPI.getAll();
-      setEntregas(data);
+      const normalized = Array.isArray(data)
+        ? data.map((entrega: any) => ({
+            ...entrega,
+            insumo: entrega.insumo || entrega.insumo_nombre || ''
+          }))
+        : [];
+      setEntregas(normalized);
     } catch (error) {
       console.error('Error al cargar entregas:', error);
     } finally {
@@ -42,9 +95,9 @@ export function Insumos() {
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
   const [pdfContent, setPdfContent] = useState('');
   const [selectedEntrega, setSelectedEntrega] = useState<EntregaInsumo | null>(null);
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<EntregaInsumoForm>({
     numero_entrega: '',
-    insumo_id: 0,
+    insumo: '',
     cantidad: 0,
     unidad: '',
     operario: '',
@@ -55,24 +108,49 @@ export function Insumos() {
 
   const columns: Column[] = [
     { key: 'numero_entrega', label: 'ID' },
-    { key: 'insumo_id', label: 'Insumo ID' },
-    { 
-      key: 'cantidad', 
+    { key: 'insumo', label: 'Producto' },
+    {
+      key: 'cantidad',
       label: 'Cantidad',
       render: (cantidad: number, row: EntregaInsumo) => `${cantidad} ${row.unidad}`
     },
     { key: 'operario', label: 'Operario' },
-    { key: 'fecha', label: 'Fecha' },
-    { key: 'hora', label: 'Hora' }
+    {
+      key: 'fecha',
+      label: 'Fecha',
+      render: (fecha: string) => formatDateEsCo(fecha)
+    },
+    {
+      key: 'hora',
+      label: 'Hora',
+      render: (hora: string) => formatTime(hora)
+    }
   ];
+
+  const operariosOptions = useMemo(
+    () => Array.from(new Set(entregas.map((entrega) => entrega.operario).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'es')),
+    [entregas]
+  );
+
+  const entregasFiltradas = useMemo(() => {
+    return entregas.filter((entrega) => {
+      const matchesId =
+        !filters.id.trim() ||
+        String(entrega.numero_entrega || '').toLowerCase().includes(filters.id.trim().toLowerCase()) ||
+        String(entrega.id || '').toLowerCase().includes(filters.id.trim().toLowerCase());
+      const matchesOperario = !filters.operario || entrega.operario === filters.operario;
+      const matchesFecha = !filters.fecha || String(entrega.fecha || '').includes(filters.fecha);
+      return matchesId && matchesOperario && matchesFecha;
+    });
+  }, [entregas, filters]);
 
   const handleAdd = () => {
     setSelectedEntrega(null);
-    setFormData({ 
+    setFormData({
       numero_entrega: `ENT-${Date.now()}`,
-      insumo_id: 0,
-      cantidad: 0, 
-      unidad: 'Unidades', 
+      insumo: '',
+      cantidad: 0,
+      unidad: 'Unidades',
       operario: '',
       fecha: new Date().toISOString().split('T')[0],
       hora: new Date().toTimeString().slice(0, 5)
@@ -86,18 +164,17 @@ export function Insumos() {
   };
 
   const handleGeneratePDF = (entrega: EntregaInsumo) => {
-    // Crear contenido del PDF
     const content = `
 ╔════════════════════════════════════════════════════════════╗
 ║         GRANDMA'S LIQUEURS - ENTREGA DE INSUMOS           ║
 ╚════════════════════════════════════════════════════════════╝
 
 ID Entrega:         ${entrega.id}
-Insumo:             ${entrega.insumo}
+Producto:           ${entrega.insumo}
 Cantidad:           ${entrega.cantidad} ${entrega.unidad}
 Operario:           ${entrega.operario}
-Fecha:              ${entrega.fecha}
-Hora:               ${entrega.hora}
+Fecha:              ${formatDateEsCo(entrega.fecha)}
+Hora:               ${formatTime(entrega.hora)}
 
 ────────────────────────────────────────────────────────────
 Firma Operario:     _______________________
@@ -108,24 +185,48 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
 ────────────────────────────────────────────────────────────
     `.trim();
 
-    // Mostrar en modal en lugar de descargar
     setPdfContent(content);
     setIsPdfModalOpen(true);
   };
 
-  const handleDelete = async (entrega: EntregaInsumo) => {
+  const handleDownloadPDF = (entrega: EntregaInsumo) => {
+    const content = `
+╔════════════════════════════════════════════════════════════╗
+║         GRANDMA'S LIQUEURS - ENTREGA DE INSUMOS           ║
+╚════════════════════════════════════════════════════════════╝
+
+ID Entrega:         ${entrega.id}
+Producto:           ${entrega.insumo}
+Cantidad:           ${entrega.cantidad} ${entrega.unidad}
+Operario:           ${entrega.operario}
+Fecha:              ${formatDateEsCo(entrega.fecha)}
+Hora:               ${formatTime(entrega.hora)}
+
+────────────────────────────────────────────────────────────
+Firma Operario:     _______________________
+
+Firma Supervisor:   _______________________
+
+Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
+────────────────────────────────────────────────────────────
+    `.trim();
+
+    downloadPdfText(content, `entrega-insumo-${entrega.numero_entrega || entrega.id}.pdf`);
+  };
+
+  const handleAnular = async (entrega: EntregaInsumo) => {
     showAlert({
-      title: '¿Eliminar entrega?',
-      description: `¿Está seguro de eliminar la entrega ${entrega.numero_entrega}?`,
+      title: '¿Anular entrega?',
+      description: `¿Está seguro de anular la entrega ${entrega.numero_entrega}? Esta acción no se puede revertir.`,
       type: 'danger',
-      confirmText: 'Eliminar',
+      confirmText: 'Anular',
       cancelText: 'Cancelar',
       onConfirm: async () => {
         try {
           await entregasAPI.delete(Number(entrega.id));
           await loadEntregas();
         } catch (error) {
-          console.error('Error al eliminar:', error);
+          console.error('Error al anular:', error);
         }
       }
     });
@@ -155,16 +256,59 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         </Button>
       </div>
 
+      <div className="rounded-lg border border-border bg-white p-4 space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <input
+              type="text"
+              value={filters.id}
+              onChange={(event) => setFilters((current) => ({ ...current, id: event.target.value }))}
+              placeholder="Buscar por ID de entrega..."
+              className="w-full pl-10 pr-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <Button
+            variant="outline"
+            icon={<RotateCcw className="w-4 h-4" />}
+            onClick={() => setFilters({ id: '', operario: '', fecha: '' })}
+            disabled={!filters.id.trim() && !filters.operario && !filters.fecha}
+          >
+            Limpiar filtros
+          </Button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filtrar por:</span>
+          <select
+            value={filters.operario}
+            onChange={(event) => setFilters((current) => ({ ...current, operario: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Operario (todos)</option>
+            {operariosOptions.map((operario) => (
+              <option key={operario} value={operario}>
+                {operario}
+              </option>
+            ))}
+          </select>
+          <input
+            type="date"
+            value={filters.fecha}
+            onChange={(event) => setFilters((current) => ({ ...current, fecha: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+        </div>
+      </div>
+
       <DataTable
         columns={columns}
-        data={entregas}
+        data={entregasFiltradas}
         actions={[
           commonActions.view(handleViewDetail),
           commonActions.pdf(handleGeneratePDF),
-          commonActions.delete(handleDelete)
+          commonActions.cancel(handleAnular)
         ]}
-        onSearch={(query) => console.log('Searching:', query)}
-        searchPlaceholder="Buscar entregas..."
       />
 
       {/* Modal de formulario */}
@@ -177,7 +321,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         <Form onSubmit={handleSubmit}>
           <div className="grid grid-cols-2 gap-4">
             <FormField
-              label="Insumo"
+              label="Producto"
               name="insumo"
               type="select"
               value={formData.insumo}
@@ -292,7 +436,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
             {/* Información general */}
             <div className="grid grid-cols-2 gap-6">
               <div>
-                <label className="text-sm text-muted-foreground">Insumo</label>
+                <label className="text-sm text-muted-foreground">Producto</label>
                 <p className="mt-1">{selectedEntrega.insumo}</p>
               </div>
               <div>
@@ -330,7 +474,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
               <Button 
                 variant="outline" 
                 icon={<FileText className="w-4 h-4" />}
-                onClick={() => handleGeneratePDF(selectedEntrega)}
+                onClick={() => handleDownloadPDF(selectedEntrega)}
                 className="flex-1"
               >
                 Descargar PDF
@@ -353,6 +497,20 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         onClose={() => setIsPdfModalOpen(false)}
         title="PDF de Entrega de Insumo"
         size="lg"
+        footer={
+          <FormActions>
+            <Button
+              variant="outline"
+              icon={<Download className="w-4 h-4" />}
+              onClick={() => selectedEntrega && handleDownloadPDF(selectedEntrega)}
+            >
+              Descargar PDF
+            </Button>
+            <Button variant="outline" onClick={() => setIsPdfModalOpen(false)}>
+              Cerrar
+            </Button>
+          </FormActions>
+        }
       >
         <div className="p-4 bg-accent/50 rounded-lg">
           <pre className="text-sm">

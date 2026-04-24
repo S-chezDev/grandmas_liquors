@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, UserCircle, RefreshCcw, Upload } from 'lucide-react';
+import { Plus, UserCircle, Upload, Search, RotateCcw } from 'lucide-react';
 import { AlertDialog } from '../../AlertDialog';
 import { clientes as clientesAPI } from '../../../services/api';
 
@@ -20,9 +20,20 @@ interface Cliente {
   estado: 'Activo' | 'Inactivo';
 }
 
+interface StateChangeRequest {
+  cliente: Cliente;
+  from: Cliente['estado'];
+  to: Cliente['estado'];
+}
+
 export function Clientes() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState({
+    query: '',
+    tipo_documento: '',
+    estado: ''
+  });
 
   // Cargar clientes al montar el componente
   useEffect(() => {
@@ -49,6 +60,9 @@ export function Clientes() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [selectedCliente, setSelectedCliente] = useState<Cliente | null>(null);
+  const [pendingStateChange, setPendingStateChange] = useState<StateChangeRequest | null>(null);
+  const [stateChangeReason, setStateChangeReason] = useState('');
+  const [stateChangeSaving, setStateChangeSaving] = useState(false);
   const [fotoPreview, setFotoPreview] = useState<string | null>(null);
   const [alertState, setAlertState] = useState({
     isOpen: false,
@@ -100,15 +114,36 @@ export function Clientes() {
     { 
       key: 'estado', 
       label: 'Estado',
-      render: (estado: string) => (
-        <span className={`px-3 py-1 rounded-full text-xs ${
-          estado === 'Activo' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-        }`}>
-          {estado}
-        </span>
+      render: (estado: string, cliente: Cliente) => (
+        <select
+          value={estado}
+          onChange={(event) => handleEstadoChangeRequest(cliente, event.target.value as Cliente['estado'])}
+          disabled={stateChangeSaving}
+          className={`min-h-8 rounded-lg border border-transparent px-2.5 py-1 text-xs font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring ${
+            estado === 'Activo' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+          }`}
+        >
+          <option value="Activo">Activo</option>
+          <option value="Inactivo">Inactivo</option>
+        </select>
       )
     }
   ];
+
+  const clientesFiltrados = useMemo(() => {
+    const normalizedQuery = filters.query.trim().toLowerCase();
+
+    return clientes.filter((cliente) => {
+      const matchesQuery =
+        !normalizedQuery ||
+        `${cliente.nombre} ${cliente.apellido}`.toLowerCase().includes(normalizedQuery) ||
+        String(cliente.documento || '').toLowerCase().includes(normalizedQuery) ||
+        String(cliente.email || '').toLowerCase().includes(normalizedQuery);
+      const matchesTipo = !filters.tipo_documento || cliente.tipo_documento === filters.tipo_documento;
+      const matchesEstado = !filters.estado || cliente.estado === filters.estado;
+      return matchesQuery && matchesTipo && matchesEstado;
+    });
+  }, [clientes, filters]);
 
   const handleAdd = () => {
     setSelectedCliente(null);
@@ -149,10 +184,14 @@ export function Clientes() {
           });
         } catch (error) {
           console.error('Error al eliminar cliente:', error);
+          const errorMessage =
+            error instanceof Error && error.message
+              ? error.message
+              : 'No se pudo eliminar el cliente';
           setAlertState({
             isOpen: true,
             title: 'Error',
-            description: 'No se pudo eliminar el cliente',
+            description: errorMessage,
             onConfirm: () => {}
           });
         }
@@ -160,14 +199,49 @@ export function Clientes() {
     });
   };
 
-  const handleToggleEstado = async (cliente: Cliente) => {
-    const nuevoEstado = cliente.estado === 'Activo' ? 'Inactivo' : 'Activo';
+  const handleEstadoChangeRequest = (cliente: Cliente, nuevoEstado: Cliente['estado']) => {
+    if (cliente.estado === nuevoEstado) return;
+
+    setPendingStateChange({
+      cliente,
+      from: cliente.estado,
+      to: nuevoEstado,
+    });
+    setStateChangeReason('');
+  };
+
+  const handleConfirmEstadoChange = async () => {
+    if (!pendingStateChange) return;
+
+    if (pendingStateChange.to === 'Inactivo' && stateChangeReason.trim().length < 10) {
+      setAlertState({
+        isOpen: true,
+        title: 'Motivo requerido',
+        description: 'Para inactivar al cliente debes indicar un motivo de al menos 10 caracteres.',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
     try {
-      await clientesAPI.update(Number(cliente.id), { estado: nuevoEstado });
+      setStateChangeSaving(true);
+      await clientesAPI.update(Number(pendingStateChange.cliente.id), {
+        estado: pendingStateChange.to,
+        observaciones: stateChangeReason.trim() || undefined,
+      });
       await loadClientes();
+      setPendingStateChange(null);
+      setStateChangeReason('');
     } catch (error) {
       console.error('Error al cambiar estado:', error);
+    } finally {
+      setStateChangeSaving(false);
     }
+  };
+
+  const handleCancelEstadoChange = () => {
+    setPendingStateChange(null);
+    setStateChangeReason('');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -209,30 +283,104 @@ export function Clientes() {
         </Button>
       </div>
 
+      <div className="rounded-lg border border-border bg-white p-4 space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <input
+              type="text"
+              value={filters.query}
+              onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))}
+              placeholder="Buscar cliente por nombre, documento o correo..."
+              className="w-full pl-10 pr-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <Button
+            variant="outline"
+            icon={<RotateCcw className="w-4 h-4" />}
+            onClick={() => setFilters({ query: '', tipo_documento: '', estado: '' })}
+            disabled={!filters.query.trim() && !filters.tipo_documento && !filters.estado}
+          >
+            Limpiar filtros
+          </Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filtrar por:</span>
+          <select
+            value={filters.tipo_documento}
+            onChange={(event) => setFilters((current) => ({ ...current, tipo_documento: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Tipo Doc. (todos)</option>
+            <option value="CC">CC</option>
+            <option value="CE">CE</option>
+            <option value="TI">TI</option>
+            <option value="Pasaporte">Pasaporte</option>
+          </select>
+          <select
+            value={filters.estado}
+            onChange={(event) => setFilters((current) => ({ ...current, estado: event.target.value }))}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Estado (todos)</option>
+            <option value="Activo">Activo</option>
+            <option value="Inactivo">Inactivo</option>
+          </select>
+        </div>
+      </div>
+
       {loading ? (
         <div className="text-center py-8">Cargando clientes...</div>
       ) : (
         <DataTable
           columns={columns}
-          data={clientes}
+          data={clientesFiltrados}
           actions={[
             commonActions.view((cliente) => {
               setSelectedCliente(cliente);
               setIsDetailModalOpen(true);
             }),
-            {
-              label: 'Cambiar Estado',
-              icon: <RefreshCcw className="w-4 h-4" />,
-              onClick: handleToggleEstado,
-              variant: 'primary'
-            },
             commonActions.edit(handleEdit),
             commonActions.delete(handleDelete)
           ]}
-          onSearch={(query) => console.log('Searching:', query)}
-          searchPlaceholder="Buscar clientes..."
         />
       )}
+
+      <Modal
+        isOpen={Boolean(pendingStateChange)}
+        onClose={handleCancelEstadoChange}
+        title={`Cambiar estado - Cliente ${pendingStateChange?.cliente.nombre || ''} ${pendingStateChange?.cliente.apellido || ''}`}
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-accent/30 p-4 space-y-1">
+            <p className="text-sm text-muted-foreground">Estado actual: {pendingStateChange?.from || 'N/A'}</p>
+            <p className="text-sm text-muted-foreground">Nuevo estado: {pendingStateChange?.to || 'N/A'}</p>
+          </div>
+
+          {pendingStateChange?.to === 'Inactivo' ? (
+            <FormField
+              label="Motivo del cambio"
+              name="motivo-cambio-cliente"
+              type="textarea"
+              value={stateChangeReason}
+              onChange={(value) => setStateChangeReason(String(value))}
+              rows={3}
+              required
+              placeholder="Explica por qué se inactiva el cliente (mínimo 10 caracteres)"
+            />
+          ) : null}
+
+          <FormActions>
+            <Button variant="outline" onClick={handleCancelEstadoChange} disabled={stateChangeSaving}>
+              Cancelar
+            </Button>
+            <Button onClick={handleConfirmEstadoChange} disabled={stateChangeSaving}>
+              {stateChangeSaving ? 'Guardando...' : 'Confirmar'}
+            </Button>
+          </FormActions>
+        </div>
+      </Modal>
 
       {/* Detail Modal */}
       <Modal 

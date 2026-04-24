@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card } from '../../Card';
 import { Button } from '../../Button';
 import { Form, FormField, FormActions } from '../../Form';
 import { User, Mail, Phone, MapPin, Upload, Lock } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
 import { Modal } from '../../Modal';
+import { useAuth } from '../../AuthContext';
+import { clientes as clientesAPI } from '../../../services/api';
 
 interface PerfilCliente {
   nombre: string;
@@ -17,17 +19,25 @@ interface PerfilCliente {
   foto?: string;
 }
 
+const normalizeTipoDocumento = (value: unknown): PerfilCliente['tipoDocumento'] => {
+  const normalized = String(value || '').trim();
+  if (normalized === 'CE' || normalized === 'TI' || normalized === 'Pasaporte') return normalized;
+  return 'CC';
+};
+
 export function MiPerfil() {
+  const { user, isAuthLoading } = useAuth();
   const [perfil, setPerfil] = useState<PerfilCliente>({
-    nombre: 'Ana',
-    apellido: 'Pérez',
-    email: 'cliente@grandmas.com',
-    telefono: '300 123 4567',
-    direccion: 'Calle 50 #45-23, Laureles, Medellín',
+    nombre: '',
+    apellido: '',
+    email: '',
+    telefono: '',
+    direccion: '',
     tipoDocumento: 'CC',
-    numeroDocumento: '1234567890',
+    numeroDocumento: '',
     foto: undefined
   });
+  const [loadingPerfil, setLoadingPerfil] = useState(true);
 
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState(perfil);
@@ -40,6 +50,53 @@ export function MiPerfil() {
   });
 
   const { showAlert, AlertComponent } = useAlertDialog();
+
+  useEffect(() => {
+    const loadPerfil = async () => {
+      if (!user) {
+        setLoadingPerfil(false);
+        return;
+      }
+
+      try {
+        setLoadingPerfil(true);
+        const clienteData = await clientesAPI.getByUsuarioId(user.id);
+        const nextPerfil: PerfilCliente = {
+          nombre: clienteData?.nombre || user.nombre || '',
+          apellido: clienteData?.apellido || user.apellido || '',
+          email: clienteData?.email || user.email || '',
+          telefono: clienteData?.telefono || '',
+          direccion: clienteData?.direccion || '',
+          tipoDocumento: normalizeTipoDocumento(clienteData?.tipo_documento || clienteData?.tipoDocumento),
+          numeroDocumento: clienteData?.documento || clienteData?.numeroDocumento || '',
+          foto: clienteData?.foto_url || user.foto || undefined,
+        };
+
+        setPerfil(nextPerfil);
+        setFormData(nextPerfil);
+        setFotoPreview(nextPerfil.foto || null);
+      } catch (error) {
+        console.error('Error al cargar el perfil:', error);
+        const fallbackPerfil: PerfilCliente = {
+          nombre: user.nombre || '',
+          apellido: user.apellido || '',
+          email: user.email || '',
+          telefono: '',
+          direccion: '',
+          tipoDocumento: 'CC',
+          numeroDocumento: '',
+          foto: user.foto || undefined
+        };
+        setPerfil(fallbackPerfil);
+        setFormData(fallbackPerfil);
+        setFotoPreview(fallbackPerfil.foto || null);
+      } finally {
+        setLoadingPerfil(false);
+      }
+    };
+
+    void loadPerfil();
+  }, [user]);
 
   const handleFotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -138,7 +195,11 @@ export function MiPerfil() {
         )}
       </div>
 
-      {!isEditing ? (
+      {isAuthLoading || loadingPerfil ? (
+        <Card>
+          <p className="text-muted-foreground">Cargando perfil...</p>
+        </Card>
+      ) : !isEditing ? (
         <>
           {/* Vista de Perfil */}
           <Card>

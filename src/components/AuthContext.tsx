@@ -9,6 +9,7 @@ export interface User {
   nombre: string;
   apellido: string;
   rol: UserRole;
+  permisos?: string[];
   foto?: string;
 }
 
@@ -16,9 +17,15 @@ interface AuthContextType {
   user: User | null;
   isAuthLoading: boolean;
   sessionWarningVersion: number;
-  login: (email: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string, rememberMe?: boolean) => Promise<AuthLoginResult>;
   logout: () => void;
   hasPermission: (module: string, action?: string) => boolean;
+}
+
+export interface AuthLoginResult {
+  success: boolean;
+  message?: string;
+  status?: number;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -35,21 +42,22 @@ const rolePermissions: Record<UserRole, {
     }
   },
   Asesor: {
-    modules: ['dashboard', 'ventas', 'compras'],
+    modules: ['dashboard', 'ventas/clientes', 'ventas/ventas', 'ventas/abonos', 'ventas/pedidos', 'ventas/domicilios', 'compras/proveedores', 'compras/compras', 'compras/productos', 'compras/categorias'],
     actions: {
-      'ventas': ['view', 'create', 'edit', 'pdf'],
       'ventas/clientes': ['view', 'create', 'edit'],
       'ventas/ventas': ['view', 'create', 'pdf'],
       'ventas/pedidos': ['view', 'create', 'edit', 'pdf'],
       'ventas/abonos': ['view', 'create', 'pdf'],
       'ventas/domicilios': ['view'],
-      'compras/productos': ['view']
+      'compras/proveedores': ['view'],
+      'compras/compras': ['view'],
+      'compras/productos': ['view'],
+      'compras/categorias': ['view']
     }
   },
   Productor: {
-    modules: ['dashboard', 'produccion', 'compras'],
+    modules: ['dashboard', 'produccion/insumos', 'produccion/produccion', 'compras/productos', 'compras/compras'],
     actions: {
-      'produccion': ['view', 'create', 'edit', 'pdf'],
       'produccion/insumos': ['view', 'create', 'edit'],
       'produccion/produccion': ['view', 'create', 'edit', 'pdf'],
       'compras/productos': ['view'],
@@ -57,21 +65,109 @@ const rolePermissions: Record<UserRole, {
     }
   },
   Repartidor: {
-    modules: ['dashboard', 'ventas'],
+    modules: ['dashboard', 'ventas/domicilios', 'ventas/pedidos'],
     actions: {
       'ventas/domicilios': ['view', 'edit'],
       'ventas/pedidos': ['view']
     }
   },
   Cliente: {
-    modules: ['cliente'],
+    modules: ['cliente/tienda', 'cliente/pedidos', 'cliente/perfil'],
     actions: {
-      'cliente': ['view', 'create', 'edit'],
       'cliente/tienda': ['view'],
       'cliente/pedidos': ['view', 'create'],
       'cliente/perfil': ['view', 'edit']
     }
   }
+};
+
+const normalizePermissions = (permissions: unknown): string[] => {
+  if (typeof permissions === 'string') {
+    try {
+      const parsed = JSON.parse(permissions);
+      return normalizePermissions(parsed);
+    } catch {
+      return permissions
+        .split(',')
+        .map((permission) => permission.trim())
+        .filter(Boolean);
+    }
+  }
+
+  if (!Array.isArray(permissions)) return [];
+
+  return permissions
+    .filter((permission): permission is string => typeof permission === 'string')
+    .map((permission) => permission.trim())
+    .filter(Boolean);
+};
+
+const permissionAccessMap: Record<string, { modules: string[]; actions: Record<string, string[]> }> = {
+  'Ver Dashboard': { modules: ['dashboard'], actions: { dashboard: ['view'] } },
+  'Ver Usuarios': { modules: ['usuarios'], actions: { usuarios: ['view'] } },
+  'Crear Usuarios': { modules: ['usuarios'], actions: { usuarios: ['create'] } },
+  'Editar Usuarios': { modules: ['usuarios'], actions: { usuarios: ['edit'] } },
+  'Eliminar Usuarios': { modules: ['usuarios'], actions: { usuarios: ['delete'] } },
+  'Ver Roles': { modules: ['configuracion'], actions: { configuracion: ['view'] } },
+  'Asignar Permisos': { modules: ['configuracion'], actions: { configuracion: ['edit'] } },
+  'Ver Proveedores': { modules: ['compras/proveedores'], actions: { 'compras/proveedores': ['view'] } },
+  'Crear Proveedores': { modules: ['compras/proveedores'], actions: { 'compras/proveedores': ['create'] } },
+  'Editar Proveedores': { modules: ['compras/proveedores'], actions: { 'compras/proveedores': ['edit'] } },
+  'Ver Compras': { modules: ['compras/compras'], actions: { 'compras/compras': ['view'] } },
+  'Registrar Compras': { modules: ['compras/compras'], actions: { 'compras/compras': ['create'] } },
+  'Anular Compras': { modules: ['compras/compras'], actions: { 'compras/compras': ['cancel'] } },
+  'Ver Productos': { modules: ['compras/productos'], actions: { 'compras/productos': ['view'] } },
+  'Crear Productos': { modules: ['compras/productos'], actions: { 'compras/productos': ['create'] } },
+  'Editar Productos': { modules: ['compras/productos'], actions: { 'compras/productos': ['edit'] } },
+  'Ver Categorías': { modules: ['compras/categorias'], actions: { 'compras/categorias': ['view'] } },
+  'Crear Categorías': { modules: ['compras/categorias'], actions: { 'compras/categorias': ['create'] } },
+  'Ver Insumos': { modules: ['produccion/insumos'], actions: { 'produccion/insumos': ['view'] } },
+  'Entregar Insumos': { modules: ['produccion/insumos'], actions: { 'produccion/insumos': ['edit'] } },
+  'Ver Producción': { modules: ['produccion/produccion'], actions: { 'produccion/produccion': ['view'] } },
+  'Registrar Producción': { modules: ['produccion/produccion'], actions: { 'produccion/produccion': ['create'] } },
+  'Ver Clientes': { modules: ['ventas/clientes'], actions: { 'ventas/clientes': ['view'] } },
+  'Crear Clientes': { modules: ['ventas/clientes'], actions: { 'ventas/clientes': ['create'] } },
+  'Editar Clientes': { modules: ['ventas/clientes'], actions: { 'ventas/clientes': ['edit'] } },
+  'Ver Ventas': { modules: ['ventas/ventas'], actions: { 'ventas/ventas': ['view'] } },
+  'Registrar Ventas': { modules: ['ventas/ventas'], actions: { 'ventas/ventas': ['create'] } },
+  'Anular Ventas': { modules: ['ventas/ventas'], actions: { 'ventas/ventas': ['cancel'] } },
+  'Ver Abonos': { modules: ['ventas/abonos'], actions: { 'ventas/abonos': ['view'] } },
+  'Registrar Abonos': { modules: ['ventas/abonos'], actions: { 'ventas/abonos': ['create'] } },
+  'Ver Pedidos': { modules: ['ventas/pedidos'], actions: { 'ventas/pedidos': ['view'] } },
+  'Crear Pedidos': { modules: ['ventas/pedidos'], actions: { 'ventas/pedidos': ['create'] } },
+  'Ver Domicilios': { modules: ['ventas/domicilios'], actions: { 'ventas/domicilios': ['view'] } },
+  'Gestionar Domicilios': { modules: ['ventas/domicilios'], actions: { 'ventas/domicilios': ['edit'] } },
+  'Ver Tienda': { modules: ['cliente/tienda'], actions: { 'cliente/tienda': ['view'] } },
+  'Ver Mis Pedidos': { modules: ['cliente/pedidos'], actions: { 'cliente/pedidos': ['view'] } },
+  'Ver Mi Perfil': { modules: ['cliente/perfil'], actions: { 'cliente/perfil': ['view'] } },
+};
+
+const permissionsToAccessMap = (permissions: string[]) => {
+  const modules = new Set<string>();
+  const actions: Record<string, string[]> = {};
+
+  permissions.forEach((permission) => {
+    const access = permissionAccessMap[permission];
+    if (!access) return;
+
+    access.modules.forEach((moduleName) => {
+      modules.add(moduleName);
+    });
+
+    Object.entries(access.actions).forEach(([moduleName, moduleActions]) => {
+      if (!actions[moduleName]) {
+        actions[moduleName] = [];
+      }
+
+      moduleActions.forEach((actionName) => {
+        if (!actions[moduleName].includes(actionName)) {
+          actions[moduleName].push(actionName);
+        }
+      });
+    });
+  });
+
+  return { modules: Array.from(modules), actions };
 };
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -91,6 +187,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       nombre: result.nombre,
       apellido: result.apellido,
       rol: result.rol as UserRole,
+      permisos: normalizePermissions(result.permisos),
     };
   };
 
@@ -182,19 +279,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [user?.id, sessionExpiresAtMs]);
 
-  const login = async (email: string, password: string): Promise<boolean> => {
+  const login = async (email: string, password: string, rememberMe = false): Promise<AuthLoginResult> => {
     try {
-      const result = await auth.login(email, password);
+      const result = await auth.login(email, password, rememberMe);
       const mappedUser = mapUser(result);
       if (mappedUser) {
         setUser(mappedUser);
         setSessionExpiresAtMs(resolveSessionExpiresAt(result));
-        return true;
+        return {
+          success: true,
+          message: 'Inicio de sesión exitoso',
+        };
       }
-      return false;
+      return {
+        success: false,
+        message: 'No se pudo iniciar sesión con las credenciales proporcionadas',
+      };
     } catch (error) {
       console.error('Error de login:', error);
-      return false;
+      return {
+        success: false,
+        message:
+          typeof (error as any)?.message === 'string' && (error as any).message.trim()
+            ? (error as any).message
+            : 'No se pudo iniciar sesión. Intenta nuevamente.',
+        status: Number.isFinite(Number((error as any)?.status)) ? Number((error as any).status) : undefined,
+      };
     }
   };
 
@@ -209,17 +319,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const hasPermission = (module: string, action: string = 'view'): boolean => {
     if (!user) return false;
 
-    const permissions = rolePermissions[user.rol];
+    const permissions = user.permisos?.length
+      ? permissionsToAccessMap(user.permisos)
+      : rolePermissions[user.rol];
     
     // Administrador tiene acceso total
     if (user.rol === 'Administrador') return true;
 
-    // Verificar si tiene acceso al módulo base
-    const moduleBase = module.split('/')[0];
-    if (!permissions.modules.includes(moduleBase)) return false;
+    const normalizedModule = module.replace(/^\/+/, '');
+    if (!normalizedModule) return true;
 
-    // Verificar acción específica
-    const moduleActions = permissions.actions[module] || permissions.actions[moduleBase] || [];
+    if (!permissions.modules.includes(normalizedModule)) return false;
+
+    const moduleActions = permissions.actions[normalizedModule] || [];
     return moduleActions.includes(action);
   };
 
