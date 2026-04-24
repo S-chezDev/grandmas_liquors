@@ -3,11 +3,9 @@ import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Button } from '../../Button';
 import { Form, FormField, FormActions } from '../../Form';
-import { Plus, Eye, Trash2, Minus, DollarSign, Search, RotateCcw, Download } from 'lucide-react';
+import { Plus, Eye, Trash2, Minus, DollarSign, Search, RotateCcw } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
 import { pedidos as pedidosAPI, clientes as clientesAPI, productos as productosAPI } from '../../../services/api';
-import { formatDateEsCo } from '../../../utils/date';
-import { downloadPdfText } from '../../../utils/pdf';
 
 interface Pedido {
   id: string;
@@ -33,14 +31,6 @@ interface ProductoEnPedido {
   cantidad: number;
   precio_unitario: number;
   subtotal: number;
-}
-
-interface PedidoDetalleApi {
-  producto_id: number | string;
-  cantidad: number;
-  precio_unitario: number;
-  subtotal?: number;
-  producto_nombre?: string;
 }
 
 interface StateChangeRequest {
@@ -129,15 +119,6 @@ export function Pedidos() {
     }).format(value);
   };
 
-  const formatDate = (value?: string) => {
-    if (!value) return 'N/A';
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return value;
-    return parsed.toLocaleDateString('es-CO');
-  };
-
-  const isPedidoFinalizado = (estado?: Pedido['estado']) => estado === 'Cancelado' || estado === 'Completado';
-
   const columns: Column[] = [
     { key: 'numero_pedido', label: 'ID Pedido' },
     { key: 'cliente', label: 'Cliente' },
@@ -151,7 +132,7 @@ export function Pedidos() {
       label: 'Total',
       render: (total: number) => formatCurrency(total)
     },
-    { key: 'fecha', label: 'Fecha Pedido', render: (fecha: string) => formatDateEsCo(fecha) },
+    { key: 'fecha', label: 'Fecha Pedido' },
     { key: 'fecha_entrega', label: 'Fecha Entrega' },
     { 
       key: 'estado', 
@@ -198,8 +179,8 @@ export function Pedidos() {
 
   // Agregar producto al pedido
   const handleAgregarProducto = () => {
-    setProductosEnPedido((current) => [
-      ...current,
+    setProductosEnPedido([
+      ...productosEnPedido,
       {
         producto_id: '',
         nombre: '',
@@ -220,11 +201,11 @@ export function Pedidos() {
     const newProductos = [...productosEnPedido];
     
     if (field === 'producto_id') {
-      const producto = productosDisponibles.find((p) => String(p.id) === String(value));
+      const producto = productosDisponibles.find(p => p.id === value);
       if (producto) {
         newProductos[index] = {
           ...newProductos[index],
-          producto_id: String(producto.id),
+          producto_id: producto.id,
           nombre: producto.nombre,
           precio_unitario: producto.precio,
           subtotal: producto.precio * newProductos[index].cantidad
@@ -277,13 +258,11 @@ export function Pedidos() {
     
     try {
       const newPedido = {
-        numero_pedido: `PED-${Date.now()}`,
         cliente_id: formData.cliente_id,
         total: calcularTotal(),
         fecha: formData.fecha,
         fecha_entrega: formData.fecha_entrega,
-        estado: 'Pendiente' as const,
-        detalles: productosEnPedido,
+        estado: 'Pendiente' as const
       };
 
       const createResult: any = await pedidosAPI.create(newPedido);
@@ -376,51 +355,25 @@ export function Pedidos() {
     setStateChangeReason('');
   };
 
-  const handleEdit = async (pedido: Pedido) => {
-    if (isPedidoFinalizado(pedido.estado)) {
-      showAlert({
-        title: 'Pedido bloqueado',
-        description: 'No se puede editar un pedido Completado o Cancelado.',
-        type: 'warning',
-        confirmText: 'Entendido',
-        onConfirm: () => {},
-      });
-      return;
-    }
-
-    try {
-      const pedidoCompleto: any = await pedidosAPI.getById(Number(pedido.id));
-      const detalles = Array.isArray(pedidoCompleto?.detalles)
-        ? pedidoCompleto.detalles
-        : [];
-
-      setSelectedPedido(pedidoCompleto || pedido);
-      setSelectedEstado((pedidoCompleto?.estado || pedido.estado) as Pedido['estado']);
-      setFormData({
-        cliente_id: Number(pedidoCompleto?.cliente_id ?? pedido.cliente_id),
-        fecha: pedidoCompleto?.fecha ?? pedido.fecha,
-        fecha_entrega: pedidoCompleto?.fecha_entrega ?? pedido.fecha_entrega
-      });
-      setProductosEnPedido(
-        detalles.map((detalle: PedidoDetalleApi) => ({
-          producto_id: String(detalle.producto_id),
-          nombre: detalle.producto_nombre || '',
-          cantidad: Number(detalle.cantidad),
-          precio_unitario: Number(detalle.precio_unitario),
-          subtotal: Number(detalle.subtotal ?? Number(detalle.cantidad) * Number(detalle.precio_unitario)),
-        }))
-      );
-      setIsEditModalOpen(true);
-    } catch (error) {
-      console.error('Error cargando pedido para edición:', error);
-      showAlert({
-        title: 'Error',
-        description: 'No se pudo cargar el pedido para editarlo.',
-        type: 'danger',
-        confirmText: 'Entendido',
-        onConfirm: () => {},
-      });
-    }
+  const handleEdit = (pedido: Pedido) => {
+    setSelectedPedido(pedido);
+    setSelectedEstado(pedido.estado);
+    setFormData({
+      cliente_id: pedido.cliente_id,
+      fecha: pedido.fecha,
+      fecha_entrega: pedido.fecha_entrega
+    });
+    // Inicializar con productos de ejemplo
+    setProductosEnPedido([
+      {
+        producto_id: 'PROD-001',
+        nombre: 'Producto ejemplo',
+        cantidad: 2,
+        precio_unitario: 120000,
+        subtotal: 240000
+      }
+    ]);
+    setIsEditModalOpen(true);
   };
 
   const handleUpdatePedido = async (e: React.FormEvent) => {
@@ -451,13 +404,11 @@ export function Pedidos() {
     if (selectedPedido) {
       try {
         await pedidosAPI.update(Number(selectedPedido.id), {
-          numero_pedido: selectedPedido.numero_pedido || `PED-${selectedPedido.id}`,
           cliente_id: formData.cliente_id,
           fecha: formData.fecha,
           fecha_entrega: formData.fecha_entrega,
           total: calcularTotal(),
-          estado: selectedEstado,
-          detalles: productosEnPedido,
+          estado: selectedEstado
         });
         await loadPedidos();
         setIsEditModalOpen(false);
@@ -493,7 +444,7 @@ export function Pedidos() {
     return mockAbonos.filter(a => a.pedido === pedidoParaAbonos.id);
   };
 
-  const buildPdfContent = (pedido: Pedido) => {
+  const handleGeneratePDF = (pedido: Pedido) => {
     const abonos = mockAbonos.filter(a => a.pedido === pedido.id);
     const totalAbonado = abonos.reduce((sum, a) => sum + a.monto, 0);
     const saldoPendiente = pedido.total - totalAbonado;
@@ -504,7 +455,7 @@ export function Pedidos() {
         ).join('\n')
       : 'Sin abonos registrados';
 
-    return `
+    const content = `
 ╔════════════════════════════════════════════════════════════╗
 ║           GRANDMA'S LIQUEURS - DETALLE DE PEDIDO          ║
 ╚════════════════════════════════════════════════════════════╝
@@ -540,15 +491,9 @@ Firma Autorizado:   _______________________
 Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
 ──────���─────────────────────────────────────────────────────
     `.trim();
-  };
 
-  const handleGeneratePDF = (pedido: Pedido) => {
-    setPdfContent(buildPdfContent(pedido));
+    setPdfContent(content);
     setIsPdfModalOpen(true);
-  };
-
-  const handleDownloadPDF = (pedido: Pedido) => {
-    downloadPdfText(buildPdfContent(pedido), `pedido-${pedido.numero_pedido || pedido.id}.pdf`);
   };
 
   return (
@@ -751,7 +696,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                           >
                             <option value="">Seleccionar producto...</option>
                             {productosDisponibles.map(p => (
-                              <option key={p.id} value={String(p.id)}>{p.nombre}</option>
+                              <option key={p.id} value={p.id}>{p.nombre}</option>
                             ))}
                           </select>
                         </td>
@@ -967,7 +912,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                             >
                               <option value="">Seleccionar producto...</option>
                               {productosDisponibles.map(p => (
-                                <option key={p.id} value={String(p.id)}>{p.nombre}</option>
+                                <option key={p.id} value={p.id}>{p.nombre}</option>
                               ))}
                             </select>
                           </td>
@@ -1034,13 +979,12 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                   setSelectedPedido(null);
                   setProductosEnPedido([]);
                 }}
-                type="button"
               >
                 Cerrar
               </Button>
               <Button 
                 type="submit"
-                disabled={isPedidoFinalizado(selectedPedido.estado)}
+                disabled={selectedPedido.estado === 'Cancelado'}
               >
                 Guardar Cambios
               </Button>
@@ -1116,20 +1060,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         onClose={() => setIsPdfModalOpen(false)}
         title={`PDF del Pedido ${selectedPedido?.id}`}
         size="lg"
-        footer={
-          <FormActions>
-            <Button
-              variant="outline"
-              icon={<Download className="w-4 h-4" />}
-              onClick={() => selectedPedido && handleDownloadPDF(selectedPedido)}
-            >
-              Descargar PDF
-            </Button>
-            <Button variant="outline" onClick={() => setIsPdfModalOpen(false)}>
-              Cerrar
-            </Button>
-          </FormActions>
-        }
       >
         <div className="space-y-4">
           <pre className="p-4 bg-accent rounded-lg text-sm">

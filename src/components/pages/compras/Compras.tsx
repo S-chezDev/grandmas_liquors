@@ -3,12 +3,10 @@ import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, Trash2, RotateCcw, Search, FileText, Download } from 'lucide-react';
+import { Plus, Trash2, RotateCcw, Search, FileText } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
 import { compras as comprasAPI, productos as productosAPI, proveedores as proveedoresAPI } from '../../../services/api';
 import { useAuth } from '../../AuthContext';
-import { formatDateEsCo } from '../../../utils/date';
-import { downloadPdfText } from '../../../utils/pdf';
 
 interface CompraItem {
   productoId: number;
@@ -242,50 +240,10 @@ export function Compras() {
     }).format(value);
   };
 
-  const buildPdfContent = (compra: Compra) => {
-    const items = Array.isArray(compra.items) ? compra.items : [];
-    const itemsDetail = items.length > 0
-      ? items.map((item, index) => 
-      `${index + 1}. ${item.producto}
-   Cantidad: ${item.cantidad} unidades
-   Precio Unitario: ${formatCurrency(item.precioUnitario)}
-   Subtotal: ${formatCurrency(item.subtotal)}`
-        ).join('\n\n')
-      : 'Sin detalle de productos registrado';
-
-    return `
-╔════════════════════════════════════════════════════════════╗
-║           GRANDMA'S LIQUEURS - ORDEN DE COMPRA            ║
-╚════════════════════════════════════════════════════════════╝
-
-ID Compra:          ${compra.id}
-Proveedor:          ${compra.proveedor}
-Fecha:              ${formatDateEsCo(compra.fecha)}
-Estado:             ${compra.estado}
-
-────────────────────────────────────────────────────────────
-PRODUCTOS COMPRADOS:
-────────────────────────────────────────────────────────────
-
-${itemsDetail}
-
-────────────────────────────────────────────────────────────
-SUBTOTAL:           ${formatCurrency(compra.subtotal)}
-IVA (19%):          ${formatCurrency(compra.iva)}
-TOTAL:              ${formatCurrency(compra.total)}
-────────────────────────────────────────────────────────────
-
-Firma Autorización: _______________________
-
-Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
-────────────────────────────────────────────────────────────
-    `.trim();
-  };
-
   const columns: Column[] = [
     { key: 'id', label: 'ID Compra' },
     { key: 'proveedor', label: 'Proveedor' },
-    { key: 'fecha', label: 'Fecha', render: (fecha: string) => formatDateEsCo(fecha) },
+    { key: 'fecha', label: 'Fecha' },
     { 
       key: 'items', 
       label: 'Items',
@@ -509,12 +467,46 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
   };
 
   const handleGeneratePDF = (compra: Compra) => {
-    setPdfContent(buildPdfContent(compra));
-    setIsPdfModalOpen(true);
-  };
+    const items = Array.isArray(compra.items) ? compra.items : [];
+    const itemsDetail = items.length > 0
+      ? items.map((item, index) => 
+      `${index + 1}. ${item.producto}
+   Cantidad: ${item.cantidad} unidades
+   Precio Unitario: ${formatCurrency(item.precioUnitario)}
+   Subtotal: ${formatCurrency(item.subtotal)}`
+        ).join('\n\n')
+      : 'Sin detalle de productos registrado';
 
-  const handleDownloadPDF = (compra: Compra) => {
-    downloadPdfText(buildPdfContent(compra), `compra-${compra.id}.pdf`);
+    const content = `
+╔════════════════════════════════════════════════════════════╗
+║           GRANDMA'S LIQUEURS - ORDEN DE COMPRA            ║
+╚════════════════════════════════════════════════════════════╝
+
+ID Compra:          ${compra.id}
+Proveedor:          ${compra.proveedor}
+Fecha:              ${compra.fecha}
+Estado:             ${compra.estado}
+
+────────────────────────────────────────────────────────────
+PRODUCTOS COMPRADOS:
+────────────────────────────────────────────────────────────
+
+${itemsDetail}
+
+────────────────────────────────────────────────────────────
+SUBTOTAL:           ${formatCurrency(compra.subtotal)}
+IVA (19%):          ${formatCurrency(compra.iva)}
+TOTAL:              ${formatCurrency(compra.total)}
+────────────────────────────────────────────────────────────
+
+Firma Autorización: _______________________
+
+Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
+────────────────────────────────────────────────────────────
+    `.trim();
+
+    setPdfContent(content);
+    setIsPdfModalOpen(true);
   };
 
   const handleAddItem = () => {
@@ -1106,16 +1098,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         onClose={() => setIsPdfModalOpen(false)}
         title="Orden de Compra"
         size="xl"
-        footer={
-          <FormActions>
-            <Button variant="outline" icon={<Download className="w-4 h-4" />} onClick={() => selectedCompra && handleDownloadPDF(selectedCompra)}>
-              Descargar PDF
-            </Button>
-            <Button variant="outline" onClick={() => setIsPdfModalOpen(false)}>
-              Cerrar
-            </Button>
-          </FormActions>
-        }
       >
         <pre className="whitespace-pre-wrap text-sm">
           {pdfContent}

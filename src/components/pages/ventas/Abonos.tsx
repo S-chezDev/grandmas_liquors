@@ -3,11 +3,9 @@ import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, Search, RotateCcw, Download } from 'lucide-react';
+import { Plus, Search, RotateCcw } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
 import { abonos as abonosAPI, pedidos as pedidosAPI } from '../../../services/api';
-import { formatDateEsCo } from '../../../utils/date';
-import { downloadPdfText } from '../../../utils/pdf';
 
 interface Abono {
   id: string;
@@ -79,33 +77,6 @@ export function Abonos() {
     }).format(value);
   };
 
-  const buildPdfContent = (abono: Abono) => `
-╔════════════════════════════════════════════════════════════╗
-║         GRANDMA'S LIQUEURS - COMPROBANTE DE ABONO         ║
-╚════════════════════════════════════════════════════════════╝
-
-ID Abono:           ${abono.id}
-Número Abono:       ${abono.numero_abono}
-Pedido ID:          ${abono.pedido_id}
-Cliente:            ${abono.cliente_nombre || 'N/A'}
-Monto:              ${formatCurrency(abono.monto)}
-Fecha:              ${formatDateEsCo(abono.fecha)}
-Método de Pago:     ${abono.metodo_pago}
-Estado:             ${abono.estado}
-
-────────────────────────────────────────────────────────────
-Este comprobante certifica el pago parcial del pedido
-${abono.pedido_id} por un valor de ${formatCurrency(abono.monto)}
-────────────────────────────────────────────────────────────
-
-Firma Cliente:      _______________________
-
-Firma Autorizado:   _______________________
-
-Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
-────────────────────────────────────────────────────────────
-  `.trim();
-
   const columns: Column[] = [
     { key: 'numero_abono', label: 'Número Abono' },
     { key: 'pedido_id', label: 'Pedido ID' },
@@ -114,7 +85,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
       label: 'Monto',
       render: (monto: number) => formatCurrency(monto)
     },
-    { key: 'fecha', label: 'Fecha', render: (fecha: string) => formatDateEsCo(fecha) },
+    { key: 'fecha', label: 'Fecha' },
     { key: 'metodo_pago', label: 'Método Pago' },
     { 
       key: 'estado', 
@@ -219,12 +190,35 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
   };
 
   const handleGeneratePDF = (abono: Abono) => {
-    setPdfContent(buildPdfContent(abono));
-    setIsPdfModalOpen(true);
-  };
+    const content = `
+╔════════════════════════════════════════════════════════════╗
+║         GRANDMA'S LIQUEURS - COMPROBANTE DE ABONO         ║
+╚════════════════════════════════════════════════════════════╝
 
-  const handleDownloadPDF = (abono: Abono) => {
-    downloadPdfText(buildPdfContent(abono), `abono-${abono.numero_abono || abono.id}.pdf`);
+ID Abono:           ${abono.id}
+Número Abono:       ${abono.numero_abono}
+Pedido ID:          ${abono.pedido_id}
+Cliente:            ${abono.cliente_nombre || 'N/A'}
+Monto:              ${formatCurrency(abono.monto)}
+Fecha:              ${abono.fecha}
+Método de Pago:     ${abono.metodo_pago}
+Estado:             ${abono.estado}
+
+────────────────────────────────────────────────────────────
+Este comprobante certifica el pago parcial del pedido
+${abono.pedido_id} por un valor de ${formatCurrency(abono.monto)}
+────────────────────────────────────────────────────────────
+
+Firma Cliente:      _______________________
+
+Firma Autorizado:   _______________________
+
+Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
+────────────────────────────────────────────────────────────
+    `.trim();
+
+    setPdfContent(content);
+    setIsPdfModalOpen(true);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -373,16 +367,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
       {/* Detail Modal */}
       <Modal 
         isOpen={isDetailModalOpen} 
-        footer={
-          <FormActions>
-            <Button variant="outline" icon={<Download className="w-4 h-4" />} onClick={() => selectedAbono && handleDownloadPDF(selectedAbono)}>
-              Descargar PDF
-            </Button>
-            <Button variant="outline" onClick={() => setIsPdfModalOpen(false)}>
-              Cerrar
-            </Button>
-          </FormActions>
-        }
         onClose={() => setIsDetailModalOpen(false)}
         title={`Detalle de Abono ${selectedAbono?.id}`}
         size="lg"

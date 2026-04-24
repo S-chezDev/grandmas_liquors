@@ -7,7 +7,7 @@ interface CardProps {
 
 export function Card({ children, className = '' }: CardProps) {
   return (
-    <div className={`bg-white rounded-lg border border-border p-6 ${className}`}>
+    <div className={`bg-white/95 rounded-2xl border border-border/80 shadow-[0_10px_30px_rgba(15,23,42,0.06)] ring-1 ring-black/5 p-1 ${className}`}>
       {children}
     </div>
   );
@@ -38,7 +38,7 @@ export function StatCard({ title, value, icon, trend, description }: StatCardPro
             </p>
           )}
         </div>
-        <div className="p-3 bg-primary/10 rounded-lg text-primary">
+        <div className="p-3 bg-primary/10 rounded-xl text-primary ring-1 ring-primary/10">
           {icon}
         </div>
       </div>

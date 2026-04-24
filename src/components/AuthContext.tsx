@@ -42,22 +42,21 @@ const rolePermissions: Record<UserRole, {
     }
   },
   Asesor: {
-    modules: ['dashboard', 'ventas/clientes', 'ventas/ventas', 'ventas/abonos', 'ventas/pedidos', 'ventas/domicilios', 'compras/proveedores', 'compras/compras', 'compras/productos', 'compras/categorias'],
+    modules: ['dashboard', 'ventas', 'compras'],
     actions: {
+      'ventas': ['view', 'create', 'edit', 'pdf'],
       'ventas/clientes': ['view', 'create', 'edit'],
       'ventas/ventas': ['view', 'create', 'pdf'],
       'ventas/pedidos': ['view', 'create', 'edit', 'pdf'],
       'ventas/abonos': ['view', 'create', 'pdf'],
       'ventas/domicilios': ['view'],
-      'compras/proveedores': ['view'],
-      'compras/compras': ['view'],
-      'compras/productos': ['view'],
-      'compras/categorias': ['view']
+      'compras/productos': ['view']
     }
   },
   Productor: {
-    modules: ['dashboard', 'produccion/insumos', 'produccion/produccion', 'compras/productos', 'compras/compras'],
+    modules: ['dashboard', 'produccion', 'compras'],
     actions: {
+      'produccion': ['view', 'create', 'edit', 'pdf'],
       'produccion/insumos': ['view', 'create', 'edit'],
       'produccion/produccion': ['view', 'create', 'edit', 'pdf'],
       'compras/productos': ['view'],
@@ -65,15 +64,16 @@ const rolePermissions: Record<UserRole, {
     }
   },
   Repartidor: {
-    modules: ['dashboard', 'ventas/domicilios', 'ventas/pedidos'],
+    modules: ['dashboard', 'ventas'],
     actions: {
       'ventas/domicilios': ['view', 'edit'],
       'ventas/pedidos': ['view']
     }
   },
   Cliente: {
-    modules: ['cliente/tienda', 'cliente/pedidos', 'cliente/perfil'],
+    modules: ['cliente'],
     actions: {
+      'cliente': ['view', 'create', 'edit'],
       'cliente/tienda': ['view'],
       'cliente/pedidos': ['view', 'create'],
       'cliente/perfil': ['view', 'edit']
@@ -110,36 +110,33 @@ const permissionAccessMap: Record<string, { modules: string[]; actions: Record<s
   'Eliminar Usuarios': { modules: ['usuarios'], actions: { usuarios: ['delete'] } },
   'Ver Roles': { modules: ['configuracion'], actions: { configuracion: ['view'] } },
   'Asignar Permisos': { modules: ['configuracion'], actions: { configuracion: ['edit'] } },
-  'Ver Proveedores': { modules: ['compras/proveedores'], actions: { 'compras/proveedores': ['view'] } },
-  'Crear Proveedores': { modules: ['compras/proveedores'], actions: { 'compras/proveedores': ['create'] } },
-  'Editar Proveedores': { modules: ['compras/proveedores'], actions: { 'compras/proveedores': ['edit'] } },
-  'Ver Compras': { modules: ['compras/compras'], actions: { 'compras/compras': ['view'] } },
-  'Registrar Compras': { modules: ['compras/compras'], actions: { 'compras/compras': ['create'] } },
-  'Anular Compras': { modules: ['compras/compras'], actions: { 'compras/compras': ['cancel'] } },
-  'Ver Productos': { modules: ['compras/productos'], actions: { 'compras/productos': ['view'] } },
-  'Crear Productos': { modules: ['compras/productos'], actions: { 'compras/productos': ['create'] } },
-  'Editar Productos': { modules: ['compras/productos'], actions: { 'compras/productos': ['edit'] } },
-  'Ver Categorías': { modules: ['compras/categorias'], actions: { 'compras/categorias': ['view'] } },
-  'Crear Categorías': { modules: ['compras/categorias'], actions: { 'compras/categorias': ['create'] } },
-  'Ver Insumos': { modules: ['produccion/insumos'], actions: { 'produccion/insumos': ['view'] } },
-  'Entregar Insumos': { modules: ['produccion/insumos'], actions: { 'produccion/insumos': ['edit'] } },
-  'Ver Producción': { modules: ['produccion/produccion'], actions: { 'produccion/produccion': ['view'] } },
-  'Registrar Producción': { modules: ['produccion/produccion'], actions: { 'produccion/produccion': ['create'] } },
-  'Ver Clientes': { modules: ['ventas/clientes'], actions: { 'ventas/clientes': ['view'] } },
-  'Crear Clientes': { modules: ['ventas/clientes'], actions: { 'ventas/clientes': ['create'] } },
-  'Editar Clientes': { modules: ['ventas/clientes'], actions: { 'ventas/clientes': ['edit'] } },
-  'Ver Ventas': { modules: ['ventas/ventas'], actions: { 'ventas/ventas': ['view'] } },
-  'Registrar Ventas': { modules: ['ventas/ventas'], actions: { 'ventas/ventas': ['create'] } },
-  'Anular Ventas': { modules: ['ventas/ventas'], actions: { 'ventas/ventas': ['cancel'] } },
-  'Ver Abonos': { modules: ['ventas/abonos'], actions: { 'ventas/abonos': ['view'] } },
-  'Registrar Abonos': { modules: ['ventas/abonos'], actions: { 'ventas/abonos': ['create'] } },
-  'Ver Pedidos': { modules: ['ventas/pedidos'], actions: { 'ventas/pedidos': ['view'] } },
-  'Crear Pedidos': { modules: ['ventas/pedidos'], actions: { 'ventas/pedidos': ['create'] } },
-  'Ver Domicilios': { modules: ['ventas/domicilios'], actions: { 'ventas/domicilios': ['view'] } },
-  'Gestionar Domicilios': { modules: ['ventas/domicilios'], actions: { 'ventas/domicilios': ['edit'] } },
-  'Ver Tienda': { modules: ['cliente/tienda'], actions: { 'cliente/tienda': ['view'] } },
-  'Ver Mis Pedidos': { modules: ['cliente/pedidos'], actions: { 'cliente/pedidos': ['view'] } },
-  'Ver Mi Perfil': { modules: ['cliente/perfil'], actions: { 'cliente/perfil': ['view'] } },
+  'Ver Proveedores': { modules: ['compras'], actions: { compras: ['view'] } },
+  'Crear Proveedores': { modules: ['compras'], actions: { compras: ['create'] } },
+  'Editar Proveedores': { modules: ['compras'], actions: { compras: ['edit'] } },
+  'Ver Compras': { modules: ['compras'], actions: { compras: ['view'] } },
+  'Registrar Compras': { modules: ['compras'], actions: { compras: ['create'] } },
+  'Anular Compras': { modules: ['compras'], actions: { compras: ['cancel'] } },
+  'Ver Productos': { modules: ['compras'], actions: { compras: ['view'] } },
+  'Crear Productos': { modules: ['compras'], actions: { compras: ['create'] } },
+  'Editar Productos': { modules: ['compras'], actions: { compras: ['edit'] } },
+  'Ver Categorías': { modules: ['compras'], actions: { compras: ['view'] } },
+  'Crear Categorías': { modules: ['compras'], actions: { compras: ['create'] } },
+  'Ver Insumos': { modules: ['produccion'], actions: { produccion: ['view'] } },
+  'Entregar Insumos': { modules: ['produccion'], actions: { produccion: ['edit'] } },
+  'Ver Producción': { modules: ['produccion'], actions: { produccion: ['view'] } },
+  'Registrar Producción': { modules: ['produccion'], actions: { produccion: ['create'] } },
+  'Ver Clientes': { modules: ['ventas'], actions: { ventas: ['view'] } },
+  'Crear Clientes': { modules: ['ventas'], actions: { ventas: ['create'] } },
+  'Editar Clientes': { modules: ['ventas'], actions: { ventas: ['edit'] } },
+  'Ver Ventas': { modules: ['ventas'], actions: { ventas: ['view'] } },
+  'Registrar Ventas': { modules: ['ventas'], actions: { ventas: ['create'] } },
+  'Anular Ventas': { modules: ['ventas'], actions: { ventas: ['cancel'] } },
+  'Ver Abonos': { modules: ['ventas'], actions: { ventas: ['view'] } },
+  'Registrar Abonos': { modules: ['ventas'], actions: { ventas: ['create'] } },
+  'Ver Pedidos': { modules: ['ventas'], actions: { ventas: ['view'] } },
+  'Crear Pedidos': { modules: ['ventas'], actions: { ventas: ['create'] } },
+  'Ver Domicilios': { modules: ['ventas'], actions: { ventas: ['view'] } },
+  'Gestionar Domicilios': { modules: ['ventas'], actions: { ventas: ['edit'] } },
 };
 
 const permissionsToAccessMap = (permissions: string[]) => {
@@ -326,12 +323,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Administrador tiene acceso total
     if (user.rol === 'Administrador') return true;
 
-    const normalizedModule = module.replace(/^\/+/, '');
-    if (!normalizedModule) return true;
+    // Verificar si tiene acceso al módulo base
+    const moduleBase = module.split('/')[0];
+    if (!permissions.modules.includes(moduleBase)) return false;
 
-    if (!permissions.modules.includes(normalizedModule)) return false;
-
-    const moduleActions = permissions.actions[normalizedModule] || [];
+    // Verificar acción específica
+    const moduleActions = permissions.actions[module] || permissions.actions[moduleBase] || [];
     return moduleActions.includes(action);
   };
 

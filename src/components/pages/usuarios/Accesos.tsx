@@ -1,11 +1,16 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Card } from '../../Card';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { LogIn, Lock, Mail } from 'lucide-react';
+import { LogIn, Lock, Mail, CheckCircle2, Circle } from 'lucide-react';
+import { useAlertDialog } from '../../AlertDialog';
+import { useAuth } from '../../AuthContext';
+import { auth } from '../../../services/api';
 
 export function Accesos() {
   const [activeTab, setActiveTab] = useState<'login' | 'change-password' | 'reset'>('login');
+  const { login } = useAuth();
+  const { showAlert, AlertComponent } = useAlertDialog();
   
   const [loginData, setLoginData] = useState({ email: '', password: '' });
   const [changePasswordData, setChangePasswordData] = useState({ 
@@ -15,27 +20,123 @@ export function Accesos() {
   });
   const [resetData, setResetData] = useState({ email: '' });
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    alert('Iniciando sesión...');
-  };
+  const passwordChecks = useMemo(() => {
+    const value = String(changePasswordData.newPassword || '');
+    return {
+      minLength: value.length >= 8,
+      uppercase: /[A-Z]/.test(value),
+      number: /\d/.test(value),
+    };
+  }, [changePasswordData.newPassword]);
 
-  const handleChangePassword = (e: React.FormEvent) => {
+  const isNewPasswordValid = passwordChecks.minLength && passwordChecks.uppercase && passwordChecks.number;
+  const passwordsMatch =
+    changePasswordData.confirmPassword.length > 0 &&
+    changePasswordData.newPassword === changePasswordData.confirmPassword;
+
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (changePasswordData.newPassword !== changePasswordData.confirmPassword) {
-      alert('Las contraseñas no coinciden');
+
+    const result = await login(loginData.email, loginData.password, false);
+
+    if (result.success) {
+      showAlert({
+        title: 'Inicio de sesión exitoso',
+        description: 'Sesión iniciada correctamente.',
+        type: 'success',
+        confirmText: 'Aceptar',
+        onConfirm: () => {},
+      });
       return;
     }
-    alert('Contraseña actualizada correctamente');
+
+    showAlert({
+      title: 'No fue posible iniciar sesión',
+      description: result.message || 'Credenciales incorrectas.',
+      type: 'danger',
+      confirmText: 'Entendido',
+      onConfirm: () => {},
+    });
   };
 
-  const handleReset = (e: React.FormEvent) => {
+  const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    alert(`Se ha enviado un enlace de recuperación a ${resetData.email}`);
+
+    if (!isNewPasswordValid) {
+      showAlert({
+        title: 'Nueva contraseña inválida',
+        description: 'La nueva contraseña debe tener mínimo 8 caracteres, una mayúscula y un número.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
+    if (changePasswordData.newPassword !== changePasswordData.confirmPassword) {
+      showAlert({
+        title: 'Contraseñas no coinciden',
+        description: 'La confirmación no coincide con la nueva contraseña.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
+    try {
+      await auth.changePassword({
+        currentPassword: changePasswordData.currentPassword,
+        newPassword: changePasswordData.newPassword,
+        confirmPassword: changePasswordData.confirmPassword,
+      });
+
+      showAlert({
+        title: 'Contraseña actualizada',
+        description: 'La contraseña se actualizó correctamente.',
+        type: 'success',
+        confirmText: 'Aceptar',
+        onConfirm: () => {},
+      });
+
+      setChangePasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    } catch (error: any) {
+      showAlert({
+        title: 'No se pudo cambiar la contraseña',
+        description: error?.message || 'Ocurrió un error al actualizar la contraseña.',
+        type: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+    }
+  };
+
+  const handleReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    try {
+      await auth.requestPasswordReset(resetData.email);
+      showAlert({
+        title: 'Recuperación enviada',
+        description: `Se envió el código de recuperación a ${resetData.email}.`,
+        type: 'success',
+        confirmText: 'Aceptar',
+        onConfirm: () => {},
+      });
+    } catch (error: any) {
+      showAlert({
+        title: 'No se pudo enviar la recuperación',
+        description: error?.message || 'No fue posible enviar el código de recuperación.',
+        type: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+    }
   };
 
   return (
     <div className="space-y-6">
+      {AlertComponent}
       <div>
         <h2>Gestión de Accesos</h2>
         <p className="text-muted-foreground">Administra el acceso y seguridad del sistema</p>
@@ -150,6 +251,42 @@ export function Accesos() {
                 placeholder="••••••••"
                 required
               />
+
+              <div className="rounded-lg border border-border bg-accent/30 p-3 space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">Validación en tiempo real</p>
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2 text-sm">
+                    {passwordChecks.minLength ? (
+                      <CheckCircle2 className="w-4 h-4 text-green-600" />
+                    ) : (
+                      <Circle className="w-4 h-4 text-muted-foreground" />
+                    )}
+                    <span className={passwordChecks.minLength ? 'text-foreground' : 'text-muted-foreground'}>
+                      Mínimo 8 caracteres
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm">
+                    {passwordChecks.uppercase ? (
+                      <CheckCircle2 className="w-4 h-4 text-green-600" />
+                    ) : (
+                      <Circle className="w-4 h-4 text-muted-foreground" />
+                    )}
+                    <span className={passwordChecks.uppercase ? 'text-foreground' : 'text-muted-foreground'}>
+                      Al menos una letra mayúscula
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm">
+                    {passwordChecks.number ? (
+                      <CheckCircle2 className="w-4 h-4 text-green-600" />
+                    ) : (
+                      <Circle className="w-4 h-4 text-muted-foreground" />
+                    )}
+                    <span className={passwordChecks.number ? 'text-foreground' : 'text-muted-foreground'}>
+                      Al menos un número
+                    </span>
+                  </div>
+                </div>
+              </div>
               
               <FormField
                 label="Confirmar Nueva Contraseña"
@@ -161,8 +298,22 @@ export function Accesos() {
                 required
               />
 
+              {changePasswordData.confirmPassword.length > 0 && !passwordsMatch ? (
+                <p className="text-sm text-destructive">La confirmación de contraseña no coincide.</p>
+              ) : null}
+
               <FormActions>
-                <Button type="submit" className="w-full">
+                <Button
+                  type="submit"
+                  className="w-full"
+                  disabled={
+                    !changePasswordData.currentPassword ||
+                    !changePasswordData.newPassword ||
+                    !changePasswordData.confirmPassword ||
+                    !isNewPasswordValid ||
+                    !passwordsMatch
+                  }
+                >
                   Cambiar Contraseña
                 </Button>
               </FormActions>

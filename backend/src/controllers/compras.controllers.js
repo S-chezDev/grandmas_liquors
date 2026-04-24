@@ -14,26 +14,30 @@ module.exports = {
       const compra = await models.Compras.getById(req.params.id);
       if (!compra) return res.status(404).json({ success: false, message: 'Compra no encontrada' });
       const detalles = await models.Compras.getDetalles(req.params.id);
-      res.json({ success: true, data: { ...compra, detalles } });
+      const historial_estados = await models.Compras.getEstadoHistorial(req.params.id);
+      res.json({ success: true, data: { ...compra, detalles, historial_estados } });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
     }
   },
   create: async (req, res) => {
     try {
-      const id = await models.Compras.create(req.body);
+      const id = await models.Compras.create(req.body, { usuarioId: req.user?.id || null });
       res.status(201).json({ success: true, id, message: 'Compra creada exitosamente' });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      res.status(error.statusCode || 500).json({ success: false, message: error.message, details: error.details });
     }
   },
   addProducto: async (req, res) => {
     try {
-      const { compraId, productoId, cantidad, precioUnitario } = req.body;
-      await models.Compras.addDetalle(compraId, productoId, cantidad, precioUnitario);
+      const { compraId, productoId, cantidad, precioUnitario, permisoExtraordinario, motivoPermiso } = req.body;
+      await models.Compras.addDetalle(compraId, productoId, cantidad, precioUnitario, {
+        permisoExtraordinario,
+        motivoPermiso,
+      });
       res.status(201).json({ success: true, message: 'Producto agregado a la compra' });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      res.status(error.statusCode || 500).json({ success: false, message: error.message, details: error.details });
     }
   },
   update: async (req, res) => {
@@ -41,7 +45,33 @@ module.exports = {
       await models.Compras.update(req.params.id, req.body);
       res.json({ success: true, message: 'Compra actualizada exitosamente' });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      res.status(error.statusCode || 500).json({ success: false, message: error.message, details: error.details });
+    }
+  },
+  updateStatus: async (req, res) => {
+    try {
+      const rol = String(req.user?.rol || '');
+      if (!['Administrador', 'Asesor', 'Productor'].includes(rol)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Solo administradores, asesores o productores pueden cambiar el estado de la compra',
+        });
+      }
+
+      const updatedCompra = await models.Compras.updateStatus(req.params.id, req.body, {
+        usuarioId: req.user?.id || null,
+      });
+      return res.json({
+        success: true,
+        data: updatedCompra,
+        message: 'Estado de compra actualizado exitosamente',
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        message: error.message,
+        details: error.details,
+      });
     }
   },
   delete: async (req, res) => {
@@ -49,7 +79,7 @@ module.exports = {
       await models.Compras.delete(req.params.id);
       res.json({ success: true, message: 'Compra eliminada exitosamente' });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      res.status(error.statusCode || 500).json({ success: false, message: error.message, details: error.details });
     }
   }
 };

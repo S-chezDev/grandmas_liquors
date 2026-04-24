@@ -3,11 +3,9 @@ import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, Truck, FileText, Search, RotateCcw, Download } from 'lucide-react';
+import { Plus, Truck, FileText, Search, RotateCcw } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
 import { entregas_insumos as entregasAPI } from '../../../services/api';
-import { formatDateEsCo } from '../../../utils/date';
-import { downloadPdfText } from '../../../utils/pdf';
 
 interface EntregaInsumo {
   id: string;
@@ -118,7 +116,7 @@ export function Insumos() {
     {
       key: 'fecha',
       label: 'Fecha',
-      render: (fecha: string) => formatDateEsCo(fecha)
+      render: (fecha: string) => formatDate(fecha)
     },
     {
       key: 'hora',
@@ -173,7 +171,7 @@ ID Entrega:         ${entrega.id}
 Producto:           ${entrega.insumo}
 Cantidad:           ${entrega.cantidad} ${entrega.unidad}
 Operario:           ${entrega.operario}
-Fecha:              ${formatDateEsCo(entrega.fecha)}
+Fecha:              ${formatDate(entrega.fecha)}
 Hora:               ${formatTime(entrega.hora)}
 
 ────────────────────────────────────────────────────────────
@@ -187,31 +185,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
 
     setPdfContent(content);
     setIsPdfModalOpen(true);
-  };
-
-  const handleDownloadPDF = (entrega: EntregaInsumo) => {
-    const content = `
-╔════════════════════════════════════════════════════════════╗
-║         GRANDMA'S LIQUEURS - ENTREGA DE INSUMOS           ║
-╚════════════════════════════════════════════════════════════╝
-
-ID Entrega:         ${entrega.id}
-Producto:           ${entrega.insumo}
-Cantidad:           ${entrega.cantidad} ${entrega.unidad}
-Operario:           ${entrega.operario}
-Fecha:              ${formatDateEsCo(entrega.fecha)}
-Hora:               ${formatTime(entrega.hora)}
-
-────────────────────────────────────────────────────────────
-Firma Operario:     _______________________
-
-Firma Supervisor:   _______________________
-
-Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
-────────────────────────────────────────────────────────────
-    `.trim();
-
-    downloadPdfText(content, `entrega-insumo-${entrega.numero_entrega || entrega.id}.pdf`);
   };
 
   const handleAnular = async (entrega: EntregaInsumo) => {
@@ -474,7 +447,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
               <Button 
                 variant="outline" 
                 icon={<FileText className="w-4 h-4" />}
-                onClick={() => handleDownloadPDF(selectedEntrega)}
+                onClick={() => handleGeneratePDF(selectedEntrega)}
                 className="flex-1"
               >
                 Descargar PDF
@@ -497,20 +470,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         onClose={() => setIsPdfModalOpen(false)}
         title="PDF de Entrega de Insumo"
         size="lg"
-        footer={
-          <FormActions>
-            <Button
-              variant="outline"
-              icon={<Download className="w-4 h-4" />}
-              onClick={() => selectedEntrega && handleDownloadPDF(selectedEntrega)}
-            >
-              Descargar PDF
-            </Button>
-            <Button variant="outline" onClick={() => setIsPdfModalOpen(false)}>
-              Cerrar
-            </Button>
-          </FormActions>
-        }
       >
         <div className="p-4 bg-accent/50 rounded-lg">
           <pre className="text-sm">

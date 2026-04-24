@@ -67,6 +67,7 @@ export const apiCall = async (
   const options: RequestInit = {
     method,
     credentials: 'include',
+    cache: 'no-store',
     headers: {
       'Content-Type': 'application/json',
     },
@@ -84,10 +85,22 @@ export const apiCall = async (
         const response = await fetch(`${baseUrl}${endpoint}`, options);
 
         if (!response.ok) {
-          const httpError: any = new Error(`API Error: ${response.status} ${response.statusText}`);
+          let errorMessage = `API Error: ${response.status} ${response.statusText}`;
+
+          try {
+            const errorBody = await response.json();
+            if (errorBody?.message) {
+              errorMessage = errorBody.message;
+            }
+          } catch {
+            // Si el backend no devuelve JSON, conservamos el mensaje HTTP por defecto.
+          }
+
+          const httpError: any = new Error(errorMessage);
           httpError.isHttpError = true;
           httpError.status = response.status;
           httpError.statusText = response.statusText;
+          httpError.message = errorMessage;
 
           // Any protected endpoint returning 401 means auth cookie is invalid or expired.
           if (response.status === 401) {
@@ -168,6 +181,9 @@ const normalizeProveedorPayload = (data: any) => ({
   tipoDocumento: data?.tipoDocumento ?? data?.tipo_documento,
   numeroDocumento: data?.numeroDocumento ?? data?.numero_documento,
   estado: data?.estado ?? 'Activo',
+  preferente: data?.preferente ?? false,
+  rating: data?.rating,
+  observaciones: data?.observaciones,
 });
 
 const normalizePedidoPayload = (data: any) => ({
@@ -228,6 +244,8 @@ const normalizeDomicilioPayload = async (data: any) => {
 };
 
 const normalizeCompraPayload = async (data: any) => {
+  const total = toNumberOrZero(data?.total);
+  const requiereAprobacion = total >= 10000;
   const payload: any = {
     ...data,
     numero_compra: data?.numero_compra ?? `COM-${Date.now()}`,
@@ -235,8 +253,11 @@ const normalizeCompraPayload = async (data: any) => {
     fecha: data?.fecha ?? new Date().toISOString().split('T')[0],
     subtotal: toNumberOrZero(data?.subtotal),
     iva: toNumberOrZero(data?.iva),
-    total: toNumberOrZero(data?.total),
+    total,
     estado: data?.estado ?? 'Pendiente',
+    requiere_aprobacion: data?.requiere_aprobacion ?? requiereAprobacion,
+    aprobacion_extraordinaria: data?.aprobacion_extraordinaria ?? requiereAprobacion,
+    motivo_aprobacion: data?.motivo_aprobacion ?? null,
   };
 
   if (!payload.proveedor_id && typeof data?.proveedor === 'string' && data.proveedor.trim()) {
@@ -288,10 +309,12 @@ const normalizeProduccionPayload = async (data: any) => {
     ...data,
     numero_produccion: data?.numero_produccion ?? `PROD-${Date.now()}`,
     producto_id: toNumberOrUndefined(data?.producto_id),
+    pedido_id: toNumberOrUndefined(data?.pedido_id),
     cantidad: toNumberOrZero(data?.cantidad),
     fecha: data?.fecha ?? data?.fechaInicio ?? new Date().toISOString().split('T')[0],
     responsable: data?.responsable ?? data?.operario,
-    estado: data?.estado ?? 'Pendiente',
+    tiempo_preparacion_minutos: toNumberOrZero(data?.tiempo_preparacion_minutos),
+    estado: data?.estado ?? 'Orden Recibida',
     notes: data?.notes ?? data?.detalle ?? data?.lote ?? null,
   };
 
@@ -324,10 +347,12 @@ const mergeWithCurrent = async (endpoint: string, patch: any) => {
 export const categorias = {
   getAll: () => apiCall('/api/categorias'),
   getById: (id: number) => apiCall(`/api/categorias/${id}`),
-  create: (data: { nombre: string; descripcion?: string; estado?: string }) =>
+  create: (data: { nombre: string; descripcion?: string }) =>
     apiCall('/api/categorias', 'POST', data),
-  update: (id: number, data: { nombre: string; descripcion?: string; estado?: string }) =>
+  update: (id: number, data: { nombre: string; descripcion?: string }) =>
     apiCall(`/api/categorias/${id}`, 'PUT', data),
+  updateStatus: (id: number, data: { estado: 'Activo' | 'Inactivo'; motivo: string }) =>
+    apiCall(`/api/categorias/${id}/estado`, 'PUT', data),
   delete: (id: number) => apiCall(`/api/categorias/${id}`, 'DELETE'),
 };
 
@@ -345,10 +370,11 @@ export const productos = {
     stock?: number;
     stock_minimo?: number;
     imagen_url?: string;
-    estado?: string;
   }) => apiCall('/api/productos', 'POST', data),
   update: (id: number, data: any) =>
     apiCall(`/api/productos/${id}`, 'PUT', data),
+  updateStatus: (id: number, data: { estado: 'Activo' | 'Inactivo'; motivo: string }) =>
+    apiCall(`/api/productos/${id}/estado`, 'PUT', data),
   delete: (id: number) => apiCall(`/api/productos/${id}`, 'DELETE'),
 };
 
@@ -382,6 +408,11 @@ export const clientes = {
 export const proveedores = {
   getAll: () => apiCall('/api/proveedores'),
   getById: (id: number) => apiCall(`/api/proveedores/${id}`),
+  getByNit: (nit: string) => apiCall(`/api/proveedores/nit/${encodeURIComponent(nit)}`),
+  getByEmail: (email: string) => apiCall(`/api/proveedores/email/${encodeURIComponent(email)}`),
+  getByTelefono: (telefono: string) => apiCall(`/api/proveedores/telefono/${encodeURIComponent(telefono)}`),
+  getHistory: (id: number) => apiCall(`/api/proveedores/${id}/historial`),
+  getPendingPurchases: (id: number) => apiCall(`/api/proveedores/${id}/pendientes`),
   create: (data: {
     tipoPersona: string;
     nombreEmpresa?: string;
@@ -394,12 +425,17 @@ export const proveedores = {
     email?: string;
     direccion?: string;
     estado?: string;
+    preferente?: boolean;
+    rating?: number;
+    observaciones?: string;
   }) => apiCall('/api/proveedores', 'POST', normalizeProveedorPayload(data)),
   update: async (id: number, data: any) => {
     const merged = await mergeWithCurrent(`/api/proveedores/${id}`, data);
     return apiCall(`/api/proveedores/${id}`, 'PUT', normalizeProveedorPayload(merged));
   },
-  delete: (id: number) => apiCall(`/api/proveedores/${id}`, 'DELETE'),
+  updateStatus: (id: number, data: { estado: string; motivo: string }) =>
+    apiCall(`/api/proveedores/${id}/estado`, 'PUT', data),
+  delete: (id: number, data?: { motivo?: string }) => apiCall(`/api/proveedores/${id}`, 'DELETE', data),
 };
 
 // ==================== PEDIDOS ====================
@@ -533,18 +569,31 @@ export const compras = {
     iva?: number;
     total?: number;
     estado?: string;
+    observaciones?: string;
+    aprobacion_extraordinaria?: boolean;
+    motivo_aprobacion?: string;
   }) => normalizeCompraPayload(data).then((payload) => apiCall('/api/compras', 'POST', payload)),
   addProducto: (data: {
     compraId: number;
     productoId: number;
     cantidad: number;
     precioUnitario: number;
+    permisoExtraordinario?: boolean;
+    motivoPermiso?: string;
   }) => apiCall('/api/compras/producto', 'POST', data),
   update: async (id: number, data: any) => {
     const merged = await mergeWithCurrent(`/api/compras/${id}`, data);
     const payload = await normalizeCompraPayload(merged);
     return apiCall(`/api/compras/${id}`, 'PUT', payload);
   },
+  updateStatus: (
+    id: number,
+    data: {
+      estado: 'Pendiente' | 'Recibida' | 'Cancelada';
+      confirmacion_recibido?: boolean;
+      motivo_cancelacion?: string;
+    }
+  ) => apiCall(`/api/compras/${id}/estado`, 'PUT', data),
   delete: (id: number) => apiCall(`/api/compras/${id}`, 'DELETE'),
 };
 
@@ -590,17 +639,27 @@ export const produccion = {
   create: (data: {
     numero_produccion: string;
     producto_id: number;
+    pedido_id?: number | null;
     cantidad: number;
     fecha: string;
     responsable?: string;
+    tiempo_preparacion_minutos?: number;
     estado?: string;
     notes?: string;
+    insumos_gastados?: Array<any>;
   }) => normalizeProduccionPayload(data).then((payload) => apiCall('/api/produccion', 'POST', payload)),
   update: async (id: number, data: any) => {
     const merged = await mergeWithCurrent(`/api/produccion/${id}`, data);
     const payload = await normalizeProduccionPayload(merged);
     return apiCall(`/api/produccion/${id}`, 'PUT', payload);
   },
+  updateStatus: (
+    id: number,
+    data: {
+      estado: 'Orden Recibida' | 'Orden en preparacion' | 'Orden Lista' | 'Cancelada';
+      motivo_cancelacion?: string;
+    }
+  ) => apiCall(`/api/produccion/${id}/estado`, 'PUT', data),
   delete: (id: number) => apiCall(`/api/produccion/${id}`, 'DELETE'),
 };
 
@@ -608,6 +667,7 @@ export const produccion = {
 export const roles = {
   getAll: () => apiCall('/api/roles'),
   getById: (id: number) => apiCall(`/api/roles/${id}`),
+  getAuditById: (id: number) => apiCall(`/api/roles/${id}/auditoria`),
   create: (data: {
     nombre: string;
     descripcion?: string;
@@ -618,15 +678,45 @@ export const roles = {
     const merged = await mergeWithCurrent(`/api/roles/${id}`, data);
     return apiCall(`/api/roles/${id}`, 'PUT', merged);
   },
-  delete: (id: number) => apiCall(`/api/roles/${id}`, 'DELETE'),
+  delete: (id: number, data?: { motivo?: string }) => apiCall(`/api/roles/${id}`, 'DELETE', data),
 };
 
 // ==================== USUARIOS ====================
 export const usuarios = {
-  getAll: () => apiCall('/api/usuarios'),
+  getAll: (params?: {
+    q?: string;
+    estados?: string[];
+    rol_id?: number;
+    tipos_documento?: string[];
+    fecha_desde?: string;
+    fecha_hasta?: string;
+    include_deleted?: boolean;
+    limit?: number;
+  }) => {
+    if (!params) return apiCall('/api/usuarios');
+
+    const query = new URLSearchParams();
+    if (params.q) query.set('q', params.q);
+    if (Array.isArray(params.estados) && params.estados.length > 0) query.set('estados', params.estados.join(','));
+    if (params.rol_id) query.set('rol_id', String(params.rol_id));
+    if (Array.isArray(params.tipos_documento) && params.tipos_documento.length > 0) {
+      query.set('tipos_documento', params.tipos_documento.join(','));
+    }
+    if (params.fecha_desde) query.set('fecha_desde', params.fecha_desde);
+    if (params.fecha_hasta) query.set('fecha_hasta', params.fecha_hasta);
+    if (typeof params.include_deleted === 'boolean') query.set('include_deleted', String(params.include_deleted));
+    if (params.limit) query.set('limit', String(params.limit));
+
+    const queryString = query.toString();
+    return apiCall(`/api/usuarios${queryString ? `?${queryString}` : ''}`);
+  },
   getById: (id: number) => apiCall(`/api/usuarios/${id}`),
-  getByEmail: (email: string) => apiCall(`/api/usuarios/email/${email}`),
+  getFullDetail: (id: number, limit = 120) => apiCall(`/api/usuarios/${id}/detalle-completo?limit=${limit}`),
+  getActivity: (id: number, limit = 80) => apiCall(`/api/usuarios/${id}/historial?limit=${limit}`),
+  getDeleteImpact: (id: number) => apiCall(`/api/usuarios/${id}/impacto-eliminacion`),
+  getByEmail: (email: string) => apiCall(`/api/usuarios/email/${encodeURIComponent(email)}`),
   getByDocumento: (documento: string) => apiCall(`/api/usuarios/documento/${documento}`),
+  getByTelefono: (telefono: string) => apiCall(`/api/usuarios/telefono/${encodeURIComponent(telefono)}`),
   create: (data: {
     nombre: string;
     apellido: string;
@@ -640,16 +730,37 @@ export const usuarios = {
     estado?: string;
   }) => apiCall('/api/usuarios', 'POST', data),
   update: (id: number, data: any) => apiCall(`/api/usuarios/${id}`, 'PUT', data),
+  updateStatus: (
+    id: number,
+    data: {
+      estado: 'Activo' | 'Inactivo';
+      force?: boolean;
+      motivo?: string;
+      notificar: boolean;
+      verificacion?: boolean;
+    }
+  ) => apiCall(`/api/usuarios/${id}/estado`, 'PUT', data),
   assignRole: (id: number, rol_id: number) => apiCall(`/api/usuarios/${id}/rol`, 'PUT', { rol_id }),
-  delete: (id: number) => apiCall(`/api/usuarios/${id}`, 'DELETE'),
+  forceResetPassword: (id: number, data?: { motivo?: string }) =>
+    apiCall(`/api/usuarios/${id}/reset-password-forzado`, 'POST', data),
+  delete: (
+    id: number,
+    data?: { motivo?: string; mode?: 'logical' | 'physical'; omit_validaciones?: boolean }
+  ) => apiCall(`/api/usuarios/${id}`, 'DELETE', data),
 };
 
 // ==================== AUTH ====================
 export const auth = {
-  login: (email: string, password: string) =>
-    apiCall('/api/auth/login', 'POST', { email, password }),
+  login: (email: string, password: string, rememberMe = false) =>
+    apiCall('/api/auth/login', 'POST', { email, password, rememberMe }),
   me: () => apiCall('/api/auth/me'),
-  logout: () => apiCall('/api/auth/logout', 'POST'),
+  logout: () => apiCall('/api/auth/logout', 'POST', {}),
+  logoutAll: () => apiCall('/api/auth/logout-all', 'POST', {}),
+  changePassword: (data: { currentPassword: string; newPassword: string; confirmPassword: string }) =>
+    apiCall('/api/auth/change-password', 'POST', data),
+  requestPasswordReset: (email: string) => apiCall('/api/auth/password-reset-request', 'POST', { email }),
+  confirmPasswordReset: (data: { email: string; token: string; newPassword: string }) =>
+    apiCall('/api/auth/password-reset-confirm', 'POST', data),
   registerCliente: (data: {
     tipoDocumento: 'CC' | 'CE' | 'TI' | 'Pasaporte';
     numeroDocumento: string;

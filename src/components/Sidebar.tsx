@@ -19,6 +19,7 @@ import {
   ClipboardList,
   Home,
   Settings,
+  Store,
   User,
   KeyRound
 } from 'lucide-react';
@@ -47,8 +48,8 @@ const menuItems: MenuItem[] = [
     name: 'Inicio',
     icon: <Home className="w-5 h-5" />,
     path: '/',
-    module: 'home',
-    roles: ['Administrador', 'Asesor', 'Productor', 'Repartidor', 'Cliente']
+    module: 'dashboard',
+    roles: ['Administrador', 'Asesor', 'Productor', 'Repartidor']
   },
   {
     name: 'Dashboard',
@@ -72,10 +73,10 @@ const menuItems: MenuItem[] = [
     module: 'compras',
     roles: ['Administrador', 'Asesor', 'Productor'],
     subItems: [
-      { name: 'Proveedores', icon: <Building2 className="w-4 h-4" />, path: '/compras/proveedores', module: 'compras/proveedores' },
-      { name: 'Compras', icon: <ShoppingCart className="w-4 h-4" />, path: '/compras/compras', module: 'compras/compras' },
+      { name: 'Proveedores', icon: <Building2 className="w-4 h-4" />, path: '/compras/proveedores', module: 'compras' },
+      { name: 'Compras', icon: <ShoppingCart className="w-4 h-4" />, path: '/compras/compras', module: 'compras' },
       { name: 'Productos', icon: <Package className="w-4 h-4" />, path: '/compras/productos', module: 'compras/productos' },
-      { name: 'Categorías de Producto', icon: <Tags className="w-4 h-4" />, path: '/compras/categorias', module: 'compras/categorias' }
+      { name: 'Categorías de Producto', icon: <Tags className="w-4 h-4" />, path: '/compras/categorias', module: 'compras' }
     ]
   },
   {
@@ -84,8 +85,8 @@ const menuItems: MenuItem[] = [
     module: 'produccion',
     roles: ['Administrador', 'Productor'],
     subItems: [
-      { name: 'Entrega de Insumos', icon: <Truck className="w-4 h-4" />, path: '/produccion/insumos', module: 'produccion/insumos' },
-      { name: 'Producción', icon: <Boxes className="w-4 h-4" />, path: '/produccion/produccion', module: 'produccion/produccion' }
+      { name: 'Entrega de Insumos', icon: <Truck className="w-4 h-4" />, path: '/produccion/insumos', module: 'produccion' },
+      { name: 'Producción', icon: <Boxes className="w-4 h-4" />, path: '/produccion/produccion', module: 'produccion' }
     ]
   },
   {
@@ -94,26 +95,33 @@ const menuItems: MenuItem[] = [
     module: 'ventas',
     roles: ['Administrador', 'Asesor', 'Repartidor'],
     subItems: [
-      { name: 'Clientes', icon: <UserCircle className="w-4 h-4" />, path: '/ventas/clientes', module: 'ventas/clientes' },
-      { name: 'Ventas', icon: <Receipt className="w-4 h-4" />, path: '/ventas/ventas', module: 'ventas/ventas' },
-      { name: 'Abonos', icon: <CreditCard className="w-4 h-4" />, path: '/ventas/abonos', module: 'ventas/abonos' },
+      { name: 'Clientes', icon: <UserCircle className="w-4 h-4" />, path: '/ventas/clientes', module: 'ventas' },
+      { name: 'Ventas', icon: <Receipt className="w-4 h-4" />, path: '/ventas/ventas', module: 'ventas' },
+      { name: 'Abonos', icon: <CreditCard className="w-4 h-4" />, path: '/ventas/abonos', module: 'ventas' },
       { name: 'Pedidos', icon: <ClipboardList className="w-4 h-4" />, path: '/ventas/pedidos', module: 'ventas/pedidos' },
       { name: 'Domicilios', icon: <Truck className="w-4 h-4" />, path: '/ventas/domicilios', module: 'ventas/domicilios' }
     ]
   },
   // Menú exclusivo para Cliente
   {
+    name: 'Tienda',
+    icon: <Store className="w-5 h-5" />,
+    path: '/cliente/tienda',
+    module: 'cliente',
+    roles: ['Cliente']
+  },
+  {
     name: 'Mis Pedidos',
     icon: <ClipboardList className="w-5 h-5" />,
     path: '/cliente/pedidos',
-    module: 'cliente/pedidos',
+    module: 'cliente',
     roles: ['Cliente']
   },
   {
     name: 'Mi Perfil',
     icon: <User className="w-5 h-5" />,
     path: '/cliente/perfil',
-    module: 'cliente/perfil',
+    module: 'cliente',
     roles: ['Cliente']
   }
 ];
@@ -235,15 +243,9 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
   };
 
   // Filtrar los items del menú según permisos reales del rol en la BD.
-  const canViewPath = (path?: string) => {
-    if (!path) return false;
-    if (path === '/') return Boolean(user);
-    return hasPermission(path.slice(1));
-  };
-
   const filteredMenuItems = menuItems
     .map((item) => {
-      const subItems = item.subItems?.filter((subItem) => canViewPath(subItem.path)) ?? [];
+      const subItems = item.subItems?.filter((subItem) => hasPermission(subItem.module)) ?? [];
       return {
         ...item,
         subItems: subItems.length > 0 ? subItems : undefined,
@@ -252,11 +254,16 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
     .filter((item) => {
       if (!user) return false;
 
-      if (item.path) {
-        return canViewPath(item.path);
+      if (item.module && !hasPermission(item.module)) {
+        return false;
       }
 
-      return Boolean(item.subItems?.length);
+      if (item.subItems) {
+        return item.subItems.length > 0;
+      }
+
+      // Items simples como Configuración para roles no admin dependen del permiso del módulo.
+      return Boolean(item.module);
     });
 
   return (
@@ -347,7 +354,7 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
       </nav>
 
       {/* Configuration at bottom - Para Administrador con submenú */}
-      {user && (user.rol === 'Administrador' || hasPermission('configuracion/roles')) && (
+      {user && hasPermission(configurationItem.module!) && (
         <div className="p-2 border-t border-sidebar-border">
           <div className="mb-1">
             <button
@@ -392,7 +399,7 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
       )}
 
       {/* Configuration at bottom - Para otros roles (simple) */}
-      {user && user.rol !== 'Administrador' && hasPermission('configuracion/roles') && (
+      {user && user.rol !== 'Administrador' && hasPermission('configuracion') && (
         <div className="p-2 border-t border-sidebar-border">
           <div className="mb-1" ref={configDropdownRef}>
             <div className="relative">

@@ -3,10 +3,9 @@ import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, ShoppingBag, Trash2, Search, RotateCcw, Download } from 'lucide-react';
+import { Plus, ShoppingBag, Trash2, Search, RotateCcw } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
-import { ventas as ventasAPI, clientes as clientesAPI, productos as productosAPI, pedidos as pedidosAPI } from '../../../services/api';
-import { downloadPdfText } from '../../../utils/pdf';
+import { ventas as ventasAPI, clientes as clientesAPI, productos as productosAPI } from '../../../services/api';
 
 interface VentaItem {
   producto: string;
@@ -34,14 +33,6 @@ interface Cliente {
   nombre: string;
   apellido: string;
   documento: string;
-  estado?: 'Activo' | 'Inactivo';
-}
-
-interface PedidoCliente {
-  id: number;
-  numero_pedido?: string;
-  fecha?: string;
-  estado?: string;
 }
 
 interface Producto {
@@ -61,8 +52,6 @@ export function Ventas() {
   const [ventas, setVentas] = useState<Venta[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
-  const [pedidosCliente, setPedidosCliente] = useState<PedidoCliente[]>([]);
-  const [loadingPedidosCliente, setLoadingPedidosCliente] = useState(false);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({
     query: '',
@@ -107,19 +96,6 @@ export function Ventas() {
     }
   };
 
-  const loadPedidosByCliente = async (clienteId: number) => {
-    try {
-      setLoadingPedidosCliente(true);
-      const data = await pedidosAPI.getByCliente(clienteId);
-      setPedidosCliente(Array.isArray(data) ? data : []);
-    } catch (error) {
-      console.error('Error al cargar pedidos del cliente:', error);
-      setPedidosCliente([]);
-    } finally {
-      setLoadingPedidosCliente(false);
-    }
-  };
-
   const [selectedVenta, setSelectedVenta] = useState<Venta | null>(null);
   const [pendingStateChange, setPendingStateChange] = useState<StateChangeRequest | null>(null);
   const [stateChangeReason, setStateChangeReason] = useState('');
@@ -151,27 +127,11 @@ export function Ventas() {
     }).format(value);
   };
 
-  const formatDate = (value?: string) => {
-    if (!value) return 'N/A';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleDateString('es-CO');
-  };
-
-  const clientesActivos = useMemo(
-    () => clientes.filter((cliente) => String(cliente.estado || 'Activo') === 'Activo'),
-    [clientes]
-  );
-
   const columns: Column[] = [
     { key: 'numero_venta', label: 'Número Venta' },
     { key: 'tipo', label: 'Tipo' },
     { key: 'cliente', label: 'Cliente' },
-    {
-      key: 'fecha',
-      label: 'Fecha',
-      render: (fecha: string) => formatDate(fecha)
-    },
+    { key: 'fecha', label: 'Fecha' },
     { 
       key: 'items', 
       label: 'Items',
@@ -275,7 +235,7 @@ export function Ventas() {
     setStateChangeReason('');
   };
 
-  const buildPdfContent = (venta: Venta) => {
+  const handleGeneratePDF = (venta: Venta) => {
     const itemsDetail = venta.items && venta.items.length > 0 ? venta.items.map((item, index) => 
       `${index + 1}. ${item.producto}
    Cantidad: ${item.cantidad} unidades
@@ -283,7 +243,7 @@ export function Ventas() {
    Subtotal: ${formatCurrency(item.subtotal)}`
     ).join('\n\n') : 'Sin items';
 
-    return `
+    const content = `
 ╔════════════════════════════════════════════════════════════╗
 ║           GRANDMA'S LIQUEURS - FACTURA DE VENTA           ║
 ╚════════════════════════════════════════════════════════════╝
@@ -309,15 +269,9 @@ Gracias por su compra
 Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
 ────────────────────────────────────────────────────────────
     `.trim();
-  };
 
-  const handleGeneratePDF = (venta: Venta) => {
-    setPdfContent(buildPdfContent(venta));
+    setPdfContent(content);
     setIsPdfModalOpen(true);
-  };
-
-  const handleDownloadPDF = (venta: Venta) => {
-    downloadPdfText(buildPdfContent(venta), `venta-${venta.numero_venta || venta.id}.pdf`);
   };
 
   const handleAddItem = () => {
@@ -335,16 +289,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
     }
   };
 
-  useEffect(() => {
-    if (!formData.cliente_id) {
-      setPedidosCliente([]);
-      setFormData((current) => ({ ...current, pedido: '' }));
-      return;
-    }
-
-    void loadPedidosByCliente(Number(formData.cliente_id));
-  }, [formData.cliente_id]);
-
   const handleRemoveItem = (index: number) => {
     setFormData({
       ...formData,
@@ -355,21 +299,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
   const handleSaveVenta = async () => {
     if (formData.cliente_id && formData.items.length > 0) {
       try {
-        const clienteActivoSeleccionado = clientesActivos.some(
-          (cliente) => String(cliente.id) === formData.cliente_id
-        );
-
-        if (!clienteActivoSeleccionado) {
-          showAlert({
-            title: 'Cliente no permitido',
-            description: 'El cliente seleccionado esta inactivo. Selecciona un cliente activo para continuar.',
-            type: 'warning',
-            confirmText: 'Entendido',
-            onConfirm: () => {}
-          });
-          return;
-        }
-
         const newVenta = {
           numero_venta: `VEN-${Date.now()}`,
           tipo: formData.tipo,
@@ -644,16 +573,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         onClose={() => setIsPdfModalOpen(false)}
         title="Factura de Venta"
         size="lg"
-        footer={
-          <FormActions>
-            <Button variant="outline" icon={<Download className="w-4 h-4" />} onClick={() => selectedVenta && handleDownloadPDF(selectedVenta)}>
-              Descargar PDF
-            </Button>
-            <Button variant="outline" onClick={() => setIsPdfModalOpen(false)}>
-              Cerrar
-            </Button>
-          </FormActions>
-        }
       >
         <pre className="p-4 bg-accent/50 rounded-lg text-sm">
           {pdfContent}
@@ -685,12 +604,10 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
             name="cliente_id"
             type="select"
             value={formData.cliente_id}
-            onChange={(value) =>
-              setFormData((current) => ({ ...current, cliente_id: value as string, pedido: '' }))
-            }
+            onChange={(value) => setFormData({ ...formData, cliente_id: value as string })}
             options={[
               { value: '', label: 'Seleccionar cliente...' },
-              ...clientesActivos.map(c => ({
+              ...clientes.map(c => ({
                 value: c.id.toString(),
                 label: `${c.nombre} ${c.apellido} - ${c.documento}`
               }))
@@ -703,26 +620,9 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
             <FormField
               label="Número de Pedido"
               name="pedido"
-              type="select"
               value={formData.pedido}
               onChange={(value) => setFormData({ ...formData, pedido: value as string })}
-              options={[
-                {
-                  value: '',
-                  label: !formData.cliente_id
-                    ? 'Selecciona primero un cliente activo'
-                    : loadingPedidosCliente
-                      ? 'Cargando pedidos...'
-                      : pedidosCliente.length === 0
-                        ? 'Este cliente no tiene pedidos'
-                        : 'Seleccionar pedido...'
-                },
-                ...pedidosCliente.map((pedido) => ({
-                  value: String(pedido.id),
-                  label: `${pedido.numero_pedido || `PED-${pedido.id}`} | ${formatDate(pedido.fecha)} | ${pedido.estado || 'N/A'}`
-                }))
-              ]}
-              disabled={!formData.cliente_id || loadingPedidosCliente || pedidosCliente.length === 0}
+              placeholder="PED-001"
               required
             />
           )}

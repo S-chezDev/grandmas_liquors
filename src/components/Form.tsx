@@ -6,11 +6,18 @@ interface FormFieldProps {
   type?: 'text' | 'email' | 'password' | 'number' | 'date' | 'time' | 'textarea' | 'select' | 'file';
   value?: string | number;
   onChange?: (value: string | number) => void;
+  onBlur?: () => void;
+  disabled?: boolean;
+  readOnly?: boolean;
   placeholder?: string;
   required?: boolean;
   options?: { value: string | number; label: string }[];
   rows?: number;
   accept?: string;
+  error?: string;
+  helperText?: string;
+  showEmptyOption?: boolean;
+  emptyOptionLabel?: string;
 }
 
 export function FormField({
@@ -19,41 +26,63 @@ export function FormField({
   type = 'text',
   value,
   onChange,
+  onBlur,
+  disabled = false,
+  readOnly = false,
   placeholder,
   required = false,
   options = [],
-  rows = 4,
-  accept
+  rows = 3,
+  accept,
+  error,
+  helperText,
+  showEmptyOption = true,
+  emptyOptionLabel = 'Seleccionar...'
 }: FormFieldProps) {
-  const baseInputClasses = "w-full px-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring";
+  const baseInputClasses = `w-full min-h-9 rounded-xl border border-border/80 bg-white px-3 py-2 text-sm shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition-colors placeholder:text-muted-foreground/80 focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/40 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-10 ${
+    error ? 'border-destructive focus:ring-destructive' : 'border-border'
+  }`;
+  const fieldId = name;
+  const helperId = `${name}-helper`;
+  const errorId = `${name}-error`;
+  const describedBy = error ? errorId : helperText ? helperId : undefined;
 
   return (
-    <div className="space-y-2">
-      <label htmlFor={name} className="block">
+    <div className="space-y-1 min-w-0">
+      <label htmlFor={fieldId} className="block text-sm font-medium leading-tight text-foreground/90">
         {label} {required && <span className="text-destructive">*</span>}
       </label>
       
       {type === 'textarea' ? (
         <textarea
-          id={name}
+          id={fieldId}
           name={name}
           value={value}
           onChange={(e) => onChange?.(e.target.value)}
+          onBlur={onBlur}
+          disabled={disabled}
+          readOnly={readOnly}
           placeholder={placeholder}
           required={required}
           rows={rows}
-          className={baseInputClasses}
+          aria-invalid={Boolean(error)}
+          aria-describedby={describedBy}
+          className={`${baseInputClasses} min-h-[72px] resize-y sm:min-h-[88px]`}
         />
       ) : type === 'select' ? (
         <select
-          id={name}
+          id={fieldId}
           name={name}
           value={value}
           onChange={(e) => onChange?.(e.target.value)}
+          onBlur={onBlur}
+          disabled={disabled}
           required={required}
+          aria-invalid={Boolean(error)}
+          aria-describedby={describedBy}
           className={baseInputClasses}
         >
-          <option value="">Seleccionar...</option>
+          {showEmptyOption ? <option value="">{emptyOptionLabel}</option> : null}
           {options.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
@@ -62,7 +91,7 @@ export function FormField({
         </select>
       ) : type === 'file' ? (
         <input
-          id={name}
+          id={fieldId}
           name={name}
           type="file"
           onChange={(e) => {
@@ -72,35 +101,68 @@ export function FormField({
               onChange(event);
             }
           }}
+          onBlur={onBlur}
           accept={accept}
+          disabled={disabled}
+          readOnly={readOnly}
           required={required}
-          className={baseInputClasses}
+          aria-invalid={Boolean(error)}
+          aria-describedby={describedBy}
+          className={`${baseInputClasses} file:mr-3 file:rounded-md file:border-0 file:bg-accent file:px-3 file:py-1 file:text-sm file:text-foreground hover:file:bg-accent/70`}
         />
       ) : (
         <input
-          id={name}
+          id={fieldId}
           name={name}
           type={type}
-          value={value}
-          onChange={(e) => onChange?.(type === 'number' ? parseFloat(e.target.value) || 0 : e.target.value)}
+          value={value ?? ''}
+          onChange={(e) => {
+            if (type === 'number') {
+              const rawValue = e.target.value;
+              onChange?.(rawValue === '' ? 0 : Number(rawValue));
+              return;
+            }
+            onChange?.(e.target.value);
+          }}
+          onBlur={onBlur}
+          disabled={disabled}
+          readOnly={readOnly}
           placeholder={placeholder}
           required={required}
+          aria-invalid={Boolean(error)}
+          aria-describedby={describedBy}
           className={baseInputClasses}
         />
       )}
+
+      {helperText && !error ? (
+        <p id={helperId} className="text-xs text-muted-foreground">
+          {helperText}
+        </p>
+      ) : null}
+
+      {error ? (
+        <p id={errorId} className="text-xs text-destructive">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }
 
-interface FormProps {
+interface FormProps extends React.FormHTMLAttributes<HTMLFormElement> {
   children: React.ReactNode;
   onSubmit: (e: React.FormEvent) => void;
-  className?: string;
 }
 
-export function Form({ children, onSubmit, className = '' }: FormProps) {
+export function Form({ children, onSubmit, className = '', id, ...props }: FormProps) {
   return (
-    <form onSubmit={onSubmit} className={`space-y-4 ${className}`}>
+    <form
+      id={id}
+      onSubmit={onSubmit}
+      className={`min-w-0 space-y-0 rounded-3xl border border-border/80 bg-white/95 shadow-[0_18px_45px_rgba(15,23,42,0.08)] ring-1 ring-black/5 overflow-hidden ${className}`}
+      {...props}
+    >
       {children}
     </form>
   );
@@ -119,7 +181,7 @@ export function FormActions({ children, align = 'right' }: FormActionsProps) {
   };
 
   return (
-    <div className={`flex gap-3 pt-4 ${alignClasses[align]}`}>
+    <div className={`sticky bottom-0 z-20 flex gap-3 border-t border-border/80 bg-white/95 px-1 pt-4 pb-1 backdrop-blur-sm ${alignClasses[align]} [&>button]:flex-1`}>
       {children}
     </div>
   );
