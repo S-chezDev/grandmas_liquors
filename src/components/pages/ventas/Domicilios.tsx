@@ -6,6 +6,7 @@ import { Button } from '../../Button';
 import { Plus, Pencil, Trash2, Search, RotateCcw } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
 import { domicilios as domiciliosAPI, pedidos as pedidosAPI } from '../../../services/api';
+import { formatDateEsCo } from '../../../utils/date';
 
 interface Domicilio {
   id: string;
@@ -91,7 +92,7 @@ export function Domicilios() {
     { key: 'cliente', label: 'Cliente' },
     { key: 'direccion', label: 'Dirección' },
     { key: 'repartidor', label: 'Repartidor' },
-    { key: 'fecha', label: 'Fecha' },
+    { key: 'fecha', label: 'Fecha', render: (fecha: string) => formatDateEsCo(fecha) },
     { key: 'hora', label: 'Hora' },
     { 
       key: 'estado', 

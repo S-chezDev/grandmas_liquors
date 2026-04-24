@@ -35,10 +35,8 @@ const isStrongPassword = (password) => {
 
   const value = password.trim();
   if (value.length < 8) return false;
-  if (!/[a-z]/.test(value)) return false;
   if (!/[A-Z]/.test(value)) return false;
   if (!/\d/.test(value)) return false;
-  if (!/[!@#$%^&*()\-_=+\[\]{};:,.?]/.test(value)) return false;
 
   return true;
 };

@@ -495,6 +495,15 @@ const registerProveedorAudit = async ({ proveedorId, accion, usuarioId = null, c
   );
 };
 
+const getProveedorIdentifierValue = ({ tipoPersona, nit, numeroDocumento }) => {
+  const normalizedTipo = String(tipoPersona || '').trim();
+  if (normalizedTipo === 'Juridica') {
+    return String(nit || '').trim();
+  }
+
+  return String(numeroDocumento || '').trim();
+};
+
 const findProveedorByIdentifier = async ({ nit, numeroDocumento, excludeId = null }) => {
   const whereParts = [];
   const values = [];
@@ -750,6 +759,24 @@ const Proveedores = {
     const nextRating = data.rating !== undefined ? data.rating : currentProveedor.rating;
     const nextObservaciones = data.observaciones !== undefined ? data.observaciones : currentProveedor.observaciones;
 
+    const currentIdentifier = getProveedorIdentifierValue({
+      tipoPersona: currentProveedor.tipo_persona,
+      nit: currentProveedor.nit,
+      numeroDocumento: currentProveedor.numero_documento,
+    });
+    const nextIdentifier = getProveedorIdentifierValue({
+      tipoPersona: nextTipoPersona,
+      nit: nextNit,
+      numeroDocumento: nextNumeroDocumento,
+    });
+
+    if (nextIdentifier !== currentIdentifier) {
+      const error = new Error('El RUC/Documento del proveedor no se puede editar por trazabilidad');
+      error.statusCode = 409;
+      error.details = { field: 'identifier', currentIdentifier, nextIdentifier };
+      throw error;
+    }
+
     const duplicateIdentifier = await findProveedorByIdentifier({
       nit: nextNit,
       numeroDocumento: nextNumeroDocumento,
@@ -847,8 +874,8 @@ const Proveedores = {
     }
 
     const reason = typeof data.motivo === 'string' ? data.motivo.trim() : '';
-    if (!reason || reason.length < 10) {
-      const error = new Error('El motivo de cambio de estado es obligatorio y debe tener al menos 10 caracteres');
+    if (!reason || reason.length < 10 || reason.length > 500) {
+      const error = new Error('El motivo de cambio de estado es obligatorio y debe tener entre 10 y 500 caracteres');
       error.statusCode = 400;
       throw error;
     }
@@ -1175,6 +1202,22 @@ const ensureComprasSchema = async () => {
       ADD COLUMN IF NOT EXISTS aprobacion_extraordinaria BOOLEAN DEFAULT FALSE,
       ADD COLUMN IF NOT EXISTS motivo_aprobacion TEXT
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS compras_estado_historial (
+      id SERIAL PRIMARY KEY,
+      compra_id INTEGER NOT NULL REFERENCES compras(id) ON DELETE CASCADE,
+      estado_anterior VARCHAR(20),
+      estado_nuevo VARCHAR(20) NOT NULL,
+      motivo TEXT,
+      usuario_id INTEGER,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS idx_compras_estado_historial_compra_fecha ON compras_estado_historial(compra_id, created_at DESC)'
+  );
 };
 
 const getProveedorActivo = async (proveedorId) => {
@@ -1226,6 +1269,18 @@ const Compras = {
     `, [id]);
     return result.rows[0];
   },
+  getEstadoHistorial: async (compraId) => {
+    await ensureComprasSchema();
+    const result = await pool.query(
+      `SELECT h.*, u.nombre AS usuario_nombre, u.apellido AS usuario_apellido, u.email AS usuario_email
+       FROM compras_estado_historial h
+       LEFT JOIN usuarios u ON u.id = h.usuario_id
+       WHERE h.compra_id = $1
+       ORDER BY h.created_at DESC, h.id DESC`,
+      [compraId]
+    );
+    return result.rows;
+  },
   getDetalles: async (compraId) => {
     await ensureComprasSchema();
     const result = await pool.query(`
@@ -1237,7 +1292,7 @@ const Compras = {
     `, [compraId]);
     return result.rows;
   },
-  create: async (data) => {
+  create: async (data, options = {}) => {
     await ensureComprasSchema();
 
     if (!data.proveedor_id) {
@@ -1261,14 +1316,12 @@ const Compras = {
 
     const total = Number(data.total || 0);
     const requiereAprobacion = total >= 10000;
-    const aprobacionExtraordinaria = data.aprobacion_extraordinaria === true || data.aprobacion_extraordinaria === 'true';
+    const aprobacionExtraordinaria = !requiereAprobacion;
     const motivoAprobacion = typeof data.motivo_aprobacion === 'string' ? data.motivo_aprobacion.trim() : '';
 
-    if (requiereAprobacion && !aprobacionExtraordinaria) {
-      const error = new Error('Compras con total mayor o igual a 10000 requieren aprobacion extraordinaria');
-      error.statusCode = 409;
-      throw error;
-    }
+    const motivoAprobacionFinal = requiereAprobacion
+      ? motivoAprobacion || 'Requiere aprobación manual por total mayor o igual a 10000'
+      : 'Aprobación automática por total menor a 10000';
 
     const result = await pool.query(
       `INSERT INTO compras (
@@ -1286,18 +1339,31 @@ const Compras = {
         data.observaciones ?? null,
         requiereAprobacion,
         aprobacionExtraordinaria,
-        motivoAprobacion || null,
+        motivoAprobacionFinal,
       ]
     );
+
+    await pool.query(
+      `INSERT INTO compras_estado_historial (compra_id, estado_anterior, estado_nuevo, motivo, usuario_id)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        result.rows[0].id,
+        null,
+        'Pendiente',
+        requiereAprobacion
+          ? 'Compra creada. Requiere aprobación por total mayor o igual a 10000.'
+          : 'Compra creada con aprobación automática por total menor a 10000.',
+        options.usuarioId ?? null,
+      ]
+    );
+
     return result.rows[0].id;
   },
   addDetalle: async (compraId, productoId, cantidad, precioUnitario, options = {}) => {
     await ensureComprasSchema();
 
     const parsedCantidad = Number(cantidad);
-    const parsedPrecio = Number(precioUnitario);
-    const permisoExtraordinario = options.permisoExtraordinario === true || options.permisoExtraordinario === 'true';
-    const motivoPermiso = typeof options.motivoPermiso === 'string' ? options.motivoPermiso.trim() : '';
+    const parsedPrecioSolicitado = Number(precioUnitario);
 
     if (!Number.isFinite(parsedCantidad) || parsedCantidad <= 0) {
       const error = new Error('La cantidad debe ser mayor que 0');
@@ -1305,19 +1371,11 @@ const Compras = {
       throw error;
     }
 
-    if (!Number.isFinite(parsedPrecio) || parsedPrecio <= 0) {
-      const error = new Error('El precio unitario debe ser valido y mayor que 0');
+    if (!Number.isFinite(parsedPrecioSolicitado) || parsedPrecioSolicitado <= 0) {
+      const error = new Error('El precio unitario debe ser válido y mayor que 0');
       error.statusCode = 400;
       throw error;
     }
-
-    if (parsedCantidad > 50 && (!permisoExtraordinario || motivoPermiso.length < 10)) {
-      const error = new Error('Cantidades mayores a 50 requieren permiso extraordinario con motivo minimo de 10 caracteres');
-      error.statusCode = 409;
-      throw error;
-    }
-
-    const subtotal = parsedCantidad * parsedPrecio;
 
     const productsInCompra = await pool.query(
       'SELECT COUNT(*)::int AS total FROM detalle_compras WHERE compra_id = $1',
@@ -1342,13 +1400,29 @@ const Compras = {
       throw error;
     }
 
+    const precioContrato = Number(producto.precio || 0);
+    if (!Number.isFinite(precioContrato) || precioContrato <= 0) {
+      const error = new Error('El producto no tiene un precio de contrato válido');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    if (Math.abs(parsedPrecioSolicitado - precioContrato) > 0.0001) {
+      const error = new Error('El precio unitario debe coincidir con el precio de contrato del producto');
+      error.statusCode = 409;
+      error.details = { precioContrato };
+      throw error;
+    }
+
+    const subtotal = parsedCantidad * precioContrato;
+
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
       await client.query(
         'INSERT INTO detalle_compras (compra_id, producto_id, cantidad, precio_unitario, subtotal) VALUES ($1, $2, $3, $4, $5)',
-        [compraId, productoId, parsedCantidad, parsedPrecio, subtotal]
+        [compraId, productoId, parsedCantidad, precioContrato, subtotal]
       );
 
       await client.query(
@@ -1379,7 +1453,7 @@ const Compras = {
     );
     return true;
   },
-  updateStatus: async (id, data = {}) => {
+  updateStatus: async (id, data = {}, options = {}) => {
     await ensureComprasSchema();
 
     const client = await pool.connect();
@@ -1455,6 +1529,8 @@ const Compras = {
         return previous ? `${previous}\n${entry}` : entry;
       })();
 
+      const previousStatus = normalizeStatus(compra.estado);
+
       if (requestedStatus === 'Recibida') {
         await applyReceiptStock(id);
       }
@@ -1469,6 +1545,23 @@ const Compras = {
       );
 
       const updated = await client.query('SELECT * FROM compras WHERE id = $1', [id]);
+
+      await client.query(
+        `INSERT INTO compras_estado_historial (compra_id, estado_anterior, estado_nuevo, motivo, usuario_id)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          id,
+          previousStatus,
+          requestedStatus,
+          requestedStatus === 'Cancelada'
+            ? motivoCancelacion || 'Cambio de estado a Cancelada'
+            : requestedStatus === 'Recibida'
+            ? 'Compra recibida completamente y stock actualizado.'
+            : 'Cambio de estado manual.',
+          options.usuarioId ?? null,
+        ]
+      );
+
       await client.query('COMMIT');
       return updated.rows[0];
     } catch (error) {
@@ -1564,6 +1657,36 @@ const normalizeProduccionStatus = (value) => {
   return null;
 };
 
+const validateProduccionPayload = (data = {}) => {
+  const productoId = Number(data.producto_id);
+  const cantidad = Number(data.cantidad);
+  const tiempoPreparacion = Number(data.tiempo_preparacion_minutos ?? 0);
+
+  if (!Number.isInteger(productoId) || productoId <= 0) {
+    const error = new Error('producto_id debe ser un entero positivo');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!Number.isInteger(cantidad) || cantidad <= 0) {
+    const error = new Error('cantidad debe ser un entero positivo');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!Number.isFinite(tiempoPreparacion) || tiempoPreparacion <= 0) {
+    const error = new Error('tiempo_preparacion_minutos debe ser mayor a 0');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!data.fecha) {
+    const error = new Error('fecha es obligatoria');
+    error.statusCode = 400;
+    throw error;
+  }
+};
+
 const Produccion = {
   getAll: async () => {
     const result = await pool.query(`
@@ -1575,21 +1698,98 @@ const Produccion = {
     return result.rows;
   },
   getById: async (id) => {
-    const result = await pool.query('SELECT * FROM produccion WHERE id = $1', [id]);
-    return result.rows[0];
+    const result = await pool.query(
+      `SELECT p.*, pr.nombre as producto_nombre
+       FROM produccion p
+       JOIN productos pr ON p.producto_id = pr.id
+       WHERE p.id = $1`,
+      [id]
+    );
+
+    const produccion = result.rows[0];
+    if (!produccion) return null;
+
+    if (produccion.pedido_id) {
+      const pedidoResult = await pool.query(
+        `SELECT pe.*, CONCAT(COALESCE(c.nombre, ''), ' ', COALESCE(c.apellido, '')) AS cliente_nombre
+         FROM pedidos pe
+         LEFT JOIN clientes c ON c.id = pe.cliente_id
+         WHERE pe.id = $1`,
+        [produccion.pedido_id]
+      );
+
+      const pedido = pedidoResult.rows[0] || null;
+      if (pedido) {
+        const detallesResult = await pool.query(
+          `SELECT dp.*, pr.nombre AS producto_nombre
+           FROM detalle_pedidos dp
+           JOIN productos pr ON pr.id = dp.producto_id
+           WHERE dp.pedido_id = $1
+           ORDER BY dp.id ASC`,
+          [produccion.pedido_id]
+        );
+        produccion.pedido = {
+          ...pedido,
+          detalles: detallesResult.rows,
+        };
+        produccion.pedido_numero = pedido.numero_pedido;
+        produccion.pedido_cliente = pedido.cliente_nombre?.trim() || null;
+      }
+    }
+
+    const insumosResult = await pool.query(
+      `SELECT ei.*, i.nombre AS insumo_nombre
+       FROM entregas_insumos ei
+       JOIN insumos i ON i.id = ei.insumo_id
+       WHERE ei.operario = $1
+         AND ei.fecha <= $2
+       ORDER BY ei.fecha DESC, ei.hora DESC, ei.id DESC
+       LIMIT 10`,
+      [produccion.responsable || '', produccion.fecha]
+    );
+
+    produccion.insumos_gastados = insumosResult.rows;
+    produccion.entregas_insumos_relacionadas = insumosResult.rows;
+
+    return produccion;
   },
   create: async (data) => {
+    validateProduccionPayload(data);
     const estadoInicial = normalizeProduccionStatus(data.estado) || 'Orden Recibida';
     const result = await pool.query(
-      'INSERT INTO produccion (numero_produccion, producto_id, cantidad, fecha, responsable, estado, notes) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
-      [data.numero_produccion, data.producto_id, data.cantidad, data.fecha, data.responsable, estadoInicial, data.notes]
+      'INSERT INTO produccion (numero_produccion, producto_id, pedido_id, cantidad, fecha, responsable, tiempo_preparacion_minutos, estado, notes, insumos_gastados) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
+      [
+        data.numero_produccion,
+        data.producto_id,
+        data.pedido_id ?? null,
+        data.cantidad,
+        data.fecha,
+        data.responsable,
+        data.tiempo_preparacion_minutos ?? 0,
+        estadoInicial,
+        data.notes,
+        Array.isArray(data.insumos_gastados) ? JSON.stringify(data.insumos_gastados) : '[]'
+      ]
     );
     return result.rows[0].id;
   },
   update: async (id, data) => {
+    validateProduccionPayload(data);
+    const estadoActualizado = normalizeProduccionStatus(data.estado) || 'Orden Recibida';
     await pool.query(
-      'UPDATE produccion SET cantidad = $1, fecha = $2, responsable = $3, estado = $4, notes = $5 WHERE id = $6',
-      [data.cantidad, data.fecha, data.responsable, data.estado, data.notes, id]
+      'UPDATE produccion SET producto_id = $1, pedido_id = $2, cantidad = $3, fecha = $4, responsable = $5, tiempo_preparacion_minutos = $6, estado = $7, notes = $8, insumos_gastados = $9, updated_at = CURRENT_TIMESTAMP WHERE id = $10',
+      [
+        data.producto_id,
+        data.pedido_id ?? null,
+        data.cantidad,
+        data.fecha,
+        data.responsable,
+        data.tiempo_preparacion_minutos ?? 0,
+        estadoActualizado,
+        data.notes,
+        Array.isArray(data.insumos_gastados) ? JSON.stringify(data.insumos_gastados) : '[]',
+        id
+      ]
     );
     return true;
   },

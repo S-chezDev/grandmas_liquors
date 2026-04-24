@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { AuthProvider, useAuth } from './components/AuthContext';
+import type { AuthLoginResult } from './components/AuthContext';
 import { useAlertDialog } from './components/AlertDialog';
 import { subscribeApiLoading } from './services/api';
 
@@ -9,6 +10,7 @@ import { subscribeApiLoading } from './services/api';
 import { Login } from './components/pages/Login';
 
 const DashboardPage = lazy(() => import('./components/pages/Dashboard').then((module) => ({ default: module.Dashboard })));
+const HomePage = lazy(() => import('./components/pages/Home').then((module) => ({ default: module.Home })));
 const RolesPage = lazy(() => import('./components/pages/usuarios/Roles').then((module) => ({ default: module.Roles })));
 const UsuariosPage = lazy(() => import('./components/pages/usuarios/Usuarios').then((module) => ({ default: module.Usuarios })));
 const AccesosPage = lazy(() => import('./components/pages/usuarios/Accesos').then((module) => ({ default: module.Accesos })));
@@ -23,12 +25,11 @@ const VentasPage = lazy(() => import('./components/pages/ventas/Ventas').then((m
 const AbonosPage = lazy(() => import('./components/pages/ventas/Abonos').then((module) => ({ default: module.Abonos })));
 const PedidosPage = lazy(() => import('./components/pages/ventas/Pedidos').then((module) => ({ default: module.Pedidos })));
 const DomiciliosPage = lazy(() => import('./components/pages/ventas/Domicilios').then((module) => ({ default: module.Domicilios })));
-const TiendaClientePage = lazy(() => import('./components/pages/cliente/TiendaCliente').then((module) => ({ default: module.TiendaCliente })));
 const MisPedidosPage = lazy(() => import('./components/pages/cliente/MisPedidos').then((module) => ({ default: module.MisPedidos })));
 const MiPerfilPage = lazy(() => import('./components/pages/cliente/MiPerfil').then((module) => ({ default: module.MiPerfil })));
 
 const pageComponents: { [key: string]: React.ComponentType } = {
-  '/': DashboardPage,
+  '/': HomePage,
   '/dashboard': DashboardPage,
   '/medicion': DashboardPage,
   '/usuarios/roles': RolesPage,
@@ -46,13 +47,12 @@ const pageComponents: { [key: string]: React.ComponentType } = {
   '/ventas/pedidos': PedidosPage,
   '/ventas/domicilios': DomiciliosPage,
   '/configuracion/roles': RolesPage,
-  '/cliente/tienda': TiendaClientePage,
   '/cliente/pedidos': MisPedidosPage,
   '/cliente/perfil': MiPerfilPage
 };
 
 const pageTitles: { [key: string]: string } = {
-  '/': 'Dashboard',
+  '/': 'Inicio',
   '/dashboard': 'Dashboard',
   '/medicion': 'Dashboard',
   '/usuarios/roles': 'Gestión de Roles',
@@ -70,7 +70,6 @@ const pageTitles: { [key: string]: string } = {
   '/ventas/pedidos': 'Pedidos',
   '/ventas/domicilios': 'Domicilios',
   '/configuracion/roles': 'Gestión de Roles',
-  '/cliente/tienda': 'Tienda de Productos',
   '/cliente/pedidos': 'Mis Pedidos',
   '/cliente/perfil': 'Mi Perfil'
 };
@@ -118,7 +117,7 @@ function AppContent() {
       return;
     }
 
-    const defaultPath = user.rol === 'Cliente' ? '/cliente/tienda' : '/dashboard';
+    const defaultPath = user.rol === 'Cliente' ? '/cliente/pedidos' : '/';
     setCurrentPath(defaultPath);
   }, [user?.id, user?.rol]);
 
@@ -163,13 +162,25 @@ function AppContent() {
     }
   };
 
-  const handleLogin = async (email: string, password: string, rememberMe = false): Promise<boolean> => {
-    const success = await login(email, password, rememberMe);
-    if (success) {
+  const handleLogin = async (email: string, password: string, rememberMe = false): Promise<AuthLoginResult> => {
+    const result = await login(email, password, rememberMe);
+    if (result.success) {
       console.log('Login exitoso');
-      return true;
     }
-    return false;
+    return result;
+  };
+
+  const handleLogout = () => {
+    showAlert({
+      title: 'Confirmar cierre de sesión',
+      description: '¿Estás seguro de que deseas cerrar la sesión actual?',
+      type: 'warning',
+      confirmText: 'Sí, cerrar sesión',
+      cancelText: 'Cancelar',
+      onConfirm: () => {
+        logout();
+      },
+    });
   };
 
   if (isAuthLoading) {
@@ -192,7 +203,7 @@ function AppContent() {
     );
   }
 
-  const CurrentPage = pageComponents[currentPath] || (user.rol === 'Cliente' ? TiendaClientePage : DashboardPage);
+  const CurrentPage = pageComponents[currentPath] || (user.rol === 'Cliente' ? MisPedidosPage : HomePage);
   const pageTitle = pageTitles[currentPath] || 'Grandma\'s Liqueurs';
 
   return (
@@ -200,7 +211,7 @@ function AppContent() {
       <Sidebar currentPath={currentPath} onNavigate={handleNavigate} />
       
       <div className="flex-1 flex flex-col overflow-hidden">
-        <Header title={pageTitle} userName={`${user.nombre} ${user.apellido}`} userRole={user.rol} onLogout={logout} />
+        <Header title={pageTitle} userName={`${user.nombre} ${user.apellido}`} userRole={user.rol} onLogout={handleLogout} />
         
         <main className="flex-1 overflow-y-auto p-6">
           <Suspense fallback={null}>

@@ -13,6 +13,7 @@ DROP TABLE IF EXISTS usuarios_sesiones CASCADE;
 DROP TABLE IF EXISTS usuarios_auditoria CASCADE;
 DROP TABLE IF EXISTS roles_auditoria CASCADE;
 DROP TABLE IF EXISTS proveedores_auditoria CASCADE;
+DROP TABLE IF EXISTS compras_estado_historial CASCADE;
 DROP TABLE IF EXISTS usuarios CASCADE;
 DROP TABLE IF EXISTS detalle_ventas CASCADE;
 DROP TABLE IF EXISTS detalle_compras CASCADE;
@@ -289,11 +290,14 @@ CREATE TABLE produccion (
     id SERIAL PRIMARY KEY,
     numero_produccion VARCHAR(50) UNIQUE NOT NULL,
     producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE RESTRICT,
-    cantidad INTEGER NOT NULL,
+    pedido_id INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
+    cantidad INTEGER NOT NULL CHECK (cantidad > 0),
     fecha DATE NOT NULL,
     responsable VARCHAR(100),
+    tiempo_preparacion_minutos INTEGER DEFAULT 1 CHECK (tiempo_preparacion_minutos > 0),
     estado VARCHAR(30) DEFAULT 'Orden Recibida', -- Orden Recibida, Orden en preparacion, Orden Lista, Cancelada
     notes TEXT,
+    insumos_gastados JSONB DEFAULT '[]'::jsonb,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -326,6 +330,16 @@ CREATE TABLE proveedores_auditoria (
     accion VARCHAR(20) NOT NULL,
     usuario_id INTEGER,
     cambios JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE compras_estado_historial (
+    id SERIAL PRIMARY KEY,
+    compra_id INTEGER NOT NULL REFERENCES compras(id) ON DELETE CASCADE,
+    estado_anterior VARCHAR(20),
+    estado_nuevo VARCHAR(20) NOT NULL,
+    motivo TEXT,
+    usuario_id INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -420,6 +434,7 @@ CREATE INDEX idx_usuarios_password_resets_token ON usuarios_password_resets(toke
 CREATE INDEX idx_usuarios_auditoria_usuario_fecha ON usuarios_auditoria(usuario_id, created_at DESC);
 CREATE INDEX idx_proveedores_auditoria_proveedor_fecha ON proveedores_auditoria(proveedor_id, created_at DESC);
 CREATE INDEX idx_roles_auditoria_rol_fecha ON roles_auditoria(rol_id, created_at DESC);
+CREATE INDEX idx_compras_estado_historial_compra_fecha ON compras_estado_historial(compra_id, created_at DESC);
 
 -- Índices para productos
 CREATE INDEX idx_productos_categoria ON productos(categoria_id);
