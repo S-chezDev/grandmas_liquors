@@ -290,11 +290,14 @@ CREATE TABLE produccion (
     id SERIAL PRIMARY KEY,
     numero_produccion VARCHAR(50) UNIQUE NOT NULL,
     producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE RESTRICT,
-    cantidad INTEGER NOT NULL,
+    pedido_id INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
+    cantidad INTEGER NOT NULL CHECK (cantidad > 0),
     fecha DATE NOT NULL,
     responsable VARCHAR(100),
+    tiempo_preparacion_minutos INTEGER DEFAULT 1 CHECK (tiempo_preparacion_minutos > 0),
     estado VARCHAR(30) DEFAULT 'Orden Recibida', -- Orden Recibida, Orden en preparacion, Orden Lista, Cancelada
     notes TEXT,
+    insumos_gastados JSONB DEFAULT '[]'::jsonb,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

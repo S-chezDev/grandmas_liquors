@@ -1657,6 +1657,36 @@ const normalizeProduccionStatus = (value) => {
   return null;
 };
 
+const validateProduccionPayload = (data = {}) => {
+  const productoId = Number(data.producto_id);
+  const cantidad = Number(data.cantidad);
+  const tiempoPreparacion = Number(data.tiempo_preparacion_minutos ?? 0);
+
+  if (!Number.isInteger(productoId) || productoId <= 0) {
+    const error = new Error('producto_id debe ser un entero positivo');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!Number.isInteger(cantidad) || cantidad <= 0) {
+    const error = new Error('cantidad debe ser un entero positivo');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!Number.isFinite(tiempoPreparacion) || tiempoPreparacion <= 0) {
+    const error = new Error('tiempo_preparacion_minutos debe ser mayor a 0');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!data.fecha) {
+    const error = new Error('fecha es obligatoria');
+    error.statusCode = 400;
+    throw error;
+  }
+};
+
 const Produccion = {
   getAll: async () => {
     const result = await pool.query(`
@@ -1668,21 +1698,98 @@ const Produccion = {
     return result.rows;
   },
   getById: async (id) => {
-    const result = await pool.query('SELECT * FROM produccion WHERE id = $1', [id]);
-    return result.rows[0];
+    const result = await pool.query(
+      `SELECT p.*, pr.nombre as producto_nombre
+       FROM produccion p
+       JOIN productos pr ON p.producto_id = pr.id
+       WHERE p.id = $1`,
+      [id]
+    );
+
+    const produccion = result.rows[0];
+    if (!produccion) return null;
+
+    if (produccion.pedido_id) {
+      const pedidoResult = await pool.query(
+        `SELECT pe.*, CONCAT(COALESCE(c.nombre, ''), ' ', COALESCE(c.apellido, '')) AS cliente_nombre
+         FROM pedidos pe
+         LEFT JOIN clientes c ON c.id = pe.cliente_id
+         WHERE pe.id = $1`,
+        [produccion.pedido_id]
+      );
+
+      const pedido = pedidoResult.rows[0] || null;
+      if (pedido) {
+        const detallesResult = await pool.query(
+          `SELECT dp.*, pr.nombre AS producto_nombre
+           FROM detalle_pedidos dp
+           JOIN productos pr ON pr.id = dp.producto_id
+           WHERE dp.pedido_id = $1
+           ORDER BY dp.id ASC`,
+          [produccion.pedido_id]
+        );
+        produccion.pedido = {
+          ...pedido,
+          detalles: detallesResult.rows,
+        };
+        produccion.pedido_numero = pedido.numero_pedido;
+        produccion.pedido_cliente = pedido.cliente_nombre?.trim() || null;
+      }
+    }
+
+    const insumosResult = await pool.query(
+      `SELECT ei.*, i.nombre AS insumo_nombre
+       FROM entregas_insumos ei
+       JOIN insumos i ON i.id = ei.insumo_id
+       WHERE ei.operario = $1
+         AND ei.fecha <= $2
+       ORDER BY ei.fecha DESC, ei.hora DESC, ei.id DESC
+       LIMIT 10`,
+      [produccion.responsable || '', produccion.fecha]
+    );
+
+    produccion.insumos_gastados = insumosResult.rows;
+    produccion.entregas_insumos_relacionadas = insumosResult.rows;
+
+    return produccion;
   },
   create: async (data) => {
+    validateProduccionPayload(data);
     const estadoInicial = normalizeProduccionStatus(data.estado) || 'Orden Recibida';
     const result = await pool.query(
-      'INSERT INTO produccion (numero_produccion, producto_id, cantidad, fecha, responsable, estado, notes) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
-      [data.numero_produccion, data.producto_id, data.cantidad, data.fecha, data.responsable, estadoInicial, data.notes]
+      'INSERT INTO produccion (numero_produccion, producto_id, pedido_id, cantidad, fecha, responsable, tiempo_preparacion_minutos, estado, notes, insumos_gastados) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
+      [
+        data.numero_produccion,
+        data.producto_id,
+        data.pedido_id ?? null,
+        data.cantidad,
+        data.fecha,
+        data.responsable,
+        data.tiempo_preparacion_minutos ?? 0,
+        estadoInicial,
+        data.notes,
+        Array.isArray(data.insumos_gastados) ? JSON.stringify(data.insumos_gastados) : '[]'
+      ]
     );
     return result.rows[0].id;
   },
   update: async (id, data) => {
+    validateProduccionPayload(data);
+    const estadoActualizado = normalizeProduccionStatus(data.estado) || 'Orden Recibida';
     await pool.query(
-      'UPDATE produccion SET cantidad = $1, fecha = $2, responsable = $3, estado = $4, notes = $5 WHERE id = $6',
-      [data.cantidad, data.fecha, data.responsable, data.estado, data.notes, id]
+      'UPDATE produccion SET producto_id = $1, pedido_id = $2, cantidad = $3, fecha = $4, responsable = $5, tiempo_preparacion_minutos = $6, estado = $7, notes = $8, insumos_gastados = $9, updated_at = CURRENT_TIMESTAMP WHERE id = $10',
+      [
+        data.producto_id,
+        data.pedido_id ?? null,
+        data.cantidad,
+        data.fecha,
+        data.responsable,
+        data.tiempo_preparacion_minutos ?? 0,
+        estadoActualizado,
+        data.notes,
+        Array.isArray(data.insumos_gastados) ? JSON.stringify(data.insumos_gastados) : '[]',
+        id
+      ]
     );
     return true;
   },
