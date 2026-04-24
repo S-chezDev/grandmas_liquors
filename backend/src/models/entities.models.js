@@ -992,8 +992,8 @@ const Pedidos = {
   },
   create: async (data) => {
     const result = await pool.query(
-      'INSERT INTO pedidos (numero_pedido, cliente_id, fecha, fecha_entrega, detalles, estado) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
-      [data.numero_pedido, data.cliente_id, data.fecha, data.fecha_entrega, data.detalles, data.estado || 'Pendiente']
+      'INSERT INTO pedidos (numero_pedido, cliente_id, fecha, fecha_entrega, detalles, total, estado) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+      [data.numero_pedido, data.cliente_id, data.fecha, data.fecha_entrega, data.detalles, data.total || 0, data.estado || 'Pendiente']
     );
     return result.rows[0].id;
   },
