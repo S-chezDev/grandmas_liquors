@@ -466,6 +466,7 @@ CREATE INDEX idx_compras_proveedor_fecha ON compras(proveedor_id, fecha DESC);
 CREATE INDEX idx_insumos_nombre ON insumos(nombre);
 CREATE INDEX idx_entregas_insumos_fecha ON entregas_insumos(fecha DESC);
 CREATE INDEX idx_produccion_fecha ON produccion(fecha DESC);
+CREATE INDEX idx_produccion_pedido ON produccion(pedido_id);
 
 -- Índices para detalles
 CREATE INDEX idx_detalle_pedidos_pedido ON detalle_pedidos(pedido_id);
