@@ -145,7 +145,7 @@ const normalizeClientePayload = (payload = {}) => {
 
 const normalizeAuthRegisterPayload = (payload = {}) => {
   const data = { ...payload };
-  const tipoDocumento = normalizeTipoDocumento(payload.tipoDocumento ?? 'CC');
+  const tipoDocumento = normalizeTipoDocumento(payload.tipoDocumento ?? payload.tipo_documento ?? 'CC');
 
   if (!tipoDocumento) {
     return {
@@ -154,6 +154,30 @@ const normalizeAuthRegisterPayload = (payload = {}) => {
   }
 
   data.tipoDocumento = tipoDocumento;
+  data.documento = payload.documento ?? payload.numeroDocumento;
+
+  if (payload.estado !== undefined) {
+    const estado = canonicalizeWithMap(payload.estado, BASE_ESTADO_MAP);
+    if (!estado) {
+      return {
+        error: 'Estado invalido. Valores permitidos: Activo, Inactivo.',
+      };
+    }
+    data.estado = estado;
+  } else {
+    data.estado = 'Activo';
+  }
+
+  if (payload.telefono !== undefined) {
+    const telefono = String(payload.telefono).replace(/\D/g, '');
+    if (telefono.length < 7 || telefono.length > 15) {
+      return {
+        error: 'Telefono invalido. Debe tener entre 7 y 15 digitos numericos.',
+      };
+    }
+    data.telefono = telefono;
+  }
+
   return { data };
 };
 

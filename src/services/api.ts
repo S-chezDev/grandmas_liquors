@@ -135,6 +135,54 @@ export const apiCall = async (
   }
 };
 
+const apiUpload = async (endpoint: string, fileFieldName: string, file: File) => {
+  beginApiRequest();
+  let lastError: unknown;
+
+  try {
+    const formData = new FormData();
+    formData.append(fileFieldName, file);
+
+    for (const baseUrl of API_BASE_URLS) {
+      try {
+        const response = await fetch(`${baseUrl}${endpoint}`, {
+          method: 'POST',
+          credentials: 'include',
+          cache: 'no-store',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          let errorMessage = `API Error: ${response.status} ${response.statusText}`;
+          try {
+            const errorBody = await response.json();
+            if (errorBody?.message) errorMessage = errorBody.message;
+          } catch {
+            // Conserva mensaje por defecto cuando no viene JSON.
+          }
+
+          const httpError: any = new Error(errorMessage);
+          httpError.isHttpError = true;
+          httpError.status = response.status;
+          httpError.statusText = response.statusText;
+          throw httpError;
+        }
+
+        const result = await response.json();
+        if (result.success && result.data !== undefined) return result.data;
+        return result;
+      } catch (error) {
+        if ((error as any)?.isHttpError) throw error;
+        lastError = error;
+      }
+    }
+
+    throw lastError;
+  } finally {
+    endApiRequest();
+  }
+};
+
 const toNumberOrUndefined = (value: any): number | undefined => {
   if (value === null || value === undefined || value === '') return undefined;
   const parsed = Number(value);
@@ -171,7 +219,13 @@ const normalizeAbonoEstado = (value: any): any => {
 const normalizeClientePayload = (data: any) => ({
   ...data,
   tipoDocumento: normalizeTipoDocumento(data?.tipoDocumento ?? data?.tipo_documento),
+  documento: data?.documento ?? data?.numeroDocumento,
   estado: data?.estado ?? 'Activo',
+});
+
+const normalizeAuthRegisterPayload = (data: any) => ({
+  ...normalizeClientePayload(data),
+  password: data?.password,
 });
 
 const normalizeProveedorPayload = (data: any) => ({
@@ -401,6 +455,7 @@ export const clientes = {
     const merged = await mergeWithCurrent(`/api/clientes/${id}`, data);
     return apiCall(`/api/clientes/${id}`, 'PUT', normalizeClientePayload(merged));
   },
+  uploadProfilePhoto: (file: File) => apiUpload('/api/clientes/perfil/foto', 'foto', file),
   delete: (id: number) => apiCall(`/api/clientes/${id}`, 'DELETE'),
 };
 
@@ -777,12 +832,14 @@ export const auth = {
     apiCall('/api/auth/password-reset-confirm', 'POST', data),
   registerCliente: (data: {
     tipoDocumento: 'CC' | 'CE' | 'TI' | 'Pasaporte';
-    numeroDocumento: string;
+    documento?: string;
+    numeroDocumento?: string;
     nombre: string;
     apellido: string;
+    telefono: string;
     direccion: string;
     email: string;
-    telefono?: string;
+    estado?: 'Activo' | 'Inactivo';
     password: string;
-  }) => apiCall('/api/auth/register-cliente', 'POST', data),
+  }) => apiCall('/api/auth/register-cliente', 'POST', normalizeAuthRegisterPayload(data)),
 };

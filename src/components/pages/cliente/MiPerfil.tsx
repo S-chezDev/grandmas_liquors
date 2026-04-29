@@ -32,6 +32,13 @@ const getHttpStatus = (error: unknown): number | undefined => {
 };
 
 export function MiPerfil() {
+  const API_ORIGIN = ((import.meta as any).env?.VITE_API_URL || 'http://localhost:3002').replace(/\/$/, '');
+  const resolvePhotoUrl = (value?: string) => {
+    if (!value) return undefined;
+    if (value.startsWith('http://') || value.startsWith('https://') || value.startsWith('data:')) return value;
+    return `${API_ORIGIN}${value.startsWith('/') ? value : `/${value}`}`;
+  };
+
   const { user, isAuthLoading } = useAuth();
   const [perfil, setPerfil] = useState<PerfilCliente>({
     nombre: '',
@@ -57,6 +64,7 @@ export function MiPerfil() {
     confirmPassword: '',
   });
   const [saving, setSaving] = useState(false);
+  const [selectedPhotoFile, setSelectedPhotoFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { showAlert, AlertComponent } = useAlertDialog();
@@ -89,7 +97,7 @@ export function MiPerfil() {
           direccion: clienteData?.direccion || usuario?.direccion || '',
           tipoDocumento: normalizeTipoDocumento(clienteData?.tipo_documento || usuario?.tipo_documento),
           numeroDocumento: clienteData?.documento || usuario?.documento || '',
-          foto: clienteData?.foto_url || usuario?.foto_url || undefined,
+          foto: resolvePhotoUrl(clienteData?.foto_url || usuario?.foto_url),
         };
 
         setClienteId(typeof clienteData?.id === 'number' ? clienteData.id : null);
@@ -145,6 +153,7 @@ export function MiPerfil() {
         setFotoPreview(reader.result as string);
       };
       reader.readAsDataURL(file);
+      setSelectedPhotoFile(file);
     }
   };
 
@@ -174,14 +183,20 @@ export function MiPerfil() {
           tipoDocumento: formData.tipoDocumento,
           documento: formData.numeroDocumento,
         };
-        if (fotoPreview && fotoPreview.startsWith('http')) {
-          payload.foto_url = fotoPreview;
-        }
         await clientesAPI.update(clienteId, payload);
       }
 
-      const next = { ...formData, foto: fotoPreview || formData.foto };
+      let persistedFotoUrl = fotoPreview || formData.foto;
+      if (selectedPhotoFile) {
+        const uploadResult = (await clientesAPI.uploadProfilePhoto(selectedPhotoFile)) as { foto_url?: string };
+        persistedFotoUrl = resolvePhotoUrl(uploadResult?.foto_url) || persistedFotoUrl;
+      }
+
+      const next = { ...formData, foto: persistedFotoUrl };
       setPerfil(next);
+      setFormData(next);
+      setFotoPreview(persistedFotoUrl || null);
+      setSelectedPhotoFile(null);
       setIsEditing(false);
       showAlert({
         title: 'Perfil actualizado',
@@ -206,6 +221,7 @@ export function MiPerfil() {
   const handleCancelEdit = () => {
     setFormData(perfil);
     setFotoPreview(perfil.foto || null);
+    setSelectedPhotoFile(null);
     setIsEditing(false);
   };
 
@@ -410,8 +426,7 @@ export function MiPerfil() {
                     Cambiar foto
                   </Button>
                   <p className="mt-2 text-xs text-muted-foreground">
-                    Solo se envía al servidor si la imagen es una URL (http/https). La vista previa local es solo
-                    referencia.
+                    Formatos permitidos: JPG, PNG o WEBP. Tamaño máximo: 2MB.
                   </p>
                 </label>
               </div>

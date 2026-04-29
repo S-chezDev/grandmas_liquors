@@ -1,4 +1,7 @@
 const models = require('../models/entities.models');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
 const { normalizeClientePayload } = require('./normalizador-http');
 const { isClienteUser, assertOwnClienteParam } = require('../utils/selfServiceAccess');
 
@@ -98,6 +101,45 @@ module.exports = {
       res.json({ success: true, message: 'Cliente actualizado exitosamente' });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
+    }
+  },
+  uploadProfilePhoto: async (req, res) => {
+    try {
+      if (!req.user?.id) {
+        return res.status(401).json({ success: false, message: 'No autenticado' });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ success: false, message: 'Debes seleccionar una imagen.' });
+      }
+
+      const cliente = await models.Clientes.getOrCreateByUsuarioId(req.user.id);
+      if (!cliente?.id) {
+        return res.status(404).json({ success: false, message: 'No se encontró el perfil de cliente.' });
+      }
+
+      const uploadsDir = path.join(__dirname, '../../uploads/perfiles');
+      fs.mkdirSync(uploadsDir, { recursive: true });
+
+      const extension = path.extname(req.file.originalname || '').toLowerCase() || '.jpg';
+      const filename = `cliente_${cliente.id}_${Date.now()}_${crypto.randomBytes(6).toString('hex')}${extension}`;
+      const absolutePath = path.join(uploadsDir, filename);
+      const relativeUrl = `/uploads/perfiles/${filename}`;
+
+      fs.writeFileSync(absolutePath, req.file.buffer);
+
+      await models.Clientes.update(cliente.id, { foto_url: relativeUrl });
+
+      return res.json({
+        success: true,
+        message: 'Foto de perfil actualizada exitosamente.',
+        data: {
+          foto_url: relativeUrl,
+          cliente_id: cliente.id,
+        },
+      });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: 'No se pudo actualizar la foto de perfil.' });
     }
   },
   delete: async (req, res) => {

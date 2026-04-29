@@ -377,8 +377,9 @@ const Clientes = {
            email = COALESCE($7, email),
            direccion = COALESCE($8, direccion),
            estado = COALESCE($9, estado),
+           foto_url = COALESCE($10, foto_url),
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $10`,
+       WHERE id = $11`,
       [
         data.usuario_id,
         data.nombre,
@@ -389,6 +390,7 @@ const Clientes = {
         data.email,
         data.direccion,
         data.estado,
+        data.foto_url,
         id,
       ]
     );
@@ -2535,7 +2537,21 @@ const Roles = {
     return result.rows;
   },
   getById: async (id) => {
-    const result = await pool.query('SELECT * FROM roles WHERE id = $1', [id]);
+    const result = await pool.query(
+      `SELECT r.*,
+              COALESCE(u.usuarios, 0) AS usuarios,
+              COALESCE(u.usuarios_activos, 0) AS usuarios_activos
+       FROM roles r
+       LEFT JOIN (
+         SELECT rol_id,
+                COUNT(*) FILTER (WHERE estado IS NULL OR estado <> 'Eliminado') AS usuarios,
+                COUNT(*) FILTER (WHERE estado = 'Activo') AS usuarios_activos
+         FROM usuarios
+         GROUP BY rol_id
+       ) u ON u.rol_id = r.id
+       WHERE r.id = $1`,
+      [id]
+    );
     return result.rows[0];
   },
   getByNombre: async (nombre) => {
@@ -2583,7 +2599,10 @@ const Roles = {
 
     if (data.estado === 'Inactivo') {
       const assignedUsersResult = await pool.query(
-        'SELECT COUNT(*)::int AS total FROM usuarios WHERE rol_id = $1',
+        `SELECT COUNT(*)::int AS total
+         FROM usuarios
+         WHERE rol_id = $1
+           AND (estado IS NULL OR estado <> 'Eliminado')`,
         [id]
       );
       const assignedUsers = Number(assignedUsersResult.rows[0]?.total || 0);

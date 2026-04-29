@@ -478,15 +478,19 @@ export function Roles() {
     }
   ];
 
-  const handleEstadoChangeRequest = (role: Role, nuevoEstado: 'Activo' | 'Inactivo') => {
+  const handleEstadoChangeRequest = async (role: Role, nuevoEstado: 'Activo' | 'Inactivo') => {
     if (nuevoEstado === role.estado) return;
 
-    const assignedUsers = role.usuarios ?? 0;
+    // Refrescar siempre antes de validar para evitar conteos desactualizados
+    await loadRoles();
+
+    const freshRole = await rolesAPI.getById(Number(role.id)) as Role | null;
+    const assignedUsers = freshRole?.usuarios ?? role.usuarios ?? 0;
 
     if (nuevoEstado === 'Inactivo' && assignedUsers > 0) {
       showAlert({
         title: 'No se puede desactivar',
-        description: `El rol ${role.nombre} tiene ${assignedUsers} usuario${assignedUsers !== 1 ? 's' : ''} asignado${assignedUsers !== 1 ? 's' : ''}. Debes reasignar o quitar esos usuarios del rol antes de cambiar su estado.`,
+        description: `El rol "${role.nombre}" tiene ${assignedUsers} usuario${assignedUsers !== 1 ? 's' : ''} activo${assignedUsers !== 1 ? 's' : ''} asignado${assignedUsers !== 1 ? 's' : ''}. Reasigna o elimina esos usuarios del rol antes de cambiar su estado.`,
         type: 'warning',
         confirmText: 'Entendido',
         onConfirm: () => {}
@@ -708,11 +712,17 @@ export function Roles() {
     setIsEditModalOpen(true);
   };
 
-  const handleDelete = (role: Role) => {
-    if (role.usuarios > 0) {
+  const handleDelete = async (role: Role) => {
+    // Refrescar antes de validar para evitar conteos desactualizados
+    await loadRoles();
+
+    const freshRole = await rolesAPI.getById(Number(role.id)) as Role | null;
+    const assignedUsers = freshRole?.usuarios ?? role.usuarios ?? 0;
+
+    if (assignedUsers > 0) {
       showAlert({
         title: 'No se puede eliminar',
-        description: `No se puede eliminar el rol ${role.nombre} porque tiene ${role.usuarios} usuario(s) asignado(s).`,
+        description: `No se puede eliminar el rol "${role.nombre}" porque tiene ${assignedUsers} usuario${assignedUsers !== 1 ? 's' : ''} asignado${assignedUsers !== 1 ? 's' : ''}. Reasígnalos antes de eliminar el rol.`,
         type: 'warning',
         confirmText: 'Entendido',
         onConfirm: () => {}
@@ -1509,13 +1519,15 @@ export function Roles() {
             <div className="p-4 bg-accent/50 rounded-lg">
               <p className="text-sm text-muted-foreground mb-3">Lista de Permisos</p>
               {selectedRole.permisos.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {selectedRole.permisos.map((permiso) => (
-                    <div key={permiso} className="flex items-center gap-2 p-2 bg-background rounded border">
-                      <Check className="w-4 h-4 text-green-600" />
-                      <span className="text-sm">{permiso}</span>
-                    </div>
-                  ))}
+                <div className="max-h-[calc(var(--app-vh,1vh)*50)] overflow-y-auto pr-1">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {selectedRole.permisos.map((permiso) => (
+                      <div key={permiso} className="flex items-center gap-2 p-2 bg-background rounded border">
+                        <Check className="w-4 h-4 text-green-600 shrink-0" />
+                        <span className="text-sm break-words">{permiso}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground italic">Sin permisos asignados</p>
@@ -1624,6 +1636,13 @@ export function Roles() {
           </div>
 
           <div className="space-y-4 max-h-96 overflow-y-auto">
+          <div
+            className={`space-y-3 overflow-y-auto pr-1 ${
+              manageModuleFilter === 'Todos'
+                ? 'max-h-[calc(var(--app-vh,1vh)*50)]'
+                : 'max-h-[calc(var(--app-vh,1vh)*100-300px)] sm:max-h-[calc(var(--app-vh,1vh)*100-320px)]'
+            }`}
+          >
             {manageModuleEntries.map(([modulo, permisos]) => (
               <Card key={modulo}>
                 <h4 className="mb-3 text-primary">{modulo}</h4>

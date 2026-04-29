@@ -31,10 +31,11 @@ export function Header({ title, userName = 'Usuario', userRole = 'Rol', onLogout
 
   return (
     <>
-      <header className="bg-white border-b border-border px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1>{title}</h1>
+      <header className="sticky top-0 z-20 bg-white/90 backdrop-blur-md border-b border-border/60 px-3 py-3 shadow-[0_2px_12px_rgba(15,23,42,0.04)] sm:px-4 lg:px-6 lg:py-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary/70">Panel</p>
+            <h1 className="font-display text-xl font-semibold leading-tight tracking-tight text-foreground sm:text-2xl">{title}</h1>
           </div>
           
           <div className="flex items-center gap-4">

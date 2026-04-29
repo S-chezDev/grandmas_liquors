@@ -355,43 +355,86 @@ module.exports = {
 
       const {
         tipoDocumento,
-        numeroDocumento,
+        documento,
         nombre,
         apellido,
+        telefono,
         direccion,
         email,
-        telefono,
+        estado,
         password,
       } = normalizedRegister.data;
+      const normalizedEmail = String(email || '').trim().toLowerCase();
+      const normalizedDocumento = String(documento || '').trim();
+      const normalizedTelefono = String(telefono || '').replace(/\D/g, '');
+      const normalizedNombre = String(nombre || '').trim();
+      const normalizedApellido = String(apellido || '').trim();
+      const normalizedDireccion = String(direccion || '').trim();
 
-      if (!numeroDocumento || !nombre || !apellido || !direccion || !email || !password) {
-        return res.status(400).json({ success: false, message: 'Faltan campos obligatorios para el registro' });
+      const requiredFields = [
+        { key: 'documento', value: normalizedDocumento, label: 'Número de Documento' },
+        { key: 'nombre', value: normalizedNombre, label: 'Nombre' },
+        { key: 'apellido', value: normalizedApellido, label: 'Apellido' },
+        { key: 'telefono', value: normalizedTelefono, label: 'Teléfono' },
+        { key: 'direccion', value: normalizedDireccion, label: 'Dirección' },
+        { key: 'email', value: normalizedEmail, label: 'Correo Electrónico' },
+        { key: 'password', value: password, label: 'Contraseña' },
+      ];
+      const missing = requiredFields.find((field) => {
+        if (field.value === undefined || field.value === null) return true;
+        return String(field.value).trim() === '';
+      });
+      if (missing) {
+        return res.status(400).json({ success: false, message: `El campo "${missing.label}" es obligatorio.` });
       }
 
       await client.query('BEGIN');
 
-      const emailInUsuarios = await client.query('SELECT id FROM usuarios WHERE email = $1', [email]);
+      const emailInUsuarios = await client.query(
+        'SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1) LIMIT 1',
+        [normalizedEmail]
+      );
       if (emailInUsuarios.rows.length > 0) {
         await client.query('ROLLBACK');
         return res.status(409).json({ success: false, message: 'El correo ya esta registrado' });
       }
 
-      const documentoInUsuarios = await client.query('SELECT id FROM usuarios WHERE documento = $1', [numeroDocumento]);
+      const documentoInUsuarios = await client.query(
+        'SELECT id FROM usuarios WHERE documento = $1 LIMIT 1',
+        [normalizedDocumento]
+      );
       if (documentoInUsuarios.rows.length > 0) {
         await client.query('ROLLBACK');
         return res.status(409).json({ success: false, message: 'El documento ya esta registrado' });
       }
 
-      const emailInClientes = await client.query('SELECT id FROM clientes WHERE email = $1', [email]);
-      if (emailInClientes.rows.length > 0) {
+      const emailInClientes = await client.query(
+        'SELECT id, usuario_id FROM clientes WHERE LOWER(email) = LOWER($1) LIMIT 1',
+        [normalizedEmail]
+      );
+      const documentoInClientes = await client.query(
+        'SELECT id, usuario_id FROM clientes WHERE documento = $1 LIMIT 1',
+        [normalizedDocumento]
+      );
+
+      const clienteByEmail = emailInClientes.rows[0] || null;
+      const clienteByDocumento = documentoInClientes.rows[0] || null;
+
+      if (clienteByEmail && clienteByDocumento && Number(clienteByEmail.id) !== Number(clienteByDocumento.id)) {
         await client.query('ROLLBACK');
-        return res.status(409).json({ success: false, message: 'El correo ya esta registrado en clientes' });
+        return res.status(409).json({
+          success: false,
+          message: 'El correo y el documento ya existen en clientes, pero corresponden a registros distintos.',
+        });
       }
 
-      const documentoInClientes = await client.query('SELECT id FROM clientes WHERE documento = $1', [numeroDocumento]);
-      if (documentoInClientes.rows.length > 0) {
+      if (clienteByEmail?.usuario_id) {
         await client.query('ROLLBACK');
-        return res.status(409).json({ success: false, message: 'El documento ya esta registrado en clientes' });
+        return res.status(409).json({ success: false, message: 'El correo ya está asociado a una cuenta existente.' });
+      }
+      if (clienteByDocumento?.usuario_id) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ success: false, message: 'El documento ya está asociado a una cuenta existente.' });
       }
 
       const clienteRole = await client.query('SELECT id FROM roles WHERE nombre = $1', ['Cliente']);
@@ -407,34 +450,116 @@ module.exports = {
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'Activo')
         RETURNING id`,
         [
-          nombre,
-          apellido,
+          normalizedNombre,
+          normalizedApellido,
           tipoDocumento,
-          numeroDocumento,
-          direccion,
-          email,
-          telefono || null,
+          normalizedDocumento,
+          normalizedDireccion,
+          normalizedEmail,
+          normalizedTelefono,
           passwordHash,
           clienteRole.rows[0].id,
         ]
       );
 
-      const clienteResult = await client.query(
-        `INSERT INTO clientes
-        (usuario_id, nombre, apellido, tipo_documento, documento, telefono, email, direccion, estado)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Activo')
-        RETURNING id`,
-        [
-          userResult.rows[0].id,
-          nombre,
-          apellido,
-          tipoDocumento,
-          numeroDocumento,
-          telefono || null,
-          email,
-          direccion,
-        ]
+      let clienteResult;
+      const existingClienteForNewUser = await client.query(
+        'SELECT id FROM clientes WHERE usuario_id = $1 LIMIT 1',
+        [userResult.rows[0].id]
       );
+
+      // Si existe un trigger/proceso que crea el cliente al insertar usuario, actualizamos ese registro.
+      if (existingClienteForNewUser.rows.length > 0) {
+        clienteResult = await client.query(
+          `UPDATE clientes
+           SET nombre = $1,
+               apellido = $2,
+               tipo_documento = $3,
+               documento = $4,
+               telefono = $5,
+               email = $6,
+               direccion = $7,
+               estado = $8,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = $9
+           RETURNING id`,
+          [
+            normalizedNombre,
+            normalizedApellido,
+            tipoDocumento,
+            normalizedDocumento,
+            normalizedTelefono,
+            normalizedEmail,
+            normalizedDireccion,
+            estado || 'Activo',
+            existingClienteForNewUser.rows[0].id,
+          ]
+        );
+      } else if (clienteByEmail && !clienteByDocumento) {
+        clienteResult = await client.query(
+          `UPDATE clientes
+           SET usuario_id = $1,
+               nombre = $2,
+               apellido = $3,
+               tipo_documento = $4,
+               documento = $5,
+               telefono = $6,
+               email = $7,
+               direccion = $8,
+               estado = $9,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = $10
+           RETURNING id`,
+          [
+            userResult.rows[0].id,
+            normalizedNombre,
+            normalizedApellido,
+            tipoDocumento,
+            normalizedDocumento,
+            normalizedTelefono,
+            normalizedEmail,
+            normalizedDireccion,
+            estado || 'Activo',
+            clienteByEmail.id,
+          ]
+        );
+      } else {
+        clienteResult = await client.query(
+          `INSERT INTO clientes
+           (usuario_id, nombre, apellido, tipo_documento, documento, telefono, email, direccion, estado)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           ON CONFLICT (documento) DO UPDATE
+           SET usuario_id = EXCLUDED.usuario_id,
+               nombre = EXCLUDED.nombre,
+               apellido = EXCLUDED.apellido,
+               tipo_documento = EXCLUDED.tipo_documento,
+               telefono = EXCLUDED.telefono,
+               email = EXCLUDED.email,
+               direccion = EXCLUDED.direccion,
+               estado = EXCLUDED.estado,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE clientes.usuario_id IS NULL
+           RETURNING id`,
+          [
+            userResult.rows[0].id,
+            normalizedNombre,
+            normalizedApellido,
+            tipoDocumento,
+            normalizedDocumento,
+            normalizedTelefono,
+            normalizedEmail,
+            normalizedDireccion,
+            estado || 'Activo',
+          ]
+        );
+        if (!clienteResult.rows.length) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({
+            success: false,
+            message: 'El documento ya está asociado a una cuenta existente.',
+          });
+        }
+      }
 
       await client.query('COMMIT');
 
@@ -448,7 +573,32 @@ module.exports = {
       });
     } catch (error) {
       await client.query('ROLLBACK');
-      res.status(500).json({ success: false, message: error.message });
+      if (error?.code === '23505') {
+        const constraint = String(error?.constraint || '').toLowerCase();
+        if (constraint.includes('usuarios_documento') || constraint.includes('documento')) {
+          return res.status(409).json({ success: false, message: 'El documento ya se encuentra registrado.' });
+        }
+        if (constraint.includes('usuarios_email') || constraint.includes('clientes_email') || constraint.includes('email')) {
+          return res.status(409).json({ success: false, message: 'El correo ya se encuentra registrado.' });
+        }
+        if (constraint.includes('clientes_usuario_id')) {
+          return res.status(409).json({ success: false, message: 'Este cliente ya está vinculado a un usuario.' });
+        }
+        return res.status(409).json({
+          success: false,
+          message: 'El correo o documento ya se encuentra registrado.',
+        });
+      }
+      if (error?.code === '22001') {
+        return res.status(400).json({
+          success: false,
+          message: 'Uno de los campos excede la longitud permitida.',
+        });
+      }
+      return res.status(500).json({
+        success: false,
+        message: 'No se pudo completar el registro en este momento.',
+      });
     } finally {
       client.release();
     }

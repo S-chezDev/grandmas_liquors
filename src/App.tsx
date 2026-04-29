@@ -5,9 +5,11 @@ import { AuthProvider, useAuth } from './components/AuthContext';
 import type { AuthLoginResult } from './components/AuthContext';
 import { useAlertDialog } from './components/AlertDialog';
 import { subscribeApiLoading } from './services/api';
+import { Modal } from './components/Modal';
 
 // Login
 import { Login } from './components/pages/Login';
+import { PublicHome } from './components/pages/PublicHome';
 
 const DashboardPage = lazy(() => import('./components/pages/Dashboard').then((module) => ({ default: module.Dashboard })));
 const HomePage = lazy(() => import('./components/pages/Home').then((module) => ({ default: module.Home })));
@@ -120,6 +122,7 @@ function AppContent() {
   const [currentPath, setCurrentPath] = useState<string>('');
   const [isApiLoading, setIsApiLoading] = useState(false);
   const [isGlobalLoadingVisible, setIsGlobalLoadingVisible] = useState(false);
+  const [authModalTab, setAuthModalTab] = useState<'login' | 'register' | null>(null);
   const { user, isAuthLoading, sessionWarningVersion, login, logout, hasPermission } = useAuth();
   const { showAlert, AlertComponent } = useAlertDialog();
 
@@ -216,11 +219,30 @@ function AppContent() {
     );
   }
 
-  // Si no está autenticado, mostrar pantalla de login
+  // Si no está autenticado, mostrar landing pública con accesos a login/registro
   if (!user) {
     return (
       <>
-        <Login onLogin={handleLogin} />
+        <PublicHome
+          onOpenLogin={() => setAuthModalTab('login')}
+          onOpenRegister={() => setAuthModalTab('register')}
+        />
+        <Modal
+          isOpen={authModalTab !== null}
+          onClose={() => setAuthModalTab(null)}
+          title={authModalTab === 'register' ? 'Crear cuenta' : 'Iniciar sesión'}
+          size="md"
+          contentClassName="bg-gradient-to-b from-white to-[#FFF7F8]"
+        >
+          {authModalTab && (
+            <Login
+              onLogin={handleLogin}
+              defaultTab={authModalTab}
+              embedded
+              onAuthSuccess={() => setAuthModalTab(null)}
+            />
+          )}
+        </Modal>
         {AlertComponent}
         {isGlobalLoadingVisible && <GlobalLoadingOverlay />}
       </>
