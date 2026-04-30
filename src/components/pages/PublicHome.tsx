@@ -1,412 +1,1186 @@
-import React from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Wine,
-  GlassWater,
-  Beer,
-  Sparkles,
-  Truck,
-  ShieldCheck,
-  Clock4,
-  Award,
-  Phone,
-  MapPin,
-  Mail,
   ArrowRight,
+  Award,
+  Clock,
+  ChevronDown,
+  CreditCard,
+  Facebook,
+  Gift,
+  Heart,
+  Instagram,
+  Lock,
+  Mail,
+  MapPin,
+  Menu,
+  MessageCircle,
+  Phone,
+  Search,
+  ShieldCheck,
+  ShoppingBag,
+  Star,
+  Truck,
+  User,
+  Wine,
+  Youtube,
 } from 'lucide-react';
+import { Button } from '../Button';
+import { Modal } from '../Modal';
+import { publicCatalog, type PublicCatalogProducto } from '../../services/api';
+import { setTiendaIntent } from '../../lib/tiendaIntent';
 
-interface PublicHomeProps {
+type PublicHomeProps = {
   onOpenLogin: () => void;
   onOpenRegister: () => void;
+};
+
+const ACCENT_GOLD = '#c5a572';
+const INK = '#14120f';
+const MUTED = '#5c534e';
+
+const PASTEL_BACKDROPS = ['#e8d5ce', '#c5d5e8', '#d4e5d2', '#e5dcc9', '#ddd4e8', '#dce4e0', '#ebd9c5'];
+
+/** Demostración visual si el catálogo público no está disponible (IDs no válidos en tienda). */
+const FALLBACK_PRODUCTOS: PublicCatalogProducto[] = [
+  {
+    id: -1,
+    nombre: 'Buchanan’s 18 Años',
+    descripcion: 'Whisky escocés premium.',
+    precio: 389900,
+    imagen_url:
+      'https://images.unsplash.com/photo-1569529465841-dfecdab7503b?auto=format&fit=crop&w=800&q=80',
+    categoria: 'Whisky',
+  },
+  {
+    id: -2,
+    nombre: 'Ron Zacapa Centenario',
+    descripcion: 'Ron añejo guatemalteco.',
+    precio: 289900,
+    imagen_url:
+      'https://images.unsplash.com/photo-1582106245687-cbb466a9f07f?auto=format&fit=crop&w=800&q=80',
+    categoria: 'Ron',
+  },
+  {
+    id: -3,
+    nombre: 'Don Julio Reposado',
+    descripcion: 'Tequila reposado.',
+    precio: 219000,
+    imagen_url:
+      'https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?auto=format&fit=crop&w=800&q=80',
+    categoria: 'Tequila',
+  },
+  {
+    id: -4,
+    nombre: 'Hendrick’s Gin',
+    descripcion: 'Ginebra premium.',
+    precio: 165000,
+    imagen_url:
+      'https://images.unsplash.com/photo-1551751299-1b51cab2694c?auto=format&fit=crop&w=800&q=80',
+    categoria: 'Ginebra',
+  },
+  {
+    id: -5,
+    nombre: 'Moët & Chandon Brut',
+    descripcion: 'Champagne brut.',
+    precio: 285000,
+    imagen_url:
+      'https://images.unsplash.com/photo-1605270012917-bf157c5a9541?auto=format&fit=crop&w=800&q=80',
+    categoria: 'Champagne',
+  },
+  {
+    id: -6,
+    nombre: 'Aguardiente Antioqueño',
+    descripcion: 'Tradición colombiana.',
+    precio: 58900,
+    imagen_url:
+      'https://images.unsplash.com/photo-1568644396922-5c3bfae12521?auto=format&fit=crop&w=800&q=80',
+    categoria: 'Aguardiente',
+  },
+];
+
+const TRUST_BADGES = [
+  { icon: <ShieldCheck className="h-5 w-5" />, label: 'Productos 100% originales' },
+  { icon: <Lock className="h-5 w-5" />, label: 'Pago seguro y encriptado' },
+  { icon: <Clock className="h-5 w-5" />, label: 'Atención 24/7 vía WhatsApp' },
+  { icon: <Award className="h-5 w-5" />, label: 'Selección curada premium' },
+];
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat('es-CO', {
+    style: 'currency',
+    currency: 'COP',
+    maximumFractionDigits: 0,
+  }).format(value);
 }
 
-interface CategoriaCardProps {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-  accent: string;
-}
-
-const CategoriaCard: React.FC<CategoriaCardProps> = ({ icon, title, description, accent }) => (
-  <div className="group relative overflow-hidden rounded-2xl border border-border/70 bg-white/95 p-6 shadow-[0_10px_30px_rgba(15,23,42,0.06)] ring-1 ring-black/5 transition-all hover:-translate-y-1 hover:shadow-[0_18px_45px_rgba(122,31,61,0.18)]">
-    <div
-      className="absolute inset-x-0 -top-12 h-24 opacity-70 blur-2xl"
-      style={{ background: accent }}
-      aria-hidden="true"
-    />
-    <div className="relative flex items-center gap-4">
-      <div className="rounded-xl bg-primary/10 p-3 text-primary ring-1 ring-primary/15">{icon}</div>
-      <h3 className="text-lg font-semibold text-foreground">{title}</h3>
-    </div>
-    <p className="relative mt-3 text-sm leading-relaxed text-muted-foreground">{description}</p>
-    <div className="relative mt-5 inline-flex items-center gap-2 text-sm font-medium text-primary opacity-80 transition group-hover:opacity-100">
-      Explorar selección
-      <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
-    </div>
-  </div>
-);
-
-interface FeatureProps {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-}
-
-const Feature: React.FC<FeatureProps> = ({ icon, title, description }) => (
-  <div className="flex items-start gap-3 rounded-2xl border border-border/60 bg-white/80 p-4 backdrop-blur-sm">
-    <div className="rounded-xl bg-primary/10 p-2.5 text-primary ring-1 ring-primary/10">{icon}</div>
-    <div>
-      <p className="text-sm font-semibold text-foreground">{title}</p>
-      <p className="text-xs text-muted-foreground">{description}</p>
-    </div>
-  </div>
-);
-
-export function PublicHome({ onOpenLogin, onOpenRegister }: PublicHomeProps) {
+function GrandmaLogo({ inverted = false }: { inverted?: boolean }) {
+  const fg = inverted ? 'text-white' : 'text-[#800020]';
+  const sub = inverted ? 'text-white/70' : 'text-[#7A1F3D]/70';
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#FFF7F8] via-background to-[#FFF1F4] text-foreground">
-      <header className="sticky top-0 z-30 border-b border-border/60 bg-white/85 backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
-          <a href="#" className="flex items-center gap-3">
-            <img
-              src="/favicon/android-chrome-192x192.png"
-              alt="Grandma's Liqueurs"
-              className="h-10 w-10 rounded-xl object-cover ring-1 ring-primary/20"
-            />
-            <div className="hidden sm:block">
-              <p className="text-sm font-semibold leading-tight text-primary">Grandma's Liqueurs</p>
-              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Licorera virtual</p>
-            </div>
-          </a>
+    <div className="flex items-center gap-3">
+      <div
+        className={`flex h-11 w-11 items-center justify-center rounded-full border ${
+          inverted ? 'border-white/40 bg-white/10' : 'border-[#800020]/20 bg-[#800020]/8'
+        }`}
+      >
+        <span className={`font-display text-xl font-semibold ${fg}`}>G</span>
+      </div>
+      <div className="leading-tight">
+        <p className={`font-display text-lg sm:text-xl ${fg}`}>Grandma’s Liqueurs</p>
+        <p className={`text-[11px] uppercase tracking-[0.28em] ${sub}`}>Selección premium</p>
+      </div>
+    </div>
+  );
+}
 
-          <nav className="hidden items-center gap-7 text-sm font-medium text-muted-foreground lg:flex">
-            <a href="#categorias" className="transition-colors hover:text-primary">Catálogo</a>
-            <a href="#beneficios" className="transition-colors hover:text-primary">Por qué nosotros</a>
-            <a href="#contacto" className="transition-colors hover:text-primary">Contacto</a>
-          </nav>
+function VintageLogoMark({ className = '' }: { className?: string }) {
+  return (
+    <div className={`text-center ${className}`}>
+      <div className="relative mx-auto inline-block rounded-lg border-2 px-5 py-3 shadow-sm sm:px-8 sm:py-4" style={{ borderColor: ACCENT_GOLD }}>
+        <span className="absolute -top-2 left-1/2 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-full border-2 bg-[#f3f2ef] text-[9px] font-bold uppercase tracking-tight text-[#14120f]" style={{ borderColor: ACCENT_GOLD }}>
+          24h
+        </span>
+        <p className="font-display text-lg font-semibold tracking-tight text-[#14120f] sm:text-2xl">
+          Grandma’s Liqueurs
+        </p>
+        <p className="mt-0.5 text-[9px] font-medium uppercase tracking-[0.35em] text-[#5c534e]">
+          Est. 2012
+        </p>
+        <p className="text-[10px] text-[#5c534e]/90">grandmasliqueurs.co</p>
+      </div>
+    </div>
+  );
+}
 
+function FloatingDock({
+  onMenu,
+  onSearchFocus,
+  onCart,
+  onLogin,
+}: {
+  onMenu: () => void;
+  onSearchFocus: () => void;
+  onCart: () => void;
+  onLogin: () => void;
+}) {
+  return (
+    <div className="pointer-events-none fixed bottom-6 left-3 top-1/2 z-50 hidden -translate-y-1/2 flex-col gap-2 md:flex">
+      <div
+        className="pointer-events-auto flex flex-col gap-2 rounded-full border border-black/10 bg-white/95 px-2 py-3 shadow-[0_12px_40px_rgba(0,0,0,0.12)] backdrop-blur-md"
+        aria-label="Accesos rápidos"
+      >
+        <button
+          type="button"
+          onClick={onMenu}
+          className="flex h-10 w-10 items-center justify-center rounded-full text-[#14120f] transition-colors hover:bg-black/5"
+          aria-label="Menú"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+        <a
+          href="tel:+573044848594"
+          className="flex h-10 w-10 items-center justify-center rounded-full text-[#14120f] transition-colors hover:bg-black/5"
+          aria-label="Llamar"
+        >
+          <Phone className="h-5 w-5" />
+        </a>
+        <button
+          type="button"
+          onClick={onCart}
+          className="flex h-10 w-10 items-center justify-center rounded-full text-white shadow-md transition-transform hover:scale-105"
+          style={{ backgroundColor: ACCENT_GOLD }}
+          aria-label="Carrito"
+        >
+          <ShoppingBag className="h-5 w-5" />
+        </button>
+        <button
+          type="button"
+          onClick={onSearchFocus}
+          className="flex h-10 w-10 items-center justify-center rounded-full text-[#14120f] transition-colors hover:bg-black/5"
+          aria-label="Buscar"
+        >
+          <Search className="h-5 w-5" />
+        </button>
+        <button
+          type="button"
+          onClick={onLogin}
+          className="flex h-10 w-10 items-center justify-center rounded-full text-[#14120f] transition-colors hover:bg-black/5"
+          aria-label="Mi cuenta"
+        >
+          <User className="h-5 w-5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PublicChrome({
+  searchQuery,
+  onSearchChange,
+  searchInputRef,
+  isMenuOpen,
+  setIsMenuOpen,
+  locationLabel,
+  onLocationChange,
+  onOpenLogin,
+  onOpenRegister,
+}: {
+  searchQuery: string;
+  onSearchChange: (v: string) => void;
+  searchInputRef: React.RefObject<HTMLInputElement | null>;
+  isMenuOpen: boolean;
+  setIsMenuOpen: (v: boolean) => void;
+  locationLabel: string;
+  onLocationChange: (v: string) => void;
+  onOpenLogin: () => void;
+  onOpenRegister: () => void;
+}) {
+  const cities = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena'];
+
+  return (
+    <header className="sticky top-0 z-40 border-b border-black/10 bg-[#f3f2ef]/95 backdrop-blur">
+      <div className="mx-auto max-w-7xl px-3 pt-4 pb-2 sm:px-6">
+        <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-4">
           <div className="flex items-center gap-2 sm:gap-3">
             <button
               type="button"
-              onClick={onOpenLogin}
-              className="rounded-full border border-primary/30 bg-white px-4 py-2 text-sm font-semibold text-primary transition-all hover:border-primary hover:bg-primary/5"
+              onClick={() => setIsMenuOpen(!isMenuOpen)}
+              className="inline-flex items-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold uppercase tracking-wider text-[#14120f] hover:bg-black/5 sm:text-sm"
+              style={{ color: INK }}
             >
-              Iniciar sesión
+              <Menu className="h-4 w-4" />
+              Menú
+              <ChevronDown className="h-3.5 w-3.5 opacity-60" />
             </button>
-            <button
-              type="button"
-              onClick={onOpenRegister}
-              className="rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-[0_8px_22px_rgba(128,0,32,0.25)] transition-all hover:shadow-[0_12px_32px_rgba(128,0,32,0.35)]"
-            >
-              Registrarse
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* Hero */}
-      <section className="relative overflow-hidden">
-        <div
-          className="pointer-events-none absolute inset-0 -z-10 opacity-90"
-          style={{
-            background:
-              'radial-gradient(60% 50% at 80% 0%, rgba(128,0,32,0.18) 0%, rgba(128,0,32,0) 60%), radial-gradient(40% 40% at 0% 80%, rgba(212,24,61,0.10) 0%, rgba(212,24,61,0) 60%)',
-          }}
-          aria-hidden="true"
-        />
-        <div className="mx-auto grid max-w-7xl gap-10 px-4 py-12 sm:px-6 sm:py-16 lg:grid-cols-[1.1fr_0.9fr] lg:items-center lg:py-24">
-          <div className="space-y-7">
-            <span className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-white/80 px-3 py-1 text-xs font-medium text-primary shadow-sm">
-              <Sparkles className="h-3.5 w-3.5" />
-              Distribuidora artesanal · Medellín y área metropolitana
-            </span>
-            <h1 className="font-display text-4xl font-semibold leading-tight tracking-tight text-foreground animate-fade-in-up sm:text-5xl lg:text-[3.6rem]">
-              Sabores con alma,
-              <span className="block bg-gradient-to-r from-primary to-[#B4324E] bg-clip-text text-transparent">
-                entregados a tu puerta.
+            <div className="relative">
+              <span className="pointer-events-none absolute left-2 top-1/2 flex -translate-y-1/2 items-center gap-1" style={{ color: INK }}>
+                <MapPin className="h-3.5 w-3.5" />
               </span>
-            </h1>
-            <p className="max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-              En Grandma's Liqueurs combinamos selección artesanal y un sistema profesional para que
-              escojas, ordenes y recibas tus licores favoritos con la confianza de una experiencia premium.
-            </p>
-
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-              <button
-                type="button"
-                onClick={onOpenRegister}
-                className="inline-flex items-center justify-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-primary-foreground shadow-[0_14px_30px_rgba(128,0,32,0.28)] transition-transform hover:-translate-y-0.5"
+              <select
+                value={locationLabel}
+                onChange={(e) => onLocationChange(e.target.value)}
+                className="appearance-none rounded-lg border border-black/15 bg-white py-2 pl-8 pr-8 text-xs font-semibold uppercase tracking-wider sm:text-sm"
+                style={{ color: INK }}
+                aria-label="Ciudad de entrega"
               >
-                Crear mi cuenta
-                <ArrowRight className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                onClick={onOpenLogin}
-                className="inline-flex items-center justify-center gap-2 rounded-full border border-primary/30 bg-white px-6 py-3 text-sm font-semibold text-primary transition-colors hover:border-primary hover:bg-primary/5"
-              >
-                Ya tengo cuenta
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 pt-2 sm:grid-cols-3">
-              <Feature
-                icon={<Truck className="h-5 w-5" />}
-                title="Domicilios Express"
-                description="Cobertura en Medellín y municipios cercanos."
-              />
-              <Feature
-                icon={<ShieldCheck className="h-5 w-5" />}
-                title="Compra segura"
-                description="Plataforma con autenticación y datos cifrados."
-              />
-              <Feature
-                icon={<Clock4 className="h-5 w-5" />}
-                title="Atención 24/7"
-                description="Asesoría y pedidos a cualquier hora."
-              />
-            </div>
-          </div>
-
-          <div className="relative">
-            <div className="absolute -inset-6 rounded-[36px] bg-gradient-to-br from-primary/15 via-transparent to-transparent blur-2xl" aria-hidden="true" />
-            <div className="relative overflow-hidden rounded-[28px] border border-border/70 bg-white/90 p-6 shadow-[0_30px_70px_rgba(15,23,42,0.18)] ring-1 ring-black/5 backdrop-blur-sm">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary/80">
-                    Selección Premium
-                  </p>
-                  <p className="mt-1 text-lg font-semibold text-foreground">Tu cava, en línea</p>
-                </div>
-                <div className="rounded-full bg-primary/10 p-2 text-primary ring-1 ring-primary/15">
-                  <Award className="h-5 w-5" />
-                </div>
-              </div>
-
-              <div className="mt-6 grid grid-cols-2 gap-3">
-                {[
-                  { name: 'Whisky', icon: <GlassWater className="h-5 w-5" />, accent: '#FFE9E1' },
-                  { name: 'Vinos', icon: <Wine className="h-5 w-5" />, accent: '#F8DDE5' },
-                  { name: 'Cervezas', icon: <Beer className="h-5 w-5" />, accent: '#FFF0CC' },
-                  { name: 'Premium', icon: <Sparkles className="h-5 w-5" />, accent: '#EDE2FF' },
-                ].map((item) => (
-                  <div
-                    key={item.name}
-                    className="flex items-center gap-3 rounded-2xl border border-border/60 bg-white/80 p-3 shadow-sm"
-                  >
-                    <div
-                      className="rounded-xl p-2 text-primary"
-                      style={{ background: item.accent }}
-                    >
-                      {item.icon}
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-foreground">{item.name}</p>
-                      <p className="text-xs text-muted-foreground">Catálogo curado</p>
-                    </div>
-                  </div>
+                {cities.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
                 ))}
-              </div>
-
-              <div className="mt-6 rounded-2xl bg-gradient-to-r from-[#7A1F3D] to-[#B4324E] p-4 text-white shadow-inner">
-                <p className="text-xs uppercase tracking-[0.2em] text-white/75">Pedido del momento</p>
-                <p className="mt-1 text-base font-semibold">Whisky Single Malt 12 años</p>
-                <div className="mt-4 flex items-center justify-between">
-                  <p className="text-sm text-white/80">Disponible para envío hoy</p>
-                  <span className="rounded-full bg-white/15 px-3 py-1 text-xs font-semibold tracking-wide">
-                    En stock
-                  </span>
-                </div>
-              </div>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 opacity-50" />
             </div>
           </div>
-        </div>
-      </section>
 
-      {/* Categorías */}
-      <section id="categorias" className="border-t border-border/60 bg-white/60">
-        <div className="mx-auto max-w-7xl px-4 py-14 sm:px-6 sm:py-20">
-          <div className="mx-auto max-w-2xl text-center">
-            <span className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-primary">
-              Catálogo
-            </span>
-            <h2 className="font-display mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-              Una selección curada para cada ocasión
-            </h2>
-            <p className="mt-3 text-base text-muted-foreground">
-              Desde clásicos imperdibles hasta destilados artesanales y maridajes premium. Encuentra
-              tu favorito y pídelo con un clic.
-            </p>
+          <div className="order-last flex w-full basis-full justify-center sm:order-none sm:basis-auto md:absolute md:left-1/2 md:top-6 md:-translate-x-1/2">
+            <VintageLogoMark />
           </div>
 
-          <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            <CategoriaCard
-              icon={<GlassWater className="h-6 w-6" />}
-              title="Licores"
-              description="Whisky, ron, vodka, ginebra y destilados premium para coleccionistas y conocedores."
-              accent="rgba(128,0,32,0.20)"
-            />
-            <CategoriaCard
-              icon={<Wine className="h-6 w-6" />}
-              title="Vinos"
-              description="Tintos, blancos y rosados de las mejores bodegas, ideales para cada maridaje."
-              accent="rgba(180,50,78,0.18)"
-            />
-            <CategoriaCard
-              icon={<Beer className="h-6 w-6" />}
-              title="Cervezas"
-              description="Cervezas artesanales, importadas y tradicionales, frías y listas para entrega."
-              accent="rgba(212,24,61,0.18)"
-            />
-            <CategoriaCard
-              icon={<Sparkles className="h-6 w-6" />}
-              title="Brindis & Regalos"
-              description="Cajas premium, botellas conmemorativas y arreglos pensados para sorprender."
-              accent="rgba(128,0,32,0.18)"
-            />
-            <CategoriaCard
-              icon={<Award className="h-6 w-6" />}
-              title="Selección Premium"
-              description="Etiquetas exclusivas, ediciones limitadas y reservas para los paladares más exigentes."
-              accent="rgba(180,50,78,0.20)"
-            />
-            <CategoriaCard
-              icon={<Truck className="h-6 w-6" />}
-              title="Domicilios"
-              description="Entregas express en Medellín y área metropolitana, con seguimiento en tiempo real."
-              accent="rgba(128,0,32,0.16)"
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* Beneficios */}
-      <section id="beneficios" className="border-t border-border/60 bg-gradient-to-b from-white/80 to-[#FFF7F8]">
-        <div className="mx-auto grid max-w-7xl gap-10 px-4 py-14 sm:px-6 sm:py-20 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
-          <div className="space-y-6">
-            <span className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-primary">
-              Por qué Grandma's
-            </span>
-            <h2 className="font-display text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-              Más que una licorera, una experiencia premium.
-            </h2>
-            <p className="text-base text-muted-foreground">
-              Construimos una plataforma profesional con gestión integral: clientes, pedidos, ventas
-              y domicilios trabajando en armonía para que la atención sea impecable.
-            </p>
-
-            <ul className="space-y-3 text-sm text-foreground">
-              <li className="flex items-start gap-3">
-                <span className="mt-1 inline-flex h-6 w-6 flex-none items-center justify-center rounded-full bg-primary/10 text-primary">
-                  ✓
-                </span>
-                Inventario en tiempo real, sin sorpresas en stock.
-              </li>
-              <li className="flex items-start gap-3">
-                <span className="mt-1 inline-flex h-6 w-6 flex-none items-center justify-center rounded-full bg-primary/10 text-primary">
-                  ✓
-                </span>
-                Pedidos con seguimiento, abonos y métodos de pago flexibles.
-              </li>
-              <li className="flex items-start gap-3">
-                <span className="mt-1 inline-flex h-6 w-6 flex-none items-center justify-center rounded-full bg-primary/10 text-primary">
-                  ✓
-                </span>
-                Soporte cercano y atención post-venta cuando la necesites.
-              </li>
-            </ul>
-
+          <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={onOpenRegister}
-              className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground shadow-[0_12px_28px_rgba(128,0,32,0.25)] transition-transform hover:-translate-y-0.5"
+              onClick={onOpenLogin}
+              className="inline-flex items-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold uppercase tracking-wider hover:bg-black/5 sm:text-sm"
+              style={{ color: INK }}
             >
-              Crear cuenta gratis
-              <ArrowRight className="h-4 w-4" />
+              <ShoppingBag className="h-4 w-4" />
+              Carrito
+              <ChevronDown className="h-3.5 w-3.5 opacity-60" />
             </button>
           </div>
+        </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            {[
-              { value: '+1.500', label: 'Pedidos entregados con éxito' },
-              { value: '24/7', label: 'Atención todos los días del año' },
-              { value: '+250', label: 'Etiquetas en catálogo curado' },
-              { value: '99%', label: 'Clientes satisfechos en 2025' },
-            ].map((stat) => (
-              <div
-                key={stat.label}
-                className="rounded-2xl border border-border/60 bg-white/95 p-6 shadow-[0_12px_28px_rgba(15,23,42,0.06)] ring-1 ring-black/5"
+        <div className="mx-auto mt-4 max-w-3xl px-0">
+          <div className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-3 shadow-sm">
+            <Search className="h-5 w-5 shrink-0 text-black/40" />
+            <input
+              ref={searchInputRef}
+              type="search"
+              value={searchQuery}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder="¿Qué estás buscando?"
+              className="min-w-0 flex-1 bg-transparent text-sm text-[#14120f] outline-none placeholder:text-black/40"
+              style={{ color: INK }}
+            />
+          </div>
+        </div>
+      </div>
+
+      {isMenuOpen && (
+        <div className="border-t border-black/10 bg-white lg:hidden">
+          <div className="mx-auto flex max-w-7xl flex-col gap-1 px-4 py-3">
+            {['Tienda', 'Whisky', 'Ron', 'Vinos', 'Cervezas', 'Anchetas', 'Recetas'].map((link) => (
+              <button
+                key={link}
+                type="button"
+                className="rounded-md px-3 py-2 text-left text-sm text-[#14120f] transition-colors hover:bg-black/5"
+                onClick={() => {
+                  if (link === 'Recetas') {
+                    document.getElementById('recetas')?.scrollIntoView({ behavior: 'smooth' });
+                  }
+                  setIsMenuOpen(false);
+                }}
               >
-                <p className="text-3xl font-semibold text-primary">{stat.value}</p>
-                <p className="mt-1 text-sm text-muted-foreground">{stat.label}</p>
+                {link}
+              </button>
+            ))}
+            <div className="mt-2 flex gap-2">
+              <Button variant="outline" onClick={onOpenLogin} className="flex-1">
+                Iniciar sesión
+              </Button>
+              <Button onClick={onOpenRegister} className="flex-1">
+                Crear cuenta
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </header>
+  );
+}
+
+function LicoreraHero({ onOpenLogin, onRecipes }: { onOpenLogin: () => void; onRecipes: () => void }) {
+  const heroImg =
+    'https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?auto=format&fit=crop&w=1600&q=80';
+
+  return (
+    <section className="relative">
+      <div className="mx-auto w-full max-w-7xl px-4 pt-6 sm:px-6">
+        <div className="relative overflow-hidden rounded-[1.75rem] bg-black sm:rounded-[2rem]">
+          <div
+            className="absolute inset-0 bg-cover bg-right opacity-40"
+            style={{ backgroundImage: `url(${heroImg})` }}
+          />
+          <div className="absolute inset-0 bg-gradient-to-r from-black via-black/85 to-black/40" />
+
+          <div className="relative px-5 py-10 sm:px-10 sm:py-14">
+            <div className="mb-6 flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-white/50 sm:text-xs">
+              {['Destilados', 'Cócteles', 'Regalos'].map((label, i) => (
+                <span key={label} className="flex items-center gap-2">
+                  {i > 0 ? <span className="h-px w-6 bg-white/25" /> : null}
+                  {label}
+                </span>
+              ))}
+            </div>
+
+            <div className="grid gap-8 lg:grid-cols-[1fr_1.1fr] lg:items-end">
+              <div className="space-y-4">
+                <p className="font-display text-4xl leading-tight text-white sm:text-5xl md:text-6xl">
+                  Cocteles
+                </p>
+                <p className="max-w-md text-sm text-white/75 sm:text-base">
+                  Recetas y selección curada para elevar tu bar en casa. Inicia sesión para armar tu
+                  pedido con entrega express.
+                </p>
+                <button
+                  type="button"
+                  onClick={onRecipes}
+                  className="inline-flex items-center gap-2 rounded-full border-2 border-white px-6 py-2.5 text-xs font-bold uppercase tracking-[0.2em] text-white transition-colors hover:bg-white hover:text-black"
+                >
+                  Ver recetas
+                </button>
+              </div>
+              <div className="text-right">
+                <h2 className="text-3xl font-bold uppercase leading-tight tracking-tight text-white sm:text-4xl md:text-5xl">
+                  Selección
+                  <br />
+                  premium
+                </h2>
+                <div className="mt-6 flex flex-wrap justify-end gap-3">
+                  <Button
+                    onClick={onOpenLogin}
+                    size="lg"
+                    className="border-0 bg-[#c5a572] text-[#14120f] shadow-lg hover:bg-[#b8925f]"
+                  >
+                    Explorar tienda
+                    <ArrowRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function TrustStrip() {
+  return (
+    <section className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6">
+      <div className="grid gap-3 rounded-2xl border border-black/10 bg-white px-6 py-5 shadow-[0_10px_30px_rgba(0,0,0,0.06)] sm:grid-cols-2 lg:grid-cols-4">
+        {TRUST_BADGES.map((badge) => (
+          <div key={badge.label} className="flex items-center gap-3 text-sm text-[#14120f]">
+            <span
+              className="flex h-10 w-10 items-center justify-center rounded-xl text-[#14120f]"
+              style={{ backgroundColor: 'rgba(197,165,114,0.25)' }}
+            >
+              {badge.icon}
+            </span>
+            <span className="font-medium">{badge.label}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+type CatRow = { id: number; nombre: string };
+
+function CategoriesScroller({
+  categorias,
+  selectedNombre,
+  onSelect,
+}: {
+  categorias: CatRow[];
+  selectedNombre: string | null;
+  onSelect: (nombre: string | null) => void;
+}) {
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const [scrollPct, setScrollPct] = useState(0);
+
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const max = el.scrollWidth - el.clientWidth;
+      setScrollPct(max <= 0 ? 0 : el.scrollLeft / max);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [categorias.length]);
+
+  const list: CatRow[] =
+    categorias.length > 0
+      ? categorias
+      : Array.from(new Set(FALLBACK_PRODUCTOS.map((p) => p.categoria))).map((nombre, id) => ({
+          id: -id - 1,
+          nombre,
+        }));
+
+  return (
+    <section className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6">
+      <div className="rounded-[1.35rem] border border-black/10 bg-white px-4 py-8 shadow-[0_16px_48px_rgba(0,0,0,0.07)] sm:px-8">
+        <div className="mb-8 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.32em]" style={{ color: ACCENT_GOLD }}>
+              Nuestras categorías
+            </p>
+            <h2 className="font-display mt-1 text-3xl text-[#14120f] sm:text-4xl">
+              Explora nuestra variedad de licores
+            </h2>
+            <p className="mt-2 max-w-2xl text-sm text-[#5c534e]">
+              Toca una categoría para filtrar el catálogo. Los datos provienen de nuestro inventario
+              en tiempo casi real.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onSelect(null)}
+            className="inline-flex items-center gap-2 self-start rounded-full border border-black/15 px-4 py-2 text-sm font-medium text-[#14120f] hover:bg-black/5 sm:self-auto"
+          >
+            Quitar filtro <ArrowRight className="h-4 w-4 rotate-180" />
+          </button>
+        </div>
+
+        <div
+          ref={scrollerRef}
+          className="flex snap-x snap-mandatory gap-6 overflow-x-auto pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {list.map((cat, i) => {
+            const active = selectedNombre === cat.nombre;
+            return (
+              <button
+                key={`${cat.id}-${cat.nombre}`}
+                type="button"
+                onClick={() => onSelect(active ? null : cat.nombre)}
+                className={`group flex w-[100px] shrink-0 snap-start flex-col items-center gap-3 sm:w-[120px] ${
+                  active ? 'opacity-100' : 'opacity-90 hover:opacity-100'
+                }`}
+              >
+                <span
+                  className="flex h-24 w-24 items-center justify-center rounded-full shadow-inner transition-transform group-hover:scale-105 sm:h-28 sm:w-28"
+                  style={{ backgroundColor: PASTEL_BACKDROPS[i % PASTEL_BACKDROPS.length] }}
+                >
+                  <Wine className="h-11 w-11 -rotate-12 text-black/30 transition-transform group-hover:rotate-[-8deg]" />
+                </span>
+                <span
+                  className={`text-center text-xs font-medium leading-tight sm:text-sm ${
+                    active ? 'text-[#14120f]' : 'text-[#5c534e]'
+                  }`}
+                >
+                  {cat.nombre}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="relative mt-5 h-1.5 w-full rounded-full bg-black/10">
+          <div
+            className="absolute top-0 h-full w-[28%] rounded-full bg-[#14120f] transition-[left] duration-75 ease-out"
+            style={{ left: `${scrollPct * 72}%` }}
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PromoRow({
+  onOpenLogin,
+  onFilterCategory,
+}: {
+  onOpenLogin: () => void;
+  onFilterCategory: (nombre: string) => void;
+}) {
+  const cards = [
+    {
+      title: 'Reserva premium',
+      subtitle: 'Destilados seleccionados',
+      className: 'bg-[#1a2744] text-white',
+      accent: 'from-fuchsia-500/20 to-transparent',
+      onClick: () => onFilterCategory('Whisky'),
+    },
+    {
+      title: 'Anchetas & regalo',
+      subtitle: 'Empaque y detalle',
+      className: 'bg-[#ede6d8] text-[#14120f]',
+      accent: 'from-amber-400/25 to-transparent',
+      onClick: () => onOpenLogin(),
+    },
+    {
+      title: 'Ediciones especiales',
+      subtitle: 'Champagne y más',
+      className: 'bg-[#a67c52] text-white',
+      accent: 'from-yellow-200/15 to-transparent',
+      onClick: () => onFilterCategory('Champagne'),
+    },
+  ];
+
+  return (
+    <section className="mx-auto max-w-7xl px-4 py-4 sm:px-6">
+      <div className="grid gap-4 md:grid-cols-3">
+        {cards.map((card) => (
+          <button
+            key={card.title}
+            type="button"
+            onClick={card.onClick}
+            className={`group relative overflow-hidden rounded-[1.75rem] p-6 text-left shadow-[0_20px_50px_rgba(0,0,0,0.12)] transition-transform hover:-translate-y-0.5 hover:shadow-[0_24px_60px_rgba(0,0,0,0.18)] sm:p-8 ${card.className}`}
+          >
+            <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${card.accent}`} />
+            <Gift className="relative mb-4 h-10 w-10 opacity-90" />
+            <h3 className="relative font-display text-xl sm:text-2xl">{card.title}</h3>
+            <p className="relative mt-1 text-sm opacity-80">{card.subtitle}</p>
+            <span className="relative mt-4 inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider">
+              Explorar <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" />
+            </span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CatalogProductCard({
+  product,
+  fromLiveApi,
+  onDetail,
+  onAdd,
+}: {
+  product: PublicCatalogProducto;
+  fromLiveApi: boolean;
+  onDetail: () => void;
+  onAdd: () => void;
+}) {
+  const img =
+    product.imagen_url?.trim() ||
+    'https://images.unsplash.com/photo-1569529465841-dfecdab7503b?auto=format&fit=crop&w=800&q=80';
+
+  return (
+    <article className="group flex h-full flex-col overflow-hidden rounded-3xl border border-black/10 bg-white shadow-[0_8px_24px_rgba(0,0,0,0.07)] transition-all hover:-translate-y-1 hover:shadow-[0_20px_50px_rgba(0,0,0,0.14)]">
+      <button type="button" onClick={onDetail} className="relative block h-52 w-full overflow-hidden bg-[#f3f2ef] text-left sm:h-56">
+        <img
+          src={img}
+          alt={product.nombre}
+          loading="lazy"
+          className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+        />
+        <span className="pointer-events-none absolute top-3 right-3 flex h-9 w-9 items-center justify-center rounded-full bg-white/90 text-[#14120f] shadow-md">
+          <Heart className="h-4 w-4" />
+        </span>
+      </button>
+      <div className="flex flex-1 flex-col gap-3 p-5">
+        <button type="button" onClick={onDetail} className="space-y-1 text-left">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#5c534e]">{product.categoria}</p>
+          <h3 className="font-display text-lg text-[#14120f]">{product.nombre}</h3>
+        </button>
+        <div className="flex items-center gap-1 text-amber-500">
+          {Array.from({ length: 5 }).map((_, idx) => (
+            <Star key={idx} className={`h-3.5 w-3.5 ${idx < 4 ? 'fill-current' : 'text-amber-500/25'}`} />
+          ))}
+          <span className="ml-1 text-xs text-[#5c534e]">Destacado</span>
+        </div>
+        <div className="mt-auto flex items-end justify-between gap-3">
+          <p className="font-display text-xl text-[#14120f]">{formatCurrency(Number(product.precio) || 0)}</p>
+          <Button
+            onClick={onAdd}
+            size="sm"
+            className="border-0 bg-[#c5a572] text-[#14120f] shadow-md hover:bg-[#b8925f]"
+          >
+            <ShoppingBag className="h-4 w-4" />
+            Añadir
+          </Button>
+        </div>
+        {!fromLiveApi && (
+          <p className="text-[11px] text-amber-800/80">Vista demo: conecta el backend para comprar.</p>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function FeaturedCatalogSection({
+  productos,
+  loading,
+  catalogError,
+  fromLiveApi,
+  onDetail,
+  onAdd,
+  onOpenLogin,
+  onOpenRegister,
+}: {
+  productos: PublicCatalogProducto[];
+  loading: boolean;
+  catalogError: boolean;
+  fromLiveApi: boolean;
+  onDetail: (p: PublicCatalogProducto) => void;
+  onAdd: (p: PublicCatalogProducto) => void;
+  onOpenLogin: () => void;
+  onOpenRegister: () => void;
+}) {
+  return (
+    <section className="mx-auto w-full max-w-7xl px-4 py-12 sm:px-6">
+      <div className="mb-8 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-end">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.32em]" style={{ color: ACCENT_GOLD }}>
+            Catálogo
+          </p>
+          <h2 className="font-display text-3xl text-[#14120f] sm:text-4xl">Productos disponibles</h2>
+          <p className="mt-2 max-w-2xl text-sm text-[#5c534e]">
+            Inicia sesión para añadir al carrito y completar tu pedido. Los precios se confirman en la tienda.
+          </p>
+          {catalogError && (
+            <p className="mt-2 text-sm text-amber-800">No fue posible cargar el catálogo en vivo; mostramos una vista de demostración.</p>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              onOpenLogin();
+            }}
+            className="inline-flex items-center gap-2 rounded-full border border-black/15 px-4 py-2 text-sm font-medium text-[#14120f] hover:bg-black/5"
+          >
+            Ver tienda completa <ArrowRight className="h-4 w-4" />
+          </button>
+          <Button variant="outline" size="sm" onClick={onOpenRegister}>
+            Crear cuenta
+          </Button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="h-96 animate-pulse rounded-3xl bg-black/5" />
+          ))}
+        </div>
+      ) : productos.length === 0 ? (
+        <p className="rounded-2xl border border-dashed border-black/15 bg-white py-12 text-center text-sm text-[#5c534e]">
+          No hay productos que coincidan con tu búsqueda o filtro.
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+          {productos.map((product) => (
+            <CatalogProductCard
+              key={`${product.id}-${product.nombre}`}
+              product={product}
+              fromLiveApi={fromLiveApi}
+              onDetail={() => onDetail(product)}
+              onAdd={() => onAdd(product)}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PromoBanner({ onAction }: { onAction: () => void }) {
+  return (
+    <section className="mx-auto w-full max-w-7xl px-4 py-12 sm:px-6">
+      <div className="relative overflow-hidden rounded-[2rem] border border-[#7A1F3D]/20 bg-[linear-gradient(135deg,#1c0a11_0%,#3d0e22_55%,#5a1130_100%)] px-6 py-12 text-white sm:px-12">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(245,201,122,0.18),transparent_45%),radial-gradient(circle_at_bottom_left,rgba(255,180,210,0.12),transparent_40%)]" />
+        <div className="relative grid gap-6 lg:grid-cols-[1.4fr_1fr] lg:items-center">
+          <div className="space-y-4">
+            <span className="inline-flex items-center gap-2 rounded-full border border-white/30 bg-white/10 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.28em]">
+              <CreditCard className="h-3.5 w-3.5" /> Precios especiales
+            </span>
+            <h2 className="font-display text-3xl sm:text-4xl">
+              ¿Buscas precios realmente especiales? Ahorra hasta un 30% en tu primera compra.
+            </h2>
+            <p className="max-w-xl text-sm text-white/80 sm:text-base">
+              Regístrate, accede a descuentos exclusivos por categoría y recibe códigos
+              promocionales antes que nadie.
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button onClick={onAction} size="lg" className="shadow-lg shadow-black/20">
+                Ver descuentos
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+              <span className="text-xs text-white/70">Aplica Términos y Condiciones</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { label: 'Whisky reserva', value: '-15%' },
+              { label: 'Vinos premium', value: '-20%' },
+              { label: 'Cócteles', value: '-25%' },
+              { label: 'Anchetas', value: '-30%' },
+            ].map((item) => (
+              <div
+                key={item.label}
+                className="rounded-2xl border border-white/15 bg-white/8 p-4 backdrop-blur-sm"
+              >
+                <p className="font-display text-3xl text-[#f5c97a]">{item.value}</p>
+                <p className="mt-1 text-xs uppercase tracking-[0.22em] text-white/70">{item.label}</p>
               </div>
             ))}
           </div>
         </div>
-      </section>
+      </div>
+    </section>
+  );
+}
 
-      {/* CTA & Contacto */}
-      <section id="contacto" className="border-t border-border/60 bg-[#1C0A11] text-white">
-        <div className="mx-auto grid max-w-7xl gap-10 px-4 py-14 sm:px-6 sm:py-20 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
-          <div className="space-y-5">
-            <h2 className="font-display text-3xl font-semibold tracking-tight sm:text-4xl">
-              Da el primer brindis con nosotros.
-            </h2>
-            <p className="max-w-xl text-base text-white/75">
-              Crea tu cuenta gratis y disfruta de una experiencia de compra elegante, segura y a la
-              altura de cada ocasión. Tu próxima botella favorita está a un par de clics.
-            </p>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+function CocktailsSection({ onAction }: { onAction: () => void }) {
+  const cocktails = [
+    {
+      title: 'Old Fashioned',
+      description: 'Whisky bourbon, azúcar, angostura y un toque cítrico.',
+      image:
+        'https://images.unsplash.com/photo-1551024709-8f23befc6f87?auto=format&fit=crop&w=900&q=80',
+      tag: 'Clásico',
+    },
+    {
+      title: 'Aperol Spritz',
+      description: 'Aperol, prosecco y soda. Refrescante y elegante.',
+      image:
+        'https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?auto=format&fit=crop&w=900&q=80',
+      tag: 'Verano',
+    },
+    {
+      title: 'Negroni de la abuela',
+      description: 'Ginebra, vermut rojo y campari con un twist artesanal.',
+      image:
+        'https://images.unsplash.com/photo-1572116469696-31de0f17cc34?auto=format&fit=crop&w=900&q=80',
+      tag: 'Signature',
+    },
+  ];
+
+  return (
+    <section id="recetas" className="mx-auto w-full max-w-7xl px-4 py-12 sm:px-6">
+      <div className="mb-8 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-end">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.32em] text-[#7A1F3D]">
+            Recetas de cócteles
+          </p>
+          <h2 className="font-display text-3xl text-[#1c0a11] sm:text-4xl">
+            Aprende a preparar como un bartender
+          </h2>
+          <p className="mt-2 max-w-2xl text-sm text-[#6A4A57]">
+            Recetas paso a paso, ingredientes recomendados y enlaces directos para comprar todo lo
+            que necesitas.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onAction}
+          className="inline-flex items-center gap-2 rounded-full border border-[#7A1F3D]/25 px-4 py-2 text-sm font-medium text-[#7A1F3D] transition-colors hover:bg-[#7A1F3D]/5"
+        >
+          Ver todas las recetas <ArrowRight className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-3">
+        {cocktails.map((cocktail) => (
+          <article
+            key={cocktail.title}
+            className="group relative overflow-hidden rounded-3xl border border-[#7A1F3D]/12 bg-white shadow-[0_8px_24px_rgba(28,10,17,0.06)] transition-all hover:-translate-y-1 hover:shadow-[0_24px_60px_rgba(28,10,17,0.16)]"
+          >
+            <div className="relative h-60 overflow-hidden">
+              <img
+                src={cocktail.image}
+                alt={cocktail.title}
+                loading="lazy"
+                className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/65 to-transparent" />
+              <span className="absolute top-3 left-3 rounded-full bg-white/90 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#7A1F3D]">
+                {cocktail.tag}
+              </span>
+              <div className="absolute bottom-4 left-5 right-5 text-white">
+                <h3 className="font-display text-2xl">{cocktail.title}</h3>
+              </div>
+            </div>
+            <div className="space-y-3 p-5">
+              <p className="text-sm text-[#6A4A57]">{cocktail.description}</p>
               <button
                 type="button"
-                onClick={onOpenRegister}
-                className="inline-flex items-center justify-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-semibold text-primary shadow-[0_14px_30px_rgba(0,0,0,0.35)] transition-transform hover:-translate-y-0.5"
+                onClick={onAction}
+                className="inline-flex items-center gap-2 text-sm font-semibold text-[#7A1F3D] transition-colors hover:text-[#800020]"
               >
-                Registrarme
-                <ArrowRight className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                onClick={onOpenLogin}
-                className="inline-flex items-center justify-center gap-2 rounded-full border border-white/40 bg-transparent px-6 py-3 text-sm font-semibold text-white transition hover:border-white"
-              >
-                Iniciar sesión
+                Ver receta completa <ArrowRight className="h-4 w-4" />
               </button>
             </div>
-          </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
 
-          <div className="rounded-3xl border border-white/15 bg-white/5 p-6 backdrop-blur-sm">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/70">Contáctanos</p>
-            <h3 className="mt-2 text-xl font-semibold">Estamos cerca de ti</h3>
-            <ul className="mt-5 space-y-4 text-sm text-white/85">
-              <li className="flex items-start gap-3">
-                <span className="rounded-xl bg-white/10 p-2 text-white">
-                  <MapPin className="h-4 w-4" />
-                </span>
-                Calle 104 # 79D – 65, Medellín · Laureles
-              </li>
-              <li className="flex items-start gap-3">
-                <span className="rounded-xl bg-white/10 p-2 text-white">
-                  <Phone className="h-4 w-4" />
-                </span>
-                +57 324 610 2339
-              </li>
-              <li className="flex items-start gap-3">
-                <span className="rounded-xl bg-white/10 p-2 text-white">
-                  <Mail className="h-4 w-4" />
-                </span>
-                hola@grandmasliqueurs.com
-              </li>
-            </ul>
+function ScheduleAndCoverage() {
+  const cities = [
+    'Bogotá',
+    'Medellín',
+    'Cali',
+    'Barranquilla',
+    'Cartagena',
+    'Bucaramanga',
+    'Pereira',
+    'Manizales',
+    'Santa Marta',
+    'Ibagué',
+    'Villavicencio',
+    'Cúcuta',
+  ];
+
+  return (
+    <section className="bg-[#1c0a11] text-white">
+      <div className="mx-auto grid w-full max-w-7xl gap-10 px-4 py-14 sm:px-6 lg:grid-cols-[0.9fr_1.1fr]">
+        <div className="space-y-5">
+          <span className="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.28em]">
+            <Clock className="h-3.5 w-3.5" /> Horarios y entregas
+          </span>
+          <h2 className="font-display text-3xl sm:text-4xl">
+            Pedidos 24/7 y entregas en toda Colombia
+          </h2>
+          <p className="text-sm text-white/75 sm:text-base">
+            Selecciona la fecha y hora de entrega que más te convenga. Nuestros mensajeros entregan
+            tus pedidos con empaque seguro y discrecional.
+          </p>
+          <ul className="space-y-3 text-sm text-white/85">
+            <li className="flex items-center gap-3">
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#f5c97a]/15 text-[#f5c97a]">
+                <Clock className="h-4 w-4" />
+              </span>
+              Pedidos web disponibles las 24 horas
+            </li>
+            <li className="flex items-center gap-3">
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#f5c97a]/15 text-[#f5c97a]">
+                <Truck className="h-4 w-4" />
+              </span>
+              Entregas en menos de 60 minutos en zonas habilitadas
+            </li>
+            <li className="flex items-center gap-3">
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#f5c97a]/15 text-[#f5c97a]">
+                <ShieldCheck className="h-4 w-4" />
+              </span>
+              Verificación de mayoría de edad al recibir
+            </li>
+          </ul>
+        </div>
+
+        <div className="rounded-3xl border border-white/15 bg-white/5 p-6 backdrop-blur">
+          <div className="flex items-center gap-3 text-white/80">
+            <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/10">
+              <MapPin className="h-5 w-5 text-[#f5c97a]" />
+            </span>
+            <div>
+              <p className="text-xs uppercase tracking-[0.28em] text-white/60">Cobertura nacional</p>
+              <p className="font-display text-xl text-white">Estamos cerca de ti</p>
+            </div>
+          </div>
+          <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {cities.map((city) => (
+              <span
+                key={city}
+                className="rounded-full border border-white/15 bg-white/5 px-3 py-2 text-center text-xs uppercase tracking-[0.18em] text-white/85"
+              >
+                {city}
+              </span>
+            ))}
+          </div>
+          <p className="mt-5 text-xs text-white/60">
+            ¿No ves tu ciudad? Contáctanos por WhatsApp y te confirmamos disponibilidad.
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Footer() {
+  return (
+    <footer className="bg-[#11060a] text-white/85">
+      <div className="mx-auto grid w-full max-w-7xl gap-10 px-4 py-14 sm:px-6 lg:grid-cols-4">
+        <div className="space-y-4">
+          <GrandmaLogo inverted />
+          <p className="text-sm text-white/65">
+            Plataforma colombiana de licores premium con domicilio express, anchetas personalizadas
+            y experiencias de coctelería.
+          </p>
+          <div className="flex items-center gap-3 text-white/70">
+            <a className="rounded-full border border-white/20 p-2 hover:border-[#f5c97a]" href="#">
+              <Facebook className="h-4 w-4" />
+            </a>
+            <a className="rounded-full border border-white/20 p-2 hover:border-[#f5c97a]" href="#">
+              <Instagram className="h-4 w-4" />
+            </a>
+            <a className="rounded-full border border-white/20 p-2 hover:border-[#f5c97a]" href="#">
+              <Youtube className="h-4 w-4" />
+            </a>
           </div>
         </div>
-      </section>
 
-      <footer className="border-t border-border/60 bg-white">
-        <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-6 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:px-6">
-          <p>© {new Date().getFullYear()} Grandma's Liqueurs · Licorera Virtual</p>
-          <p>Bebamos con responsabilidad. Prohibida la venta a menores de edad.</p>
+        <div>
+          <p className="font-display text-lg text-white">Productos</p>
+          <ul className="mt-4 space-y-2 text-sm">
+            {['Whisky', 'Ron', 'Vinos', 'Tequila', 'Cervezas', 'Anchetas', 'Recetas'].map((item) => (
+              <li key={item}>
+                <a href="#" className="text-white/70 transition-colors hover:text-white">
+                  {item}
+                </a>
+              </li>
+            ))}
+          </ul>
         </div>
-      </footer>
+
+        <div>
+          <p className="font-display text-lg text-white">Acerca de</p>
+          <ul className="mt-4 space-y-2 text-sm">
+            {[
+              'Sobre nosotros',
+              'Blog',
+              'Tarjetas de regalo',
+              'Política de privacidad',
+              'Términos y condiciones',
+            ].map((item) => (
+              <li key={item}>
+                <a href="#" className="text-white/70 transition-colors hover:text-white">
+                  {item}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="space-y-4">
+          <p className="font-display text-lg text-white">Contacto</p>
+          <ul className="space-y-3 text-sm">
+            <li className="flex items-start gap-3">
+              <MapPin className="mt-0.5 h-4 w-4 text-[#f5c97a]" />
+              <span>Cra. 47 # 104 - 45, Oficina principal</span>
+            </li>
+            <li className="flex items-start gap-3">
+              <Phone className="mt-0.5 h-4 w-4 text-[#f5c97a]" />
+              <span>(601) 382 7017 · 300 203 5430</span>
+            </li>
+            <li className="flex items-start gap-3">
+              <MessageCircle className="mt-0.5 h-4 w-4 text-[#f5c97a]" />
+              <span>WhatsApp 304 484 8594</span>
+            </li>
+            <li className="flex items-start gap-3">
+              <Mail className="mt-0.5 h-4 w-4 text-[#f5c97a]" />
+              <span>contacto@grandmasliqueurs.co</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <div className="border-t border-white/10">
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-3 px-4 py-5 text-xs text-white/55 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <p>© {new Date().getFullYear()} Grandma’s Liqueurs · Todos los derechos reservados.</p>
+          <p className="max-w-xl text-right text-[11px] leading-relaxed text-white/45">
+            El exceso de alcohol es perjudicial para la salud. Ley 30 de 1986. Prohíbase el expendio
+            de bebidas embriagantes a menores de edad.
+          </p>
+        </div>
+      </div>
+    </footer>
+  );
+}
+
+export function PublicHome({ onOpenLogin, onOpenRegister }: PublicHomeProps) {
+  const [catalog, setCatalog] = useState<{
+    productos: PublicCatalogProducto[];
+    categorias: CatRow[];
+  } | null>(null);
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterCategory, setFilterCategory] = useState<string | null>(null);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [locationLabel, setLocationLabel] = useState('Bogotá');
+  const [detailProduct, setDetailProduct] = useState<PublicCatalogProducto | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await publicCatalog.getCatalogo();
+        if (!cancelled) {
+          setCatalog({
+            productos: Array.isArray(data.productos) ? data.productos : [],
+            categorias: Array.isArray(data.categorias) ? data.categorias : [],
+          });
+        }
+      } catch {
+        if (!cancelled) setCatalogError(true);
+      } finally {
+        if (!cancelled) setCatalogLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const fromLiveApi = !catalogError && catalog !== null;
+
+  const filteredProductos = useMemo(() => {
+    if (catalogLoading) return [];
+    const source =
+      catalogError || catalog == null ? FALLBACK_PRODUCTOS : catalog.productos;
+    let list = [...source];
+    if (filterCategory) list = list.filter((p) => p.categoria === filterCategory);
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        (p) =>
+          p.nombre.toLowerCase().includes(q) ||
+          p.categoria.toLowerCase().includes(q) ||
+          (p.descripcion || '').toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [catalog, catalogError, catalogLoading, filterCategory, searchQuery]);
+
+  const handleAddProduct = (p: PublicCatalogProducto) => {
+    if (fromLiveApi && p.id > 0) {
+      setTiendaIntent({ addProductId: p.id, categoriaNombre: p.categoria });
+    }
+    onOpenLogin();
+  };
+
+  return (
+    <div className="min-h-screen text-[#14120f]" style={{ backgroundColor: '#f3f2ef' }}>
+      <FloatingDock
+        onMenu={() => setIsMenuOpen((o) => !o)}
+        onSearchFocus={() => searchInputRef.current?.focus()}
+        onCart={onOpenLogin}
+        onLogin={onOpenLogin}
+      />
+      <PublicChrome
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        searchInputRef={searchInputRef}
+        isMenuOpen={isMenuOpen}
+        setIsMenuOpen={setIsMenuOpen}
+        locationLabel={locationLabel}
+        onLocationChange={setLocationLabel}
+        onOpenLogin={onOpenLogin}
+        onOpenRegister={onOpenRegister}
+      />
+      <main>
+        <LicoreraHero
+          onOpenLogin={onOpenLogin}
+          onRecipes={() =>
+            document.getElementById('recetas')?.scrollIntoView({ behavior: 'smooth' })
+          }
+        />
+        <TrustStrip />
+        <CategoriesScroller
+          categorias={catalog?.categorias ?? []}
+          selectedNombre={filterCategory}
+          onSelect={setFilterCategory}
+        />
+        <PromoRow onOpenLogin={onOpenLogin} onFilterCategory={(n) => setFilterCategory(n)} />
+        <FeaturedCatalogSection
+          productos={filteredProductos}
+          loading={catalogLoading}
+          catalogError={catalogError}
+          fromLiveApi={fromLiveApi}
+          onDetail={setDetailProduct}
+          onAdd={handleAddProduct}
+          onOpenLogin={onOpenLogin}
+          onOpenRegister={onOpenRegister}
+        />
+        <PromoBanner onAction={onOpenRegister} />
+        <CocktailsSection onAction={onOpenLogin} />
+        <ScheduleAndCoverage />
+      </main>
+      <Footer />
+      <Modal
+        isOpen={detailProduct != null}
+        onClose={() => setDetailProduct(null)}
+        title={detailProduct?.nombre ?? 'Detalle'}
+        size="md"
+        contentClassName="bg-[#f3f2ef]"
+      >
+        {detailProduct && (
+          <div className="space-y-4">
+            <div className="overflow-hidden rounded-xl border border-black/10 bg-white">
+              <img
+                src={
+                  detailProduct.imagen_url?.trim() ||
+                  'https://images.unsplash.com/photo-1569529465841-dfecdab7503b?auto=format&fit=crop&w=900&q=80'
+                }
+                alt=""
+                className="max-h-72 w-full object-cover"
+              />
+            </div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-[#5c534e]">
+              {detailProduct.categoria}
+            </p>
+            <p className="font-display text-2xl">
+              {formatCurrency(Number(detailProduct.precio) || 0)}
+            </p>
+            <p className="text-sm leading-relaxed text-[#5c534e]">
+              {detailProduct.descripcion || 'Sin descripción adicional.'}
+            </p>
+            <div className="flex flex-wrap gap-2 pt-2">
+              <Button
+                onClick={() => {
+                  handleAddProduct(detailProduct);
+                  setDetailProduct(null);
+                }}
+                className="border-0 bg-[#c5a572] text-[#14120f] hover:bg-[#b8925f]"
+              >
+                Añadir al carrito
+              </Button>
+              <Button variant="outline" onClick={() => setDetailProduct(null)}>
+                Cerrar
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

@@ -100,7 +100,7 @@ module.exports = {
       const id = await models.Domicilios.create(req.body);
       return res.status(201).json({ success: true, id, message: 'Domicilio creado exitosamente' });
     } catch (error) {
-      return res.status(500).json({ success: false, message: error.message });
+      return res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
   },
   update: async (req, res) => {
@@ -112,7 +112,7 @@ module.exports = {
       await ensureVentaForDeliveredDomicilio(req.params.id);
       return res.json({ success: true, message: 'Domicilio actualizado exitosamente' });
     } catch (error) {
-      return res.status(500).json({ success: false, message: error.message });
+      return res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
   },
   delete: async (req, res) => {

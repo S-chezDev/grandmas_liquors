@@ -46,7 +46,7 @@ module.exports = {
       const pedidos = await models.Pedidos.getAll();
       return res.json({ success: true, data: pedidos });
     } catch (error) {
-      return res.status(500).json({ success: false, message: error.message });
+      return res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
   },
   getById: async (req, res) => {
@@ -59,7 +59,7 @@ module.exports = {
       const detalles = await models.Pedidos.getDetalles(req.params.id);
       return res.json({ success: true, data: { ...pedido, detalles } });
     } catch (error) {
-      return res.status(500).json({ success: false, message: error.message });
+      return res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
   },
   getByCliente: async (req, res) => {

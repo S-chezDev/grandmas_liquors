@@ -171,7 +171,7 @@ export function Clientes() {
     setAlertState({
       isOpen: true,
       title: 'Confirmar eliminación',
-      description: `¿Está seguro de eliminar al cliente "${cliente.nombre} ${cliente.apellido}"? Esta acción no se puede deshacer.`,
+      description: `¿Está seguro de eliminar al cliente "${cliente.nombre} ${cliente.apellido}"? Esta acción eliminará también su cuenta de usuario y no se puede deshacer.`,
       onConfirm: async () => {
         try {
           await clientesAPI.delete(Number(cliente.id));
@@ -179,7 +179,7 @@ export function Clientes() {
           setAlertState({
             isOpen: true,
             title: 'Éxito',
-            description: 'Cliente eliminado correctamente',
+            description: 'Cliente y su cuenta de usuario eliminados correctamente.',
             onConfirm: () => {}
           });
         } catch (error) {
@@ -257,15 +257,21 @@ export function Clientes() {
       setAlertState({
         isOpen: true,
         title: 'Éxito',
-        description: `Cliente ${selectedCliente ? 'actualizado' : 'creado'} correctamente`,
+        description: selectedCliente
+          ? 'Cliente y su cuenta de usuario actualizados correctamente.'
+          : 'Cliente y usuario creados correctamente. Se envió una contraseña temporal al correo registrado para que el cliente pueda iniciar sesión.',
         onConfirm: () => {}
       });
     } catch (error) {
       console.error('Error al guardar cliente:', error);
+      const errorMessage =
+        error instanceof Error && error.message
+          ? error.message
+          : 'No se pudo guardar el cliente';
       setAlertState({
         isOpen: true,
         title: 'Error',
-        description: 'No se pudo guardar el cliente',
+        description: errorMessage,
         onConfirm: () => {}
       });
     }

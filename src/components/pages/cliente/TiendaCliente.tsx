@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '../../Card';
 import { Button } from '../../Button';
 import { Modal } from '../../Modal';
@@ -7,6 +7,7 @@ import { ShoppingCart, Plus, Minus, Trash2, ShoppingBag, Check } from 'lucide-re
 import { useAlertDialog } from '../../AlertDialog';
 import { clientes as clientesAPI, pedidos as pedidosAPI, productos as productosAPI } from '../../../services/api';
 import { useAuth } from '../../AuthContext';
+import { consumeTiendaIntent } from '../../../lib/tiendaIntent';
 
 interface Producto {
   id: number;
@@ -58,6 +59,8 @@ export function TiendaCliente() {
     metodoPago: 'Efectivo' as 'Efectivo' | 'Transferencia' | 'Contraentrega',
     fechaEntrega: ''
   });
+
+  const intentAppliedRef = useRef(false);
 
   const loadInitialData = async () => {
     if (!user?.id) return;
@@ -121,6 +124,56 @@ export function TiendaCliente() {
   useEffect(() => {
     loadInitialData();
   }, [user?.id]);
+
+  useEffect(() => {
+    intentAppliedRef.current = false;
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (loading || !user?.id || intentAppliedRef.current || productos.length === 0) return;
+    const intent = consumeTiendaIntent();
+    if (intent.addProductId == null && !intent.categoriaNombre) return;
+    intentAppliedRef.current = true;
+
+    if (intent.categoriaNombre) {
+      const disponibles = new Set(productos.map((p) => p.categoria));
+      if (disponibles.has(intent.categoriaNombre)) {
+        setCategoriaFiltro(intent.categoriaNombre);
+      }
+    }
+
+    if (intent.addProductId != null) {
+      const p = productos.find((x) => x.id === intent.addProductId);
+      if (p && (!p.estado || p.estado === 'Activo')) {
+        setCarrito((prev) => {
+          const existing = prev.find((i) => i.producto.id === p.id);
+          if (existing) {
+            if (existing.cantidad < p.stock) {
+              return prev.map((i) =>
+                i.producto.id === p.id ? { ...i, cantidad: i.cantidad + 1 } : i
+              );
+            }
+            return prev;
+          }
+          if (p.stock > 0) {
+            return [...prev, { producto: p, cantidad: 1 }];
+          }
+          return prev;
+        });
+        if (p.stock === 0) {
+          showAlert({
+            title: 'Sin stock',
+            description: `${p.nombre} no tiene unidades disponibles en este momento.`,
+            type: 'warning',
+            confirmText: 'Entendido',
+            onConfirm: () => {}
+          });
+        } else {
+          setIsCarritoOpen(true);
+        }
+      }
+    }
+  }, [loading, user?.id, productos]);
 
   const categorias = useMemo(
     () => ['Todos', ...Array.from(new Set(productos.map((p) => p.categoria)))],

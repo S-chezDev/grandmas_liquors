@@ -14,8 +14,33 @@ interface CompraItem {
   producto: string;
   cantidad: number;
   precioUnitario: number;
+  porcentajeGanancia: number;
   subtotal: number;
 }
+
+const normalizeCompraItemsFromApi = (raw: unknown): CompraItem[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item: any) => {
+    const cant = Number(item.cantidad || 0);
+    const pu = Number(item.precio_unitario || 0);
+    const sub = Number(item.subtotal);
+    const pct = Number(item.porcentaje_ganancia ?? item.porcentajeGanancia ?? 0);
+    return {
+      productoId: Number(item.producto_id ?? item.productoId ?? 0),
+      producto: String(item.producto || item.producto_nombre || ''),
+      cantidad: cant,
+      precioUnitario: pu,
+      porcentajeGanancia: Number.isFinite(pct) ? pct : 0,
+      subtotal: Number.isFinite(sub) ? sub : cant * pu,
+    };
+  });
+};
+
+const precioVentaDesdeItem = (item: Pick<CompraItem, 'precioUnitario' | 'porcentajeGanancia'>) => {
+  const base = Number(item.precioUnitario) || 0;
+  const pct = Number(item.porcentajeGanancia) || 0;
+  return Math.round(base * (1 + pct / 100));
+};
 
 interface ProductoOption {
   id: number;
@@ -163,7 +188,7 @@ export function Compras() {
         fecha: toDateOnly(compra.fecha),
         fechaCreacion: toDateOnly(compra.fecha_creacion || compra.fecha),
         fechaCompra: toDateOnly(compra.fecha),
-        items: Array.isArray(compra.items) ? compra.items : [],
+        items: normalizeCompraItemsFromApi(compra.items),
         subtotal: Number(compra.subtotal || 0),
         iva: Number(compra.iva || 0),
         total: Number(compra.total || 0),
@@ -205,6 +230,7 @@ export function Compras() {
     productoId: '',
     cantidad: 0,
     precioUnitario: 0,
+    porcentajeGanancia: 25,
   });
 
   const canChangeCompraStatus =
@@ -263,6 +289,10 @@ export function Compras() {
           <span className="inline-flex rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-700">
             Compra recibida completamente
           </span>
+        ) : normalizeEstadoCompra(estado) === 'Cancelada' ? (
+          <span className="inline-flex rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-700">
+            Compra cancelada (estado final)
+          </span>
         ) : (
           <select
             value={normalizeEstadoCompra(estado)}
@@ -303,7 +333,7 @@ export function Compras() {
       items: [],
       observaciones: '',
     });
-    setCurrentItem({ productoId: '', cantidad: 0, precioUnitario: 0 });
+    setCurrentItem({ productoId: '', cantidad: 0, precioUnitario: 0, porcentajeGanancia: 25 });
     setIsModalOpen(true);
   };
 
@@ -316,6 +346,7 @@ export function Compras() {
             producto: String(item.producto_nombre || item.producto || ''),
             cantidad: Number(item.cantidad || 0),
             precioUnitario: Number(item.precio_unitario || 0),
+            porcentajeGanancia: Number(item.porcentaje_ganancia ?? 0),
             subtotal: Number(item.subtotal || 0),
           }))
         : compra.items;
@@ -372,6 +403,17 @@ export function Compras() {
       showAlert({
         title: 'Compra recibida',
         description: 'Esta compra ya fue recibida. El estado ya no puede modificarse.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
+    if (estadoActual === 'Cancelada') {
+      showAlert({
+        title: 'Compra cancelada',
+        description: 'Esta compra ya fue cancelada. El estado no puede revertirse.',
         type: 'warning',
         confirmText: 'Entendido',
         onConfirm: () => {},
@@ -440,7 +482,7 @@ export function Compras() {
         title: 'Estado actualizado',
         description:
           estadoFinal === 'Recibida'
-            ? 'La compra pasó a Recibida. El inventario se incrementó con los productos de esta compra y el estado ya no podrá modificarse.'
+            ? 'La compra pasó a Recibida. El inventario aumentó y el precio de venta de cada producto se actualizó según costo y % de ganancia de la orden.'
             : 'La compra fue cancelada correctamente.',
         type: 'success',
         confirmText: 'Entendido',
@@ -473,8 +515,10 @@ export function Compras() {
       ? items.map((item, index) => 
       `${index + 1}. ${item.producto}
    Cantidad: ${item.cantidad} unidades
-   Precio Unitario: ${formatCurrency(item.precioUnitario)}
-   Subtotal: ${formatCurrency(item.subtotal)}`
+   Costo unitario: ${formatCurrency(item.precioUnitario)}
+   Ganancia: ${item.porcentajeGanancia}%
+   Precio venta (estimado): ${formatCurrency(precioVentaDesdeItem(item))}
+   Subtotal compra: ${formatCurrency(item.subtotal)}`
         ).join('\n\n')
       : 'Sin detalle de productos registrado';
 
@@ -511,7 +555,28 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
   };
 
   const handleAddItem = () => {
-    if (!currentItem.productoId || currentItem.cantidad <= 0 || currentItem.precioUnitario <= 0) {
+    const pct = Number(currentItem.porcentajeGanancia);
+    if (pct < 0 || pct > 1000 || !Number.isFinite(pct)) {
+      showAlert({
+        title: 'Porcentaje invalido',
+        description: 'El porcentaje de ganancia debe estar entre 0 y 1000.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
+    const cantidad = Number(currentItem.cantidad);
+    const precioUnitario = Number(currentItem.precioUnitario);
+
+    if (
+      !currentItem.productoId ||
+      !Number.isFinite(cantidad) ||
+      cantidad <= 0 ||
+      !Number.isFinite(precioUnitario) ||
+      precioUnitario <= 0
+    ) {
       showAlert({
         title: 'Campos incompletos',
         description: 'Complete todos los campos del producto.',
@@ -551,9 +616,10 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
     const newItem: CompraItem = {
       productoId: Number(currentItem.productoId),
       producto: productoSeleccionado.nombre,
-      cantidad: currentItem.cantidad,
-      precioUnitario: currentItem.precioUnitario,
-      subtotal: currentItem.cantidad * currentItem.precioUnitario,
+      cantidad,
+      precioUnitario,
+      porcentajeGanancia: Number(currentItem.porcentajeGanancia) || 0,
+      subtotal: cantidad * precioUnitario,
     };
     
     setFormData({
@@ -561,7 +627,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
       items: [...formData.items, newItem]
     });
     
-    setCurrentItem({ productoId: '', cantidad: 0, precioUnitario: 0 });
+    setCurrentItem({ productoId: '', cantidad: 0, precioUnitario: 0, porcentajeGanancia: 25 });
   };
 
   const handleRemoveItem = (index: number) => {
@@ -595,10 +661,21 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
       return;
     }
 
-    if (formData.items.some((item) => item.cantidad <= 0 || item.precioUnitario <= 0)) {
+    if (
+      formData.items.some(
+        (item) =>
+          !Number.isFinite(Number(item.cantidad)) ||
+          Number(item.cantidad) <= 0 ||
+          !Number.isFinite(Number(item.precioUnitario)) ||
+          Number(item.precioUnitario) <= 0 ||
+          !Number.isFinite(Number(item.porcentajeGanancia)) ||
+          Number(item.porcentajeGanancia) < 0 ||
+          Number(item.porcentajeGanancia) > 1000
+      )
+    ) {
       showAlert({
         title: 'Valores invalidos',
-        description: 'Todas las cantidades deben ser mayores a 0 y los precios unitarios validos.',
+        description: 'Revisa los items: cantidad y costo > 0, y porcentaje de ganancia entre 0 y 1000.',
         type: 'warning',
         confirmText: 'Entendido',
         onConfirm: () => {}
@@ -606,9 +683,10 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
       return;
     }
 
+    let compraId = 0;
     try {
       const createResult: any = await comprasAPI.create({
-        proveedor: formData.proveedor,
+        proveedor_id: Number(formData.proveedor),
         fecha: formData.fecha,
         subtotal: subtotalCalculado,
         iva: ivaCalculado,
@@ -617,7 +695,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         observaciones: formData.observaciones,
       });
 
-      const compraId = Number(createResult?.id);
+      compraId = Number(createResult?.id);
       if (!compraId) {
         throw new Error('No se obtuvo el id de la compra creada');
       }
@@ -629,6 +707,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
             productoId: Number(item.productoId),
             cantidad: Number(item.cantidad),
             precioUnitario: Number(item.precioUnitario),
+            porcentajeGanancia: Number(item.porcentajeGanancia) || 0,
           })
         )
       );
@@ -641,7 +720,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         items: [],
         observaciones: '',
       });
-      setCurrentItem({ productoId: '', cantidad: 0, precioUnitario: 0 });
+      setCurrentItem({ productoId: '', cantidad: 0, precioUnitario: 0, porcentajeGanancia: 25 });
       showAlert({
         title: 'Éxito',
         description: 'Compra guardada correctamente.',
@@ -649,11 +728,18 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         confirmText: 'Entendido',
         onConfirm: () => {}
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creando compra:', error);
+      if (compraId) {
+        try {
+          await comprasAPI.delete(compraId);
+        } catch {
+          // Si falla el rollback, conservamos el error original.
+        }
+      }
       showAlert({
         title: 'Error',
-        description: 'No se pudo guardar la compra.',
+        description: error?.message || 'No se pudo guardar la compra.',
         type: 'danger',
         confirmText: 'Entendido',
         onConfirm: () => {}
@@ -780,28 +866,31 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                 {creationHelpMessage}
               </div>
             ) : null}
-            <div className="grid grid-cols-4 gap-2 mb-3">
-              <FormField
-                label="Producto"
-                name="producto"
-                type="select"
-                value={currentItem.productoId}
-                onChange={(value) => {
-                  const productoSeleccionado = productosDisponibles.find(
-                    (p) => p.id === Number(value)
-                  );
-                  setCurrentItem({
-                    ...currentItem,
-                    productoId: value as string,
-                    precioUnitario: productoSeleccionado ? Number(productoSeleccionado.precio) : 0,
-                  });
-                }}
-                options={productosDisponibles.map((p) => ({
-                  value: p.id.toString(),
-                  label: `COD-${p.id} | ${p.nombre} - ${formatCurrency(p.precio)}`,
-                }))}
-              />
-              
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6 lg:items-end mb-3">
+              <div className="lg:col-span-2">
+                <FormField
+                  label="Producto"
+                  name="producto"
+                  type="select"
+                  value={currentItem.productoId}
+                  onChange={(value) => {
+                    const productoSeleccionado = productosDisponibles.find(
+                      (p) => p.id === Number(value)
+                    );
+                    setCurrentItem({
+                      ...currentItem,
+                      productoId: value as string,
+                      // Sugerencia editable para acelerar el cargue.
+                      precioUnitario: productoSeleccionado ? Number(productoSeleccionado.precio) || 0 : 0,
+                    });
+                  }}
+                  options={productosDisponibles.map((p) => ({
+                    value: p.id.toString(),
+                    label: `COD-${p.id} · ${p.nombre}`,
+                  }))}
+                />
+              </div>
+
               <FormField
                 label="Cantidad"
                 name="cantidad"
@@ -809,17 +898,36 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                 value={currentItem.cantidad}
                 onChange={(value) => setCurrentItem({ ...currentItem, cantidad: value as number })}
               />
-              
+
               <FormField
-                label="Precio Unitario"
+                label="Precio compra (unit.)"
                 name="precioUnitario"
                 type="number"
                 value={currentItem.precioUnitario}
-                onChange={(value) => setCurrentItem({ ...currentItem, precioUnitario: value as number })}
-                readOnly
-                helperText="Precio cargado automaticamente segun el producto seleccionado."
+                onChange={(value) =>
+                  setCurrentItem({ ...currentItem, precioUnitario: Number(value) || 0 })
+                }
+                helperText="Costo que paga el negocio al proveedor."
               />
-              
+
+              <FormField
+                label="% Ganancia (venta)"
+                name="porcentajeGanancia"
+                type="number"
+                value={currentItem.porcentajeGanancia}
+                onChange={(value) =>
+                  setCurrentItem({ ...currentItem, porcentajeGanancia: Number(value) || 0 })
+                }
+                helperText="Sobre el costo. Al recibir la compra se actualiza el precio de venta del producto."
+              />
+
+              <div className="flex flex-col gap-1 rounded-lg border border-border bg-muted/40 px-3 py-2">
+                <span className="text-xs font-medium text-muted-foreground">Precio venta estimado</span>
+                <span className="text-sm font-semibold">
+                  {formatCurrency(precioVentaDesdeItem(currentItem))}
+                </span>
+              </div>
+
               <div className="flex items-end">
                 <Button type="button" onClick={handleAddItem} className="w-full">
                   Agregar
@@ -837,7 +945,9 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                     <th className="p-2 text-left">Codigo</th>
                     <th className="p-2 text-left">Producto</th>
                     <th className="p-2 text-right">Cantidad</th>
-                    <th className="p-2 text-right">Precio Unit.</th>
+                    <th className="p-2 text-right">Costo unit.</th>
+                    <th className="p-2 text-right">% Gan.</th>
+                    <th className="p-2 text-right">P. venta</th>
                     <th className="p-2 text-right">Subtotal</th>
                     <th className="p-2"></th>
                   </tr>
@@ -849,6 +959,8 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                       <td className="p-2">{item.producto}</td>
                       <td className="p-2 text-right">{item.cantidad}</td>
                       <td className="p-2 text-right">{formatCurrency(item.precioUnitario)}</td>
+                      <td className="p-2 text-right">{item.porcentajeGanancia}%</td>
+                      <td className="p-2 text-right">{formatCurrency(precioVentaDesdeItem(item))}</td>
                       <td className="p-2 text-right">{formatCurrency(item.subtotal)}</td>
                       <td className="p-2">
                         <button
@@ -930,7 +1042,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
           {pendingStateChange?.to === 'Recibida' ? (
             <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-900 space-y-2">
               <p className="font-medium">Productos recibidos completos y en perfecto estado?</p>
-              <p>Al confirmar, la compra pasará a estado Recibida, se incrementará el inventario de cada producto y después el estado quedará bloqueado para siempre.</p>
+              <p>Al confirmar, la compra pasará a estado Recibida, se incrementará el inventario y el <strong>precio de venta</strong> de cada producto se actualizará según el costo de esta compra y el porcentaje de ganancia indicado en cada línea.</p>
             </div>
           ) : null}
 
@@ -1023,7 +1135,9 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                   <tr>
                     <th className="p-3 text-left">Producto</th>
                     <th className="p-3 text-right">Cantidad</th>
-                    <th className="p-3 text-right">Precio Unit.</th>
+                    <th className="p-3 text-right">Costo unit.</th>
+                    <th className="p-3 text-right">% Gan.</th>
+                    <th className="p-3 text-right">P. venta</th>
                     <th className="p-3 text-right">Subtotal</th>
                   </tr>
                 </thead>
@@ -1033,19 +1147,21 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                       <td className="p-3">{item.producto}</td>
                       <td className="p-3 text-right">{item.cantidad}</td>
                       <td className="p-3 text-right">{formatCurrency(item.precioUnitario)}</td>
+                      <td className="p-3 text-right">{item.porcentajeGanancia ?? 0}%</td>
+                      <td className="p-3 text-right">{formatCurrency(precioVentaDesdeItem(item))}</td>
                       <td className="p-3 text-right">{formatCurrency(item.subtotal)}</td>
                     </tr>
                   ))}
                   <tr className="border-t-2 border-border">
-                    <td colSpan={3} className="p-3 text-right">Subtotal:</td>
+                    <td colSpan={5} className="p-3 text-right">Subtotal:</td>
                     <td className="p-3 text-right">{formatCurrency(selectedCompra.subtotal)}</td>
                   </tr>
                   <tr className="border-t border-border">
-                    <td colSpan={3} className="p-3 text-right">IVA (19%):</td>
+                    <td colSpan={5} className="p-3 text-right">IVA (19%):</td>
                     <td className="p-3 text-right">{formatCurrency(selectedCompra.iva)}</td>
                   </tr>
                   <tr className="border-t border-border">
-                    <td colSpan={3} className="p-3 text-right">Total:</td>
+                    <td colSpan={5} className="p-3 text-right">Total:</td>
                     <td className="p-3 text-right">{formatCurrency(selectedCompra.total)}</td>
                   </tr>
                 </tbody>

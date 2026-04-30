@@ -60,13 +60,12 @@ interface DeleteImpactBlocker {
 interface DeleteImpact {
   activeSessions: number;
   daysInactive: number;
-  canPhysicalDelete: boolean;
   blockers: DeleteImpactBlocker[];
 }
 
 interface UsersFilters {
   globalQuery: string;
-  estado: '' | 'Activo' | 'Inactivo' | 'Eliminado';
+  estado: '' | 'Activo' | 'Inactivo';
   rolId: string;
 }
 
@@ -117,7 +116,6 @@ const downloadUsersCsv = (rows: Usuario[]) => {
   };
 
   const headers = [
-    'id',
     'nombre',
     'apellido',
     'tipo_documento',
@@ -136,7 +134,6 @@ const downloadUsersCsv = (rows: Usuario[]) => {
   rows.forEach((row) => {
     lines.push(
       [
-        row.id,
         row.nombre,
         row.apellido,
         row.tipo_documento,
@@ -202,8 +199,6 @@ export function Usuarios() {
   const [deleteReasonError, setDeleteReasonError] = useState('');
   const [deleteImpactLoading, setDeleteImpactLoading] = useState(false);
   const [deleteImpact, setDeleteImpact] = useState<DeleteImpact | null>(null);
-  const [deleteMode, setDeleteMode] = useState<'logical' | 'physical'>('logical');
-  const [omitDeleteValidations, setOmitDeleteValidations] = useState(false);
 
   const [formData, setFormData] = useState({
     nombre: '',
@@ -288,7 +283,12 @@ export function Usuarios() {
   };
 
   const columns: Column[] = [
-    { key: 'id', label: 'ID' },
+    {
+      key: 'documento',
+      label: 'Documento',
+      render: (_: unknown, row: Usuario) =>
+        `${row.tipo_documento || ''} ${row.documento || ''}`.trim(),
+    },
     { key: 'nombre', label: 'Nombre', render: (_: any, row: Usuario) => `${row.nombre} ${row.apellido}` },
     { key: 'email', label: 'Email' },
     { key: 'telefono', label: 'Teléfono' },
@@ -298,20 +298,19 @@ export function Usuarios() {
       label: 'Estado',
       render: (estado: string, usuario: Usuario) => (
         <select
-          value={estado === 'Activo' ? 'Activo' : estado === 'Inactivo' ? 'Inactivo' : 'Eliminado'}
-          onChange={(event) => handleChangeStateRequest(usuario, event.target.value as 'Activo' | 'Inactivo' | 'Eliminado')}
-          disabled={statusSaving || estado === 'Eliminado'}
+          value={estado === 'Activo' ? 'Activo' : 'Inactivo'}
+          onChange={(event) => handleChangeStateRequest(usuario, event.target.value as 'Activo' | 'Inactivo')}
+          disabled={statusSaving}
           className={`min-h-8 rounded-lg border border-transparent px-2.5 py-1 text-xs font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring ${
             estado === 'Activo'
               ? 'bg-green-100 text-green-700'
               : estado === 'Eliminado'
               ? 'bg-slate-200 text-slate-700'
               : 'bg-red-100 text-red-700'
-          } ${estado === 'Eliminado' ? 'opacity-70 cursor-not-allowed' : ''}`}
+          }`}
         >
           <option value="Activo">Activo</option>
           <option value="Inactivo">Inactivo</option>
-          {estado === 'Eliminado' ? <option value="Eliminado">Eliminado</option> : null}
         </select>
       ),
     },
@@ -345,12 +344,14 @@ export function Usuarios() {
         q: mergedFilters.globalQuery || undefined,
         estados: mergedFilters.estado ? [mergedFilters.estado] : undefined,
         rol_id: mergedFilters.rolId ? Number(mergedFilters.rolId) : undefined,
-        include_deleted: true,
+        include_deleted: false,
         limit: 50000,
       });
 
       if (loadId === lastLoadIdRef.current) {
-        const normalizedRows = Array.isArray(data) ? data : [];
+        const normalizedRows = Array.isArray(data)
+          ? data.filter((item: Usuario) => String(item?.estado || '').toLowerCase() !== 'eliminado')
+          : [];
         setUsuarios(normalizedRows);
       }
     } catch (error) {
@@ -635,17 +636,12 @@ export function Usuarios() {
     setDeleteReasonError('');
     setDeleteImpact(null);
     setDeleteImpactLoading(true);
-    setDeleteMode('logical');
-    setOmitDeleteValidations(false);
     setDeleteModalOpen(true);
 
     void (async () => {
       try {
         const impact = await usuariosAPI.getDeleteImpact(Number(usuario.id));
         setDeleteImpact(impact || null);
-        if (impact?.canPhysicalDelete) {
-          setDeleteMode('physical');
-        }
       } catch (error) {
         console.error('Error obteniendo impacto de eliminación:', error);
       } finally {
@@ -669,8 +665,6 @@ export function Usuarios() {
 
       await usuariosAPI.delete(Number(deleteTargetUsuario.id), {
         motivo: normalizedReason,
-        mode: deleteMode,
-        omit_validaciones: omitDeleteValidations,
       });
 
       await minWait(startedAt, 3000);
@@ -695,8 +689,7 @@ export function Usuarios() {
     }
   };
 
-  const handleChangeStateRequest = (usuario: Usuario, targetState: 'Activo' | 'Inactivo' | 'Eliminado') => {
-    if (targetState === 'Eliminado' || usuario.estado === 'Eliminado') return;
+  const handleChangeStateRequest = (usuario: Usuario, targetState: 'Activo' | 'Inactivo') => {
     if (usuario.estado === targetState) return;
 
     setPendingStateChange({
@@ -817,7 +810,6 @@ export function Usuarios() {
             <option value="">Estado (todos)</option>
             <option value="Activo">Activo</option>
             <option value="Inactivo">Inactivo</option>
-            <option value="Eliminado">Eliminado</option>
           </select>
           <select
             value={filters.rolId}
@@ -1182,7 +1174,6 @@ export function Usuarios() {
             <div className="rounded-lg border border-border p-3 text-sm space-y-1">
               <p>Sesiones activas: {deleteImpact.activeSessions}</p>
               <p>Días inactivo: {deleteImpact.daysInactive}</p>
-              <p>Eliminación física habilitada: {deleteImpact.canPhysicalDelete ? 'Sí' : 'No'}</p>
               <p>Bloqueos detectados: {deleteImpact.blockers.length}</p>
               {deleteImpact.blockers.length > 0 ? (
                 <div className="max-h-24 overflow-auto text-xs text-muted-foreground">
@@ -1195,29 +1186,6 @@ export function Usuarios() {
               ) : null}
             </div>
           ) : null}
-
-          <FormField
-            label="Modo de eliminación"
-            name="delete_mode"
-            type="select"
-            value={deleteMode}
-            onChange={(value) => setDeleteMode(value as 'logical' | 'physical')}
-            options={[
-              { value: 'logical', label: 'Lógica' },
-              { value: 'physical', label: 'Física (backup automático)' },
-            ]}
-            helperText="La eliminación física está permitida después de 90 días inactivo."
-          />
-
-          <label className="flex items-start gap-3 p-3 rounded-lg border border-border bg-accent/40">
-            <input
-              type="checkbox"
-              checked={omitDeleteValidations}
-              onChange={(event) => setOmitDeleteValidations(event.target.checked)}
-              className="mt-1 h-4 w-4 rounded border-border text-primary"
-            />
-            <span className="text-sm">Omitir algunas validaciones de eliminación.</span>
-          </label>
 
           <FormField
             label="Motivo"

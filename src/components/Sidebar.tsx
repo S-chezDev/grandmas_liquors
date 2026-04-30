@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   ChevronDown, 
+  Menu,
   Users, 
   ShoppingCart, 
   Package, 
@@ -268,11 +269,21 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
         isCollapsed ? 'w-16' : 'w-64'
       }`}
       style={{ transitionDuration: '430ms' }}
-      onMouseEnter={() => setIsCollapsed(false)}
-      onMouseLeave={() => setIsCollapsed(true)}
     >
       {/* Header */}
       <div className="p-4 border-b border-sidebar-border">
+        <div className={`mb-2 flex ${isCollapsed ? 'justify-center' : 'justify-end'}`}>
+          <button
+            type="button"
+            onClick={() => setIsCollapsed((prev) => !prev)}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-sidebar-border/70 text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
+            aria-label={isCollapsed ? 'Abrir menú de gestiones' : 'Cerrar menú de gestiones'}
+            title={isCollapsed ? 'Abrir menú' : 'Cerrar menú'}
+          >
+            <Menu className="h-4 w-4" />
+          </button>
+        </div>
+
         {isCollapsed ? (
           <div className="flex flex-col items-center justify-center py-1 select-none">
             <span className="text-sidebar-foreground text-sm font-extrabold tracking-wide">GL</span>

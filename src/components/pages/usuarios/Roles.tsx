@@ -147,6 +147,9 @@ const PERMISOS_CRITICOS = new Set([
 const isClienteRoleName = (roleName?: string) =>
   typeof roleName === 'string' && roleName.trim().toLowerCase() === CLIENTE_ROL_NOMBRE;
 
+const isAdminRoleName = (roleName?: string) =>
+  typeof roleName === 'string' && roleName.trim().toLowerCase() === 'administrador';
+
 const sanitizePermissionsByRoleName = (roleName: string | undefined, permissions: string[]) => {
   if (isClienteRoleName(roleName)) {
     const filtered = permissions.filter((permiso) => CLIENTE_PERMISOS_FIJOS.includes(permiso));
@@ -713,6 +716,17 @@ export function Roles() {
   };
 
   const handleDelete = async (role: Role) => {
+    if (isAdminRoleName(role?.nombre)) {
+      showAlert({
+        title: 'Rol protegido',
+        description: 'El rol Administrador es primordial y no se puede eliminar.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
+      return;
+    }
+
     // Refrescar antes de validar para evitar conteos desactualizados
     await loadRoles();
 
@@ -1037,6 +1051,7 @@ export function Roles() {
             variant: 'default'
           },
           commonActions.edit(handleEdit),
+          (role: Role) => !isAdminRoleName(role?.nombre),
           commonActions.delete(handleDelete)
         ]}
       />
@@ -1169,7 +1184,7 @@ export function Roles() {
             </div>
           </div>
 
-          <div className="space-y-4 max-h-96 overflow-y-auto">
+          <div className="space-y-4">
             {createModuleEntries.map(([modulo, permisos]) => (
               <Card key={modulo}>
                 <h4 className="mb-3 text-primary">{modulo}</h4>
@@ -1635,7 +1650,6 @@ export function Roles() {
             </div>
           </div>
 
-          <div className="space-y-4 max-h-96 overflow-y-auto">
           <div
             className={`space-y-3 overflow-y-auto pr-1 ${
               manageModuleFilter === 'Todos'

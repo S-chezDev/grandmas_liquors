@@ -49,6 +49,26 @@ interface StateChangeRequest {
   to: string;
 }
 
+/** Obtiene id de respuesta crear venta tras apiCall ({ id } o { data: { id } }). */
+function parseVentaCreacionId(payload: unknown): number {
+  if (payload === null || typeof payload !== 'object') return Number.NaN;
+  const obj = payload as Record<string, unknown>;
+  const topId = obj.id ?? obj.Id;
+  if (topId != null) {
+    const n = Number(topId);
+    if (Number.isFinite(n) && n > 0) return Math.trunc(n);
+  }
+  const inner = obj.data;
+  if (inner !== null && typeof inner === 'object') {
+    const mid = (inner as Record<string, unknown>).id;
+    if (mid != null) {
+      const n = Number(mid);
+      if (Number.isFinite(n) && n > 0) return Math.trunc(n);
+    }
+  }
+  return Number.NaN;
+}
+
 const formatDateOnly = (value: string) => {
   if (!value) return '';
 
@@ -68,6 +88,7 @@ const formatDateOnly = (value: string) => {
 };
 
 export function Ventas() {
+  const isVentaEstadoFinal = (estado: string) => estado === 'Completada' || estado === 'Cancelada';
   const [ventas, setVentas] = useState<Venta[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
@@ -85,13 +106,19 @@ export function Ventas() {
     loadProductos();
   }, []);
 
-  const loadVentas = async () => {
+  const loadVentas = async (options?: { rethrow?: boolean }) => {
     try {
       setLoading(true);
       const data = await ventasAPI.getAll();
+      if (!Array.isArray(data)) {
+        throw new Error('No se pudieron obtener las ventas: respuesta inválida.');
+      }
       setVentas(data);
     } catch (error) {
       console.error('Error al cargar ventas:', error);
+      if (options?.rethrow) {
+        throw error;
+      }
     } finally {
       setLoading(false);
     }
@@ -109,12 +136,18 @@ export function Ventas() {
     }
   };
 
-  const loadProductos = async () => {
+  const loadProductos = async (options?: { rethrow?: boolean }) => {
     try {
       const data = await productosAPI.getAll();
+      if (!Array.isArray(data)) {
+        throw new Error('No se pudieron obtener los productos: respuesta inválida.');
+      }
       setProductos(data);
     } catch (error) {
       console.error('Error al cargar productos:', error);
+      if (options?.rethrow) {
+        throw error;
+      }
     }
   };
 
@@ -140,6 +173,20 @@ export function Ventas() {
     cantidad: 0,
     precio_unitario: 0
   });
+
+  const disponibleParaLineaActual = useMemo(() => {
+    if (!currentItem.producto_id) return null;
+    const p = productos.find((x) => x.id.toString() === currentItem.producto_id);
+    if (!p) return null;
+    const cantidadLista = formData.items
+      .filter((i) => i.producto === p.nombre)
+      .reduce((acc, i) => acc + i.cantidad, 0);
+    const disponible = Math.max(0, Number(p.stock || 0) - cantidadLista);
+    return {
+      disponible,
+      stock: Number(p.stock || 0)
+    };
+  }, [currentItem.producto_id, productos, formData.items]);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('es-CO', {
@@ -176,7 +223,7 @@ export function Ventas() {
         <select
           value={estado}
           onChange={(event) => handleEstadoChangeRequest(venta, event.target.value)}
-          disabled={stateChangeSaving}
+          disabled={stateChangeSaving || isVentaEstadoFinal(estado)}
           className={`min-h-8 rounded-lg border border-transparent px-2.5 py-1 text-xs font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring ${
             estado === 'Completada' ? 'bg-green-100 text-green-700' :
             estado === 'Pendiente' ? 'bg-yellow-100 text-yellow-700' :
@@ -213,6 +260,16 @@ export function Ventas() {
 
   const handleEstadoChangeRequest = (venta: Venta, nuevoEstado: string) => {
     if (venta.estado === nuevoEstado) return;
+    if (isVentaEstadoFinal(venta.estado)) {
+      showAlert({
+        title: 'Estado bloqueado',
+        description: 'Una venta en estado Completada o Cancelada no se puede modificar.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
 
     setPendingStateChange({
       venta,
@@ -224,6 +281,18 @@ export function Ventas() {
 
   const handleConfirmEstadoChange = async () => {
     if (!pendingStateChange) return;
+    if (isVentaEstadoFinal(pendingStateChange.from)) {
+      setPendingStateChange(null);
+      setStateChangeReason('');
+      showAlert({
+        title: 'Estado bloqueado',
+        description: 'Una venta en estado Completada o Cancelada no se puede modificar.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
 
     if (pendingStateChange.to === 'Cancelada' && stateChangeReason.trim().length < 10) {
       showAlert({
@@ -301,18 +370,79 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
   };
 
   const handleAddItem = () => {
-    if (currentItem.producto && currentItem.cantidad > 0 && currentItem.precio_unitario > 0) {
-      setFormData({
-        ...formData,
-        items: [...formData.items, { 
-          producto: currentItem.producto,
-          cantidad: currentItem.cantidad, 
-          precio_unitario: currentItem.precio_unitario,
-          subtotal: currentItem.cantidad * currentItem.precio_unitario 
-        }]
+    if (!currentItem.producto || !currentItem.producto_id) {
+      showAlert({
+        title: 'Producto requerido',
+        description: 'Selecciona un producto antes de agregar líneas.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
       });
-      setCurrentItem({ producto: '', producto_id: '', cantidad: 0, precio_unitario: 0 });
+      return;
     }
+
+    const productoSeleccionado = productos.find((p) => p.id.toString() === currentItem.producto_id);
+    if (!productoSeleccionado) {
+      return;
+    }
+
+    const cantidadParsed = Number(currentItem.cantidad);
+    if (!Number.isFinite(cantidadParsed) || cantidadParsed <= 0 || !Number.isInteger(cantidadParsed)) {
+      showAlert({
+        title: 'Cantidad inválida',
+        description: 'Indica una cantidad entera mayor que cero.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
+      return;
+    }
+
+    if (currentItem.precio_unitario <= 0) {
+      return;
+    }
+
+    const stockTotal = Number(productoSeleccionado.stock || 0);
+    const cantidadYaEnLista = formData.items
+      .filter((i) => i.producto === productoSeleccionado.nombre)
+      .reduce((acc, i) => acc + i.cantidad, 0);
+    const disponible = stockTotal - cantidadYaEnLista;
+
+    if (disponible <= 0) {
+      showAlert({
+        title: 'Sin stock',
+        description: `No hay unidades disponibles de "${productoSeleccionado.nombre}".`,
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
+      return;
+    }
+
+    if (cantidadParsed > disponible) {
+      showAlert({
+        title: 'Stock insuficiente',
+        description: `Solo puedes vender hasta ${disponible} unidad${disponible !== 1 ? 'es' : ''} de "${productoSeleccionado.nombre}" (en inventario: ${stockTotal}).`,
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {}
+      });
+      return;
+    }
+
+    setFormData({
+      ...formData,
+      items: [
+        ...formData.items,
+        {
+          producto: currentItem.producto,
+          cantidad: cantidadParsed,
+          precio_unitario: currentItem.precio_unitario,
+          subtotal: cantidadParsed * currentItem.precio_unitario
+        }
+      ]
+    });
+    setCurrentItem({ producto: '', producto_id: '', cantidad: 0, precio_unitario: 0 });
   };
 
   const handleRemoveItem = (index: number) => {
@@ -337,6 +467,54 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
           return;
         }
 
+        const acumuladoPorProducto = new Map<number, { nombre: string; cantidad: number; stock: number }>();
+        for (const item of formData.items) {
+          const productoSel = productos.find((p) => p.nombre === item.producto);
+          if (!productoSel) {
+            showAlert({
+              title: 'Producto no encontrado',
+              description: `No se pudo validar el producto "${item.producto}". Recarga el listado e inténtalo de nuevo.`,
+              type: 'warning',
+              confirmText: 'Entendido',
+              onConfirm: () => {}
+            });
+            return;
+          }
+          const prev = acumuladoPorProducto.get(productoSel.id);
+          const cantidad = Number(item.cantidad);
+          if (!Number.isFinite(cantidad) || cantidad <= 0) {
+            showAlert({
+              title: 'Cantidad inválida',
+              description: 'Revisa las cantidades de cada línea.',
+              type: 'warning',
+              confirmText: 'Entendido',
+              onConfirm: () => {}
+            });
+            return;
+          }
+          acumuladoPorProducto.set(productoSel.id, {
+            nombre: productoSel.nombre,
+            cantidad: (prev?.cantidad ?? 0) + cantidad,
+            stock: Number(productoSel.stock || 0)
+          });
+        }
+
+        for (const [, row] of acumuladoPorProducto.entries()) {
+          if (row.stock < row.cantidad) {
+            showAlert({
+              title: row.stock <= 0 ? 'Sin stock' : 'Stock insuficiente',
+              description:
+                row.stock <= 0
+                  ? `"${row.nombre}" no tiene unidades disponibles en inventario.`
+                  : `Para "${row.nombre}" no alcanza el inventario: hay ${row.stock} unidad${row.stock !== 1 ? 'es' : ''} y la venta suma ${row.cantidad}.`,
+              type: 'warning',
+              confirmText: 'Entendido',
+              onConfirm: () => {}
+            });
+            return;
+          }
+        }
+
         const newVenta = {
           numero_venta: `VEN-${Date.now()}`,
           tipo: formData.tipo,
@@ -345,33 +523,30 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
           fecha: new Date().toISOString().split('T')[0],
           metodopago: formData.metodopago,
           total: formData.items.reduce((acc, item) => acc + item.subtotal, 0),
-          estado: 'Completada'
-        };
-
-        const createResult: any = await ventasAPI.create(newVenta);
-        const ventaId = Number(createResult?.id);
-
-        if (!ventaId) {
-          throw new Error('No se obtuvo el id de la venta creada');
-        }
-
-        await Promise.all(
-          formData.items.map((item) => {
+          estado: 'Completada',
+          items: formData.items.map((item) => {
             const productoSeleccionado = productos.find((p) => p.nombre === item.producto);
             if (!productoSeleccionado) {
               throw new Error(`No se pudo resolver el producto para el item: ${item.producto}`);
             }
-
-            return ventasAPI.addProducto({
-              ventaId,
+            return {
               productoId: Number(productoSeleccionado.id),
               cantidad: Number(item.cantidad),
-              precioUnitario: Number(item.precio_unitario),
-            });
+              precioUnitario: Number(item.precio_unitario)
+            };
           })
-        );
+        };
 
-        await loadVentas();
+        const createResult: unknown = await ventasAPI.createCompleta(newVenta);
+        const rawId = parseVentaCreacionId(createResult);
+
+        if (!Number.isFinite(rawId) || rawId <= 0) {
+          throw new Error('La venta no se registró: no hubo respuesta válida del servidor.');
+        }
+
+        await loadVentas({ rethrow: true });
+        await loadProductos({ rethrow: true });
+
         setIsModalOpen(false);
         setFormData({
           tipo: 'Directa',
@@ -382,16 +557,20 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         });
         showAlert({
           title: 'Éxito',
-          description: 'Venta guardada correctamente.',
+          description: `Venta #${rawId} guardada correctamente.`,
           type: 'success',
           confirmText: 'Entendido',
           onConfirm: () => {}
         });
-      } catch (error) {
+      } catch (error: unknown) {
         console.error('Error al guardar venta:', error);
+        const mensaje =
+          error && typeof error === 'object' && 'message' in error
+            ? String((error as { message?: string }).message)
+            : 'No se pudo guardar la venta.';
         showAlert({
           title: 'Error',
-          description: 'No se pudo guardar la venta.',
+          description: mensaje,
           type: 'danger',
           confirmText: 'Entendido',
           onConfirm: () => {}
@@ -411,6 +590,22 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
   const handleProductoChange = (productoId: string) => {
     const productoSeleccionado = productos.find(p => p.id.toString() === productoId);
     if (productoSeleccionado) {
+      if (Number(productoSeleccionado.stock || 0) <= 0) {
+        showAlert({
+          title: 'Sin stock',
+          description: `"${productoSeleccionado.nombre}" no tiene unidades disponibles en inventario.`,
+          type: 'warning',
+          confirmText: 'Entendido',
+          onConfirm: () => {}
+        });
+        setCurrentItem({
+          ...currentItem,
+          producto_id: '',
+          producto: '',
+          precio_unitario: 0
+        });
+        return;
+      }
       setCurrentItem({
         ...currentItem,
         producto_id: productoId,
@@ -730,6 +925,15 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                 disabled
               />
             </div>
+
+            {disponibleParaLineaActual !== null ? (
+              <p className="text-xs text-muted-foreground">
+                Puedes agregar hasta {disponibleParaLineaActual.disponible} unidad
+                {disponibleParaLineaActual.disponible !== 1 ? 'es' : ''} (
+                inventario actual: {disponibleParaLineaActual.stock}
+                ).
+              </p>
+            ) : null}
 
             <Button type="button" onClick={handleAddItem} icon={<Plus className="w-4 h-4" />}>
               Agregar Producto
