@@ -5,7 +5,11 @@ import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
 import { Plus, FileText, Search, RotateCcw, X } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
-import { produccion as produccionAPI, productos as productosAPI } from '../../../services/api';
+import {
+  produccion as produccionAPI,
+  productos as productosAPI,
+  usuarios as usuariosAPI,
+} from '../../../services/api';
 import { downloadPdfText } from '../../../utils/pdf';
 
 interface ProductionItem {
@@ -38,6 +42,13 @@ interface OrdenProduccion {
 interface ProductoOption {
   id: number;
   nombre: string;
+}
+
+interface ProductorOption {
+  id: number;
+  nombre: string;
+  apellido: string;
+  rol?: string;
 }
 
 interface StateChangeRequest {
@@ -75,6 +86,7 @@ export function Produccion() {
   // Declarar todos los estados primero
   const [produccion, setProduccion] = useState<OrdenProduccion[]>([]);
   const [productos, setProductos] = useState<ProductoOption[]>([]);
+  const [productores, setProductores] = useState<ProductorOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({
     productor: '',
@@ -112,6 +124,7 @@ export function Produccion() {
   useEffect(() => {
     loadProduccion();
     loadProductos();
+    loadProductores();
   }, []);
 
   useEffect(() => {
@@ -144,6 +157,35 @@ export function Produccion() {
     } catch (error) {
       console.error('Error al cargar productos para producción:', error);
       setProductos([]);
+    }
+  };
+
+  const loadProductores = async () => {
+    try {
+      // Trae todos los usuarios y filtramos por rol Productor activos
+      const data = await usuariosAPI.getAll();
+      const list: ProductorOption[] = (Array.isArray(data) ? data : [])
+        .map((user: any) => ({
+          id: Number(user?.id),
+          nombre: String(user?.nombre || '').trim(),
+          apellido: String(user?.apellido || '').trim(),
+          rol: String(user?.rol || user?.rol_nombre || '').trim(),
+          estado: String(user?.estado || '').trim(),
+        }))
+        .filter((user: any) => {
+          if (!user.id || !user.nombre) return false;
+          if (user.rol.toLowerCase() !== 'productor') return false;
+          if (user.estado && user.estado.toLowerCase() !== 'activo') return false;
+          return true;
+        })
+        .map(({ id, nombre, apellido, rol }) => ({ id, nombre, apellido, rol }))
+        .sort((a, b) =>
+          `${a.nombre} ${a.apellido}`.localeCompare(`${b.nombre} ${b.apellido}`, 'es')
+        );
+      setProductores(list);
+    } catch (error) {
+      console.error('Error al cargar productores:', error);
+      setProductores([]);
     }
   };
 
@@ -803,13 +845,18 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
               type="select"
               value={formData.responsable}
               onChange={(value) => setFormData({ ...formData, responsable: value as string })}
-              options={[
-                { value: 'Carlos Gómez', label: 'Carlos Gómez' },
-                { value: 'María Rodríguez', label: 'María Rodríguez' },
-                { value: 'Juan Pérez', label: 'Juan Pérez' },
-                { value: 'Ana López', label: 'Ana López' },
-                { value: 'Luis Ramírez', label: 'Luis Ramírez' }
-              ]}
+              options={
+                productores.length > 0
+                  ? productores.map((user) => {
+                      const fullName = `${user.nombre} ${user.apellido}`.trim();
+                      return {
+                        value: fullName,
+                        label: fullName,
+                      };
+                    })
+                  : [{ value: '', label: 'No hay usuarios con rol Productor activos' }]
+              }
+              placeholder="Seleccionar productor"
               required
             />
             

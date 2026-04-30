@@ -112,13 +112,34 @@ export const apiCall = async (
 
         const result = await response.json();
 
-        // El backend devuelve { success: true, data: [...] }
-        // Extraemos solo el campo 'data' para los componentes
-        if (result.success && result.data !== undefined) {
-          return result.data;
+        // Algún servidor responde 200 con body { success: false } (debemos tratarlo como error)
+        if (result !== null && typeof result === 'object' && !Array.isArray(result)) {
+          if ('success' in result && result.success === false) {
+            let errorMessage = 'La solicitud no se completó correctamente.';
+            if (typeof (result as any).message === 'string' && (result as any).message.trim()) {
+              errorMessage = (result as any).message.trim();
+            }
+            const logicalError: any = new Error(errorMessage);
+            logicalError.isHttpError = true;
+            logicalError.status = response.status;
+            logicalError.message = errorMessage;
+            if (response.status === 401) {
+              notifyUnauthorizedListeners();
+            }
+            throw logicalError;
+          }
+
+          /**
+           * Listados típicos: { success: true, data: [...] } → devolver solo la lista.
+           * Alta con id raíz { success: true, id: n }: no hacer unwrap sobre `data` o el cliente pierde id.
+           */
+          const hasExplicitId =
+            Object.prototype.hasOwnProperty.call(result, 'id') && (result as { id?: unknown }).id != null;
+          if (result.success === true && result.data !== undefined && !hasExplicitId) {
+            return result.data;
+          }
         }
 
-        // Si no tiene la estructura esperada, devolver el resultado completo
         return result;
       } catch (error) {
         if ((error as any)?.isHttpError) {
@@ -397,6 +418,30 @@ const mergeWithCurrent = async (endpoint: string, patch: any) => {
   }
 };
 
+// ==================== CATÁLOGO PÚBLICO (sin JWT) ====================
+export type PublicCatalogProducto = {
+  id: number;
+  nombre: string;
+  descripcion: string;
+  precio: number;
+  imagen_url: string;
+  categoria: string;
+};
+
+export type PublicCatalogCategoria = {
+  id: number;
+  nombre: string;
+};
+
+export type PublicCatalogoResponse = {
+  productos: PublicCatalogProducto[];
+  categorias: PublicCatalogCategoria[];
+};
+
+export const publicCatalog = {
+  getCatalogo: (): Promise<PublicCatalogoResponse> => apiCall('/api/public/catalogo'),
+};
+
 // ==================== CATEGORÍAS ====================
 export const categorias = {
   getAll: () => apiCall('/api/categorias'),
@@ -556,6 +601,20 @@ export const ventas = {
     total?: number;
     estado?: string;
   }) => apiCall('/api/ventas', 'POST', normalizeVentaPayload(data)),
+  createCompleta: (data: {
+    numero_venta: string;
+    tipo: string;
+    cliente_id: number;
+    pedido_id?: number | null;
+    fecha: string;
+    metodopago: string;
+    total?: number;
+    estado?: string;
+    items: Array<{ productoId: number; cantidad: number; precioUnitario: number }>;
+  }) => {
+    const { items, ...venta } = data;
+    return apiCall('/api/ventas', 'POST', { ...normalizeVentaPayload(venta), items });
+  },
   addProducto: (data: {
     ventaId: number;
     productoId: number;
@@ -645,6 +704,7 @@ export const compras = {
     productoId: number;
     cantidad: number;
     precioUnitario: number;
+    porcentajeGanancia?: number;
     permisoExtraordinario?: boolean;
     motivoPermiso?: string;
   }) => apiCall('/api/compras/producto', 'POST', data),
@@ -814,7 +874,7 @@ export const usuarios = {
     apiCall(`/api/usuarios/${id}/reset-password-forzado`, 'POST', data),
   delete: (
     id: number,
-    data?: { motivo?: string; mode?: 'logical' | 'physical'; omit_validaciones?: boolean }
+    data?: { motivo?: string }
   ) => apiCall(`/api/usuarios/${id}`, 'DELETE', data),
 };
 

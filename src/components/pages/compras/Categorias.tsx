@@ -12,6 +12,7 @@ interface Categoria {
   nombre: string;
   descripcion: string;
   productos: number;
+  cantidad_productos?: number;
   estado: 'Activo' | 'Inactivo';
 }
 
@@ -94,8 +95,15 @@ export function Categorias() {
     { key: 'descripcion', label: 'Descripcion' },
     {
       key: 'productos',
-      label: 'Productos',
-      render: (value: number) => `${value} producto${value !== 1 ? 's' : ''}`,
+      label: 'Cantidad productos',
+      render: (value: number, row: Categoria) => {
+        const total = Number.isFinite(Number(value))
+          ? Number(value)
+          : Number.isFinite(Number(row.cantidad_productos))
+          ? Number(row.cantidad_productos)
+          : 0;
+        return `${total} producto${total !== 1 ? 's' : ''}`;
+      },
     },
     {
       key: 'estado',
@@ -136,7 +144,11 @@ export function Categorias() {
   };
 
   const handleDelete = (categoria: Categoria) => {
-    if (categoria.productos > 0) {
+    const totalProductos = Number.isFinite(Number(categoria.productos))
+      ? Number(categoria.productos)
+      : Number(categoria.cantidad_productos || 0);
+
+    if (totalProductos > 0) {
       showAlert({
         title: 'No se puede eliminar',
         description: 'No se puede eliminar una categoria con productos asociados.',
@@ -362,7 +374,17 @@ export function Categorias() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Productos Asociados</p>
-                <p>{selectedCategoria.productos} producto{selectedCategoria.productos !== 1 ? 's' : ''}</p>
+                <p>
+                  {(Number.isFinite(Number(selectedCategoria.productos))
+                    ? Number(selectedCategoria.productos)
+                    : Number(selectedCategoria.cantidad_productos || 0))}{' '}
+                  producto
+                  {(Number.isFinite(Number(selectedCategoria.productos))
+                    ? Number(selectedCategoria.productos)
+                    : Number(selectedCategoria.cantidad_productos || 0)) !== 1
+                    ? 's'
+                    : ''}
+                </p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Estado</p>

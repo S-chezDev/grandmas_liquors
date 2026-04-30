@@ -344,7 +344,7 @@ export function Productos() {
         nombre: formData.nombre,
         categoria_id: Number(formData.categoria_id),
         descripcion: formData.descripcion,
-        precio: Number(formData.precio),
+        precio: selectedProducto ? Number(formData.precio) : 0,
         stock: Number(formData.stock),
         stock_minimo: Number(formData.stock_minimo),
         imagen_url: formData.imagen_url || undefined,
@@ -501,14 +501,24 @@ export function Productos() {
               required
             />
 
-            <FormField
-              label="Precio"
-              name="precio"
-              type="number"
-              value={formData.precio}
-              onChange={(value) => setFormData((current) => ({ ...current, precio: Number(value) }))}
-              required
-            />
+            {selectedProducto ? (
+              <FormField
+                label="Precio de venta"
+                name="precio"
+                type="number"
+                value={formData.precio}
+                onChange={(value) => setFormData((current) => ({ ...current, precio: Number(value) }))}
+                required
+              />
+            ) : (
+              <div className="rounded-lg border border-dashed border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                <p className="font-medium text-foreground">Precio de venta</p>
+                <p className="mt-1 text-xs">
+                  Se asigna al <strong>recibir una compra</strong>: indica el costo unitario y el % de ganancia en la orden
+                  de compra.
+                </p>
+              </div>
+            )}
 
             <FormField
               label="Stock Actual"

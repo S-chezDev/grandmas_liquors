@@ -3,23 +3,58 @@ import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, Truck, FileText, Search, RotateCcw } from 'lucide-react';
+import { Plus, FileText, Search, RotateCcw } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
-import { entregas_insumos as entregasAPI } from '../../../services/api';
+import {
+  entregas_insumos as entregasAPI,
+  insumos as insumosAPI,
+  usuarios as usuariosAPI,
+} from '../../../services/api';
 import { downloadPdfText } from '../../../utils/pdf';
 
 interface EntregaInsumo {
   id: string;
   numero_entrega: string;
+  insumo_id?: number;
+  insumo: string;
+  insumo_nombre?: string;
+  cantidad: number;
+  unidad: string;
+  operario: string;
+  fecha: string;
+  hora: string;
+}
+
+interface InsumoOption {
+  id: number;
+  nombre: string;
+  unidad?: string;
+  estado?: string;
+}
+
+interface OperarioOption {
+  id: number;
+  nombre: string;
+  apellido: string;
+  rol?: string;
+  estado?: string;
+}
+
+interface EntregaInsumoForm {
+  numero_entrega: string;
+  insumo_id: number;
   insumo: string;
   cantidad: number;
   unidad: string;
+  operario: string;
   fecha: string;
   hora: string;
 }
 
 export function Insumos() {
   const [entregas, setEntregas] = useState<EntregaInsumo[]>([]);
+  const [insumosList, setInsumosList] = useState<InsumoOption[]>([]);
+  const [operarios, setOperarios] = useState<OperarioOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({
     id: '',
@@ -59,6 +94,8 @@ export function Insumos() {
 
   useEffect(() => {
     loadEntregas();
+    loadInsumos();
+    loadOperarios();
   }, []);
 
   const loadEntregas = async () => {
@@ -78,6 +115,54 @@ export function Insumos() {
       setLoading(false);
     }
   };
+
+  const loadInsumos = async () => {
+    try {
+      const data = await insumosAPI.getAll();
+      const normalized = (Array.isArray(data) ? data : [])
+        .map((insumo: any) => ({
+          id: Number(insumo?.id),
+          nombre: String(insumo?.nombre || '').trim(),
+          unidad: String(insumo?.unidad || '').trim(),
+          estado: String(insumo?.estado || '').trim(),
+        }))
+        .filter((insumo) => insumo.id > 0 && insumo.nombre)
+        .filter((insumo) => !insumo.estado || insumo.estado.toLowerCase() === 'activo');
+      setInsumosList(normalized);
+    } catch (error) {
+      console.error('Error al cargar insumos:', error);
+      setInsumosList([]);
+    }
+  };
+
+  const loadOperarios = async () => {
+    try {
+      // Trae todos los usuarios y filtramos por rol Asesor o Productor
+      const data = await usuariosAPI.getAll();
+      const list: OperarioOption[] = (Array.isArray(data) ? data : [])
+        .map((user: any) => ({
+          id: Number(user?.id),
+          nombre: String(user?.nombre || '').trim(),
+          apellido: String(user?.apellido || '').trim(),
+          rol: String(user?.rol || user?.rol_nombre || '').trim(),
+          estado: String(user?.estado || '').trim(),
+        }))
+        .filter((user) => {
+          if (!user.id || !user.nombre) return false;
+          const rol = user.rol.toLowerCase();
+          if (rol !== 'asesor' && rol !== 'productor') return false;
+          if (user.estado && user.estado.toLowerCase() !== 'activo') return false;
+          return true;
+        })
+        .sort((a, b) =>
+          `${a.nombre} ${a.apellido}`.localeCompare(`${b.nombre} ${b.apellido}`, 'es')
+        );
+      setOperarios(list);
+    } catch (error) {
+      console.error('Error al cargar operarios:', error);
+      setOperarios([]);
+    }
+  };
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
@@ -85,6 +170,7 @@ export function Insumos() {
   const [selectedEntrega, setSelectedEntrega] = useState<EntregaInsumo | null>(null);
   const [formData, setFormData] = useState<EntregaInsumoForm>({
     numero_entrega: '',
+    insumo_id: 0,
     insumo: '',
     cantidad: 0,
     unidad: '',
@@ -136,6 +222,7 @@ export function Insumos() {
     setSelectedEntrega(null);
     setFormData({
       numero_entrega: `ENT-${Date.now()}`,
+      insumo_id: 0,
       insumo: '',
       cantidad: 0,
       unidad: 'Unidades',
@@ -144,6 +231,25 @@ export function Insumos() {
       hora: new Date().toTimeString().slice(0, 5)
     });
     setIsModalOpen(true);
+  };
+
+  const handleInsumoChange = (insumoIdValue: string) => {
+    const insumoId = Number(insumoIdValue);
+    const insumoSeleccionado = insumosList.find((i) => i.id === insumoId);
+    if (insumoSeleccionado) {
+      setFormData((current) => ({
+        ...current,
+        insumo_id: insumoSeleccionado.id,
+        insumo: insumoSeleccionado.nombre,
+        unidad: insumoSeleccionado.unidad || current.unidad,
+      }));
+    } else {
+      setFormData((current) => ({
+        ...current,
+        insumo_id: 0,
+        insumo: '',
+      }));
+    }
   };
 
   const handleViewDetail = (entrega: EntregaInsumo) => {
@@ -197,12 +303,58 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!formData.insumo_id || formData.insumo_id <= 0) {
+      showAlert({
+        title: 'Insumo requerido',
+        description: 'Debes seleccionar un insumo del catálogo.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
+    if (!formData.operario) {
+      showAlert({
+        title: 'Operario requerido',
+        description: 'Debes seleccionar un operario responsable (rol Asesor o Productor).',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
+
     try {
-      await entregasAPI.create(formData);
+      await entregasAPI.create({
+        numero_entrega: formData.numero_entrega,
+        insumo_id: formData.insumo_id,
+        cantidad: Number(formData.cantidad),
+        unidad: formData.unidad,
+        operario: formData.operario,
+        fecha: formData.fecha,
+        hora: formData.hora,
+      });
       await loadEntregas();
       setIsModalOpen(false);
+      showAlert({
+        title: 'Entrega registrada',
+        description: 'La entrega de insumo se registró correctamente.',
+        type: 'success',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
     } catch (error) {
       console.error('Error al crear entrega:', error);
+      showAlert({
+        title: 'Error',
+        description:
+          (error as Error)?.message || 'No se pudo registrar la entrega de insumo.',
+        type: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
     }
   };
 
@@ -284,34 +436,43 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         <Form onSubmit={handleSubmit}>
           <div className="grid grid-cols-2 gap-4">
             <FormField
-              label="Producto"
-              name="insumo"
+              label="Insumo"
+              name="insumo_id"
               type="select"
-              value={formData.insumo}
-              onChange={(value) => setFormData({ ...formData, insumo: value as string })}
-              options={[
-                { value: 'Botellas 750ml', label: 'Botellas 750ml' },
-                { value: 'Botellas 375ml', label: 'Botellas 375ml' },
-                { value: 'Etiquetas personalizadas', label: 'Etiquetas personalizadas' },
-                { value: 'Tapas de seguridad', label: 'Tapas de seguridad' },
-                { value: 'Cajas de empaque', label: 'Cajas de empaque' }
-              ]}
+              value={formData.insumo_id || ''}
+              onChange={(value) => handleInsumoChange(String(value))}
+              options={
+                insumosList.length > 0
+                  ? insumosList.map((insumo) => ({
+                      value: String(insumo.id),
+                      label: insumo.unidad
+                        ? `${insumo.nombre} (${insumo.unidad})`
+                        : insumo.nombre,
+                    }))
+                  : [{ value: '', label: 'No hay insumos registrados' }]
+              }
+              placeholder="Seleccionar insumo"
               required
             />
-            
+
             <FormField
-              label="Operario"
+              label="Operario responsable"
               name="operario"
               type="select"
               value={formData.operario}
               onChange={(value) => setFormData({ ...formData, operario: value as string })}
-              options={[
-                { value: 'Carlos Gómez', label: 'Carlos Gómez' },
-                { value: 'María Rodríguez', label: 'María Rodríguez' },
-                { value: 'Juan Pérez', label: 'Juan Pérez' },
-                { value: 'Ana López', label: 'Ana López' },
-                { value: 'Luis Ramírez', label: 'Luis Ramírez' }
-              ]}
+              options={
+                operarios.length > 0
+                  ? operarios.map((user) => {
+                      const fullName = `${user.nombre} ${user.apellido}`.trim();
+                      return {
+                        value: fullName,
+                        label: `${fullName}${user.rol ? ` · ${user.rol}` : ''}`,
+                      };
+                    })
+                  : [{ value: '', label: 'No hay usuarios Asesor/Productor activos' }]
+              }
+              placeholder="Seleccionar operario"
               required
             />
             

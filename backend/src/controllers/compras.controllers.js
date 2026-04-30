@@ -30,8 +30,10 @@ module.exports = {
   },
   addProducto: async (req, res) => {
     try {
-      const { compraId, productoId, cantidad, precioUnitario, permisoExtraordinario, motivoPermiso } = req.body;
+      const { compraId, productoId, cantidad, precioUnitario, porcentajeGanancia, permisoExtraordinario, motivoPermiso } =
+        req.body;
       await models.Compras.addDetalle(compraId, productoId, cantidad, precioUnitario, {
+        porcentajeGanancia,
         permisoExtraordinario,
         motivoPermiso,
       });

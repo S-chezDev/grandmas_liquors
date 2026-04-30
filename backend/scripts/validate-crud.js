@@ -661,12 +661,10 @@ const main = async () => {
 
     await api('DELETE', `/api/usuarios/${id}`, {
       motivo: 'Eliminacion de usuario de prueba automatizada',
-      mode: 'logical',
-      omit_validaciones: true,
     });
 
-    const deleted = await getOne("SELECT estado FROM usuarios WHERE id = $1", [id]);
-    assert(deleted?.estado === 'Eliminado', 'Usuario no quedó en estado Eliminado');
+    const deleted = await getOne("SELECT id FROM usuarios WHERE id = $1", [id]);
+    assert(!deleted, 'Usuario no fue eliminado físicamente de la base de datos');
   }, report);
 
   const passed = report.filter((x) => x.ok).length;

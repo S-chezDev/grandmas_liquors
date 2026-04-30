@@ -21,7 +21,7 @@ interface Pedido {
 }
 
 interface Producto {
-  id: string;
+  id: string | number;
   nombre: string;
   precio: number;
 }
@@ -41,6 +41,8 @@ interface StateChangeRequest {
 }
 
 export function Pedidos() {
+  const isPedidoEstadoFinal = (estado: Pedido['estado'] | string) =>
+    estado === 'Completado' || estado === 'Cancelado';
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({
@@ -142,7 +144,7 @@ export function Pedidos() {
         <select
           value={estado}
           onChange={(event) => handleEstadoChangeRequest(pedido, event.target.value as Pedido['estado'])}
-          disabled={stateChangeSaving}
+          disabled={stateChangeSaving || isPedidoEstadoFinal(estado)}
           className={`min-h-8 rounded-lg border border-transparent px-2.5 py-1 text-xs font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring ${
             estado === 'Completado' ? 'bg-green-100 text-green-700' :
             estado === 'En Proceso' ? 'bg-blue-100 text-blue-700' :
@@ -202,14 +204,14 @@ export function Pedidos() {
     const newProductos = [...productosEnPedido];
     
     if (field === 'producto_id') {
-      const producto = productosDisponibles.find(p => p.id === value);
+      const producto = productosDisponibles.find((p) => String(p.id) === String(value));
       if (producto) {
         newProductos[index] = {
           ...newProductos[index],
-          producto_id: producto.id,
+          producto_id: String(producto.id),
           nombre: producto.nombre,
-          precio_unitario: producto.precio,
-          subtotal: producto.precio * newProductos[index].cantidad
+          precio_unitario: Number(producto.precio) || 0,
+          subtotal: (Number(producto.precio) || 0) * newProductos[index].cantidad
         };
       }
     } else if (field === 'cantidad') {
@@ -315,6 +317,16 @@ export function Pedidos() {
 
   const handleEstadoChangeRequest = (pedido: Pedido, nuevoEstado: Pedido['estado']) => {
     if (pedido.estado === nuevoEstado) return;
+    if (isPedidoEstadoFinal(pedido.estado)) {
+      showAlert({
+        title: 'Estado bloqueado',
+        description: 'Un pedido en estado Completado o Cancelado no se puede modificar.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
 
     setPendingStateChange({
       pedido,
@@ -326,6 +338,18 @@ export function Pedidos() {
 
   const handleConfirmEstadoChange = async () => {
     if (!pendingStateChange) return;
+    if (isPedidoEstadoFinal(pendingStateChange.from)) {
+      setPendingStateChange(null);
+      setStateChangeReason('');
+      showAlert({
+        title: 'Estado bloqueado',
+        description: 'Un pedido en estado Completado o Cancelado no se puede modificar.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
 
     if (pendingStateChange.to === 'Cancelado' && stateChangeReason.trim().length < 10) {
       showAlert({
@@ -697,7 +721,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                           >
                             <option value="">Seleccionar producto...</option>
                             {productosDisponibles.map(p => (
-                              <option key={p.id} value={p.id}>{p.nombre}</option>
+                              <option key={String(p.id)} value={String(p.id)}>{p.nombre}</option>
                             ))}
                           </select>
                         </td>

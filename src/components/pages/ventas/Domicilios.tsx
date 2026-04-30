@@ -29,6 +29,8 @@ interface StateChangeRequest {
 }
 
 export function Domicilios() {
+  const isDomicilioEstadoFinal = (estado: Domicilio['estado'] | string) => estado === 'Entregado';
+  type PedidoRow = { id: number; numero_pedido?: string; cliente?: string; estado?: string };
   const [domicilios, setDomicilios] = useState<Domicilio[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({
@@ -38,6 +40,7 @@ export function Domicilios() {
     estado: ''
   });
   const [pedidosDisponibles, setPedidosDisponibles] = useState<Array<{value: string, label: string}>>([]);
+  const [pedidosRaw, setPedidosRaw] = useState<PedidoRow[]>([]);
   const [selectedDomicilio, setSelectedDomicilio] = useState<Domicilio | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -77,14 +80,22 @@ export function Domicilios() {
   const loadPedidos = async () => {
     try {
       const data = await pedidosAPI.getAll();
-      setPedidosDisponibles(data.map((p: any) => ({
-        value: p.id.toString(),
-        label: `${p.numero_pedido || p.id} - ${p.cliente || 'Sin cliente'}`
-      })));
+      setPedidosRaw(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error cargando pedidos:', error);
     }
   };
+
+  useEffect(() => {
+    const pedidosConDomicilio = new Set(domicilios.map((d) => Number(d.pedido_id)).filter((id) => Number.isFinite(id)));
+    const opciones = pedidosRaw
+      .filter((p) => !pedidosConDomicilio.has(Number(p.id)))
+      .map((p) => ({
+        value: String(p.id),
+        label: `${p.numero_pedido || p.id} - ${p.cliente || 'Sin cliente'}`,
+      }));
+    setPedidosDisponibles(opciones);
+  }, [domicilios, pedidosRaw]);
 
   const columns: Column[] = [
     { key: 'numero_domicilio', label: 'ID Domicilio' },
@@ -101,7 +112,7 @@ export function Domicilios() {
         <select
           value={estado}
           onChange={(e) => handleEstadoChangeRequest(domicilio, e.target.value as Domicilio['estado'])}
-          disabled={stateChangeSaving}
+          disabled={stateChangeSaving || isDomicilioEstadoFinal(estado)}
           className={`min-h-8 rounded-lg border border-transparent px-2.5 py-1 text-xs font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring ${
             estado === 'Entregado' ? 'bg-green-100 text-green-700' :
             estado === 'En Camino' ? 'bg-blue-100 text-blue-700' :
@@ -141,6 +152,16 @@ export function Domicilios() {
 
   const handleEstadoChangeRequest = (domicilio: Domicilio, nuevoEstado: Domicilio['estado']) => {
     if (domicilio.estado === nuevoEstado) return;
+    if (isDomicilioEstadoFinal(domicilio.estado)) {
+      showAlert({
+        title: 'Estado bloqueado',
+        description: 'Un domicilio en estado Entregado no se puede modificar.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
 
     setPendingStateChange({
       domicilio,
@@ -152,6 +173,18 @@ export function Domicilios() {
 
   const handleConfirmEstadoChange = async () => {
     if (!pendingStateChange) return;
+    if (isDomicilioEstadoFinal(pendingStateChange.from)) {
+      setPendingStateChange(null);
+      setStateChangeReason('');
+      showAlert({
+        title: 'Estado bloqueado',
+        description: 'Un domicilio en estado Entregado no se puede modificar.',
+        type: 'warning',
+        confirmText: 'Entendido',
+        onConfirm: () => {},
+      });
+      return;
+    }
 
     if (pendingStateChange.to === 'Cancelado' && stateChangeReason.trim().length < 10) {
       showAlert({
@@ -220,6 +253,7 @@ export function Domicilios() {
         try {
           await domiciliosAPI.delete(Number(domicilio.id));
           await loadDomicilios();
+          await loadPedidos();
         } catch (error) {
           console.error('Error eliminando domicilio:', error);
         }
@@ -247,6 +281,7 @@ export function Domicilios() {
     try {
       await domiciliosAPI.create(createFormData);
       await loadDomicilios();
+      await loadPedidos();
       setIsCreateModalOpen(false);
       setCreateFormData({
         pedido_id: 0,

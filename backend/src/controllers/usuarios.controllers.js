@@ -14,7 +14,7 @@ module.exports = {
   getAll: async (req, res) => {
     try {
       const filters = {
-        includeDeleted: String(req.query?.include_deleted ?? 'true') !== 'false',
+        includeDeleted: String(req.query?.include_deleted ?? 'false') === 'true',
         globalQuery: typeof req.query?.q === 'string' ? req.query.q : '',
         rolId: req.query?.rol_id ? Number(req.query.rol_id) : null,
         estados: typeof req.query?.estados === 'string'
@@ -351,13 +351,12 @@ module.exports = {
       const result = await models.Usuarios.delete(req.params.id, {
         actor_id: req.user?.id || null,
         reason: motivo,
-        mode: req.body?.mode === 'physical' ? 'physical' : 'logical',
-        omit_validaciones: req.body?.omit_validaciones,
       });
-      const message = result?.mode === 'physical'
-        ? 'Usuario eliminado fisicamente y respaldado exitosamente'
-        : 'Usuario eliminado logicamente exitosamente';
-      res.json({ success: true, message, data: result });
+      res.json({
+        success: true,
+        message: 'Usuario eliminado exitosamente de la base de datos',
+        data: result,
+      });
     } catch (error) {
       res.status(error.statusCode || 500).json({
         success: false,

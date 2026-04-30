@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const { generateTempPassword } = require('../utils/credentials');
 
 let productoImageColumnReady = null;
+let categoriaProductCountColumnReady = null;
 
 const ensureProductoImageColumn = async () => {
   if (!productoImageColumnReady) {
@@ -14,6 +15,45 @@ const ensureProductoImageColumn = async () => {
   } catch (error) {
     // Ignore if table/column is not ready yet; create/update queries will still report precise errors.
   }
+};
+
+const syncCategoriaProductCount = async (categoriaId = null) => {
+  if (categoriaId === null || categoriaId === undefined) {
+    await pool.query(`
+      UPDATE categorias c
+      SET cantidad_productos = (
+        SELECT COUNT(*)
+        FROM productos p
+        WHERE p.categoria_id = c.id
+      )
+    `);
+    return;
+  }
+
+  await pool.query(
+    `UPDATE categorias c
+     SET cantidad_productos = (
+       SELECT COUNT(*)
+       FROM productos p
+       WHERE p.categoria_id = c.id
+     )
+     WHERE c.id = $1`,
+    [categoriaId]
+  );
+};
+
+const ensureCategoriaProductCountColumn = async () => {
+  if (!categoriaProductCountColumnReady) {
+    categoriaProductCountColumnReady = (async () => {
+      await pool.query(`
+        ALTER TABLE categorias
+        ADD COLUMN IF NOT EXISTS cantidad_productos INTEGER NOT NULL DEFAULT 0
+      `);
+      await syncCategoriaProductCount();
+    })();
+  }
+
+  await categoriaProductCountColumnReady;
 };
 
 const groupRowsBy = (rows, key) => {
@@ -37,15 +77,29 @@ const groupRowsBy = (rows, key) => {
 // ------- CATEGORÍAS -------
 const Categorias = {
   getAll: async () => {
-    const result = await pool.query('SELECT * FROM categorias ORDER BY nombre');
+    await ensureCategoriaProductCountColumn();
+    const result = await pool.query(`
+      SELECT c.*,
+             COALESCE(c.cantidad_productos, 0) AS productos
+      FROM categorias c
+      ORDER BY c.nombre
+    `);
     return result.rows;
   },
   getById: async (id) => {
-    const result = await pool.query('SELECT * FROM categorias WHERE id = $1', [id]);
+    await ensureCategoriaProductCountColumn();
+    const result = await pool.query(
+      `SELECT c.*,
+              COALESCE(c.cantidad_productos, 0) AS productos
+       FROM categorias c
+       WHERE c.id = $1`,
+      [id]
+    );
     return result.rows[0];
   },
   create: async (data) => {
     await ensureProductoImageColumn();
+    await ensureCategoriaProductCountColumn();
 
     const nombre = String(data?.nombre || '').trim();
     const descripcion = String(data?.descripcion || '').trim();
@@ -67,8 +121,8 @@ const Categorias = {
     }
 
     const result = await pool.query(
-      'INSERT INTO categorias (nombre, descripcion, estado) VALUES ($1, $2, $3) RETURNING id',
-      [nombre, descripcion || null, 'Activo']
+      'INSERT INTO categorias (nombre, descripcion, estado, cantidad_productos) VALUES ($1, $2, $3, $4) RETURNING id',
+      [nombre, descripcion || null, 'Activo', 0]
     );
     return result.rows[0].id;
   },
@@ -167,6 +221,7 @@ const Productos = {
     return result.rows;
   },
   create: async (data) => {
+    await ensureCategoriaProductCountColumn();
     const nombre = String(data?.nombre || '').trim();
     if (!nombre) {
       const error = new Error('El nombre del producto es obligatorio');
@@ -184,22 +239,27 @@ const Productos = {
       throw error;
     }
 
+    const precioInicial = Number(data?.precio);
+    const precioSeguro = Number.isFinite(precioInicial) && precioInicial >= 0 ? precioInicial : 0;
+
     const result = await pool.query(
       'INSERT INTO productos (nombre, categoria_id, descripcion, precio, stock, stock_minimo, imagen_url, estado) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
       [
         nombre,
         data.categoria_id,
         data.descripcion,
-        data.precio,
+        precioSeguro,
         data.stock || 0,
         data.stock_minimo || 10,
         data.imagen_url,
         'Activo',
       ]
     );
+    await syncCategoriaProductCount(data.categoria_id);
     return result.rows[0].id;
   },
   update: async (id, data) => {
+    await ensureCategoriaProductCountColumn();
     const nombre = String(data?.nombre || '').trim();
     if (!nombre) {
       const error = new Error('El nombre del producto es obligatorio');
@@ -217,6 +277,9 @@ const Productos = {
       throw error;
     }
 
+    const previous = await pool.query('SELECT categoria_id FROM productos WHERE id = $1', [id]);
+    const previousCategoriaId = previous.rows[0]?.categoria_id ?? null;
+
     await pool.query(
       `UPDATE productos
        SET nombre = $1,
@@ -230,6 +293,10 @@ const Productos = {
        WHERE id = $8`,
       [nombre, data.categoria_id, data.descripcion, data.precio, data.stock, data.stock_minimo, data.imagen_url, id]
     );
+    await syncCategoriaProductCount(data.categoria_id);
+    if (previousCategoriaId && Number(previousCategoriaId) !== Number(data.categoria_id)) {
+      await syncCategoriaProductCount(previousCategoriaId);
+    }
     return true;
   },
   updateStatus: async (id, data = {}) => {
@@ -266,8 +333,32 @@ const Productos = {
     return Productos.getById(id);
   },
   delete: async (id) => {
+    await ensureCategoriaProductCountColumn();
+    const previous = await pool.query('SELECT categoria_id FROM productos WHERE id = $1', [id]);
+    const previousCategoriaId = previous.rows[0]?.categoria_id ?? null;
     await pool.query('DELETE FROM productos WHERE id = $1', [id]);
+    if (previousCategoriaId) {
+      await syncCategoriaProductCount(previousCategoriaId);
+    }
     return true;
+  },
+  getPublicCatalog: async () => {
+    const categorias = await pool.query(`
+      SELECT DISTINCT c.id, c.nombre
+      FROM categorias c
+      INNER JOIN productos p ON p.categoria_id = c.id
+      WHERE p.estado = 'Activo' AND c.estado = 'Activo'
+      ORDER BY c.nombre
+    `);
+    const productos = await pool.query(`
+      SELECT p.id, p.nombre, p.descripcion, p.precio, p.imagen_url, c.nombre AS categoria
+      FROM productos p
+      INNER JOIN categorias c ON p.categoria_id = c.id
+      WHERE p.estado = 'Activo' AND c.estado = 'Activo'
+      ORDER BY p.nombre
+      LIMIT 200
+    `);
+    return { categorias: categorias.rows, productos: productos.rows };
   }
 };
 
@@ -1008,6 +1099,19 @@ const Pedidos = {
     return true;
   },
   update: async (id, data) => {
+    const current = await Pedidos.getById(id);
+    if (!current) {
+      const error = new Error('Pedido no encontrado');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (['Completado', 'Cancelado'].includes(String(current.estado || ''))) {
+      const error = new Error('El pedido ya está en estado final y no puede modificarse');
+      error.statusCode = 409;
+      throw error;
+    }
+
     await pool.query(
       'UPDATE pedidos SET numero_pedido = $1, fecha = $2, fecha_entrega = $3, detalles = $4, total = $5, estado = $6 WHERE id = $7',
       [data.numero_pedido, data.fecha, data.fecha_entrega, data.detalles, data.total, data.estado, id]
@@ -1019,6 +1123,90 @@ const Pedidos = {
     await pool.query('DELETE FROM pedidos WHERE id = $1', [id]);
     return true;
   }
+};
+
+/**
+ * Quita inventario del producto y registra línea en detalle_ventas (uso dentro de transacción).
+ */
+const aplicarDescuentoStockYLíneaDetalleVenta = async (
+  client,
+  ventaId,
+  productoId,
+  cantidadRaw,
+  precioUnitarioRaw,
+) => {
+  const qty = Number(cantidadRaw);
+  const price = Number(precioUnitarioRaw);
+
+  if (!Number.isFinite(qty) || qty <= 0 || !Number.isInteger(qty)) {
+    const error = new Error('La cantidad debe ser un número entero mayor a cero.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!Number.isFinite(price) || price <= 0) {
+    const error = new Error('El precio unitario debe ser un número mayor a cero.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!productoId) {
+    const error = new Error('producto_id inválido');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const pRes = await client.query(
+    `SELECT id, nombre, COALESCE(stock, 0)::bigint AS stock, estado
+     FROM productos WHERE id = $1 FOR UPDATE`,
+    [productoId],
+  );
+
+  if (!pRes.rows[0]) {
+    const error = new Error('Producto no encontrado');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const row = pRes.rows[0];
+  const nombre = String(row.nombre || '').trim() || `#${productoId}`;
+
+  if (String(row.estado || '').toLowerCase() !== 'activo') {
+    const error = new Error(`No se puede vender "${nombre}": el producto no está activo.`);
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const available = Number(row.stock || 0);
+  if (!Number.isFinite(available)) {
+    const error = new Error(`No hay stock disponible para "${nombre}".`);
+    error.statusCode = 409;
+    throw error;
+  }
+
+  if (available < qty) {
+    const mensaje =
+      available <= 0
+        ? `No hay stock disponible para "${nombre}".`
+        : `Stock insuficiente para "${nombre}". Disponible: ${available}, solicitado: ${qty}.`;
+    const error = new Error(mensaje);
+    error.statusCode = 409;
+    throw error;
+  }
+
+  await client.query(
+    `UPDATE productos SET stock = COALESCE(stock, 0) - $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+    [qty, productoId],
+  );
+
+  const subtotal = qty * price;
+  await client.query(
+    `INSERT INTO detalle_ventas (venta_id, producto_id, cantidad, precio_unitario, subtotal)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [ventaId, productoId, qty, price, subtotal],
+  );
+
+  return true;
 };
 
 // ------- VENTAS -------
@@ -1155,12 +1343,112 @@ const Ventas = {
     );
     return result.rows[0].id;
   },
+  /**
+   * Crea venta y todos sus ítems en una sola transacción (descuenta stock por línea).
+   */
+  createCompleta: async (data, detailLines) => {
+    await Ventas.validateClienteActivo(data.cliente_id);
+
+    if (!Array.isArray(detailLines) || detailLines.length === 0) {
+      const error = new Error('La venta debe incluir al menos un producto.');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const lines = [];
+    for (let index = 0; index < detailLines.length; index += 1) {
+      const raw = detailLines[index] || {};
+      const productoId = Number(raw.productoId ?? raw.producto_id);
+      const cantidad = Number(raw.cantidad);
+      const precioUnitario = Number(raw.precioUnitario ?? raw.precio_unitario);
+
+      if (!Number.isFinite(productoId) || productoId <= 0) {
+        const error = new Error(`Ítem ${index + 1}: producto inválido.`);
+        error.statusCode = 400;
+        throw error;
+      }
+
+      if (!Number.isFinite(cantidad) || cantidad <= 0 || !Number.isInteger(cantidad)) {
+        const error = new Error(`Ítem ${index + 1}: la cantidad debe ser un número entero mayor a cero.`);
+        error.statusCode = 400;
+        throw error;
+      }
+
+      if (!Number.isFinite(precioUnitario) || precioUnitario <= 0) {
+        const error = new Error(`Ítem ${index + 1}: precio unitario inválido.`);
+        error.statusCode = 400;
+        throw error;
+      }
+
+      lines.push({ productoId, cantidad, precioUnitario });
+    }
+
+    let totalCalculado = 0;
+    for (const line of lines) {
+      totalCalculado += line.cantidad * line.precioUnitario;
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const inserted = await client.query(
+        `INSERT INTO ventas (numero_venta, tipo, cliente_id, pedido_id, fecha, metodopago, total, estado)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id`,
+        [
+          data.numero_venta,
+          data.tipo,
+          data.cliente_id,
+          data.pedido_id,
+          data.fecha,
+          data.metodopago,
+          totalCalculado,
+          data.estado || 'Completada',
+        ],
+      );
+
+      const ventaId = inserted.rows[0].id;
+
+      for (const line of lines) {
+        await aplicarDescuentoStockYLíneaDetalleVenta(
+          client,
+          ventaId,
+          line.productoId,
+          line.cantidad,
+          line.precioUnitario,
+        );
+      }
+
+      await client.query('COMMIT');
+      return ventaId;
+    } catch (error) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (_) {
+        // ignore rollback errors
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
   addDetalle: async (ventaId, productoId, cantidad, precioUnitario) => {
-    const subtotal = cantidad * precioUnitario;
-    await pool.query(
-      'INSERT INTO detalle_ventas (venta_id, producto_id, cantidad, precio_unitario, subtotal) VALUES ($1, $2, $3, $4, $5)',
-      [ventaId, productoId, cantidad, precioUnitario, subtotal]
-    );
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await aplicarDescuentoStockYLíneaDetalleVenta(client, ventaId, Number(productoId), cantidad, precioUnitario);
+      await client.query('COMMIT');
+    } catch (error) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (_) {
+        // ignore
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
     return true;
   },
   update: async (id, data) => {
@@ -1168,6 +1456,12 @@ const Ventas = {
     if (!current) {
       const error = new Error('Venta no encontrada');
       error.statusCode = 404;
+      throw error;
+    }
+
+    if (['Completada', 'Cancelada'].includes(String(current.estado || ''))) {
+      const error = new Error('La venta ya está en estado final y no puede modificarse');
+      error.statusCode = 409;
       throw error;
     }
 
@@ -1281,6 +1575,13 @@ const Domicilios = {
     return result.rows;
   },
   create: async (data) => {
+    const existing = await Domicilios.getByPedido(data.pedido_id);
+    if (existing?.id) {
+      const error = new Error('El pedido ya tiene un domicilio asignado');
+      error.statusCode = 409;
+      throw error;
+    }
+
     const result = await pool.query(
       'INSERT INTO domicilios (numero_domicilio, pedido_id, cliente_id, direccion, repartidor, fecha, hora, estado, detalle) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id',
       [data.numero_domicilio, data.pedido_id, data.cliente_id, data.direccion, data.repartidor, data.fecha, data.hora, data.estado || 'Pendiente', data.detalle]
@@ -1288,6 +1589,19 @@ const Domicilios = {
     return result.rows[0].id;
   },
   update: async (id, data) => {
+    const current = await Domicilios.getById(id);
+    if (!current) {
+      const error = new Error('Domicilio no encontrado');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (String(current.estado || '') === 'Entregado') {
+      const error = new Error('El domicilio ya está entregado y no puede modificarse');
+      error.statusCode = 409;
+      throw error;
+    }
+
     await pool.query(
       'UPDATE domicilios SET repartidor = $1, fecha = $2, hora = $3, estado = $4, detalle = $5 WHERE id = $6',
       [data.repartidor, data.fecha, data.hora, data.estado, data.detalle, id]
@@ -1325,6 +1639,11 @@ const ensureComprasSchema = async () => {
   await pool.query(
     'CREATE INDEX IF NOT EXISTS idx_compras_estado_historial_compra_fecha ON compras_estado_historial(compra_id, created_at DESC)'
   );
+
+  await pool.query(`
+    ALTER TABLE detalle_compras
+      ADD COLUMN IF NOT EXISTS porcentaje_ganancia NUMERIC(12,2) DEFAULT 0
+  `);
 };
 
 const getProveedorActivo = async (proveedorId) => {
@@ -1438,7 +1757,7 @@ const Compras = {
         data.numero_compra,
         data.proveedor_id,
         data.fecha,
-        data.fecha_creacion,
+        data.fecha_creacion || data.fecha || new Date().toISOString().split('T')[0],
         data.subtotal,
         data.iva,
         data.total,
@@ -1507,29 +1826,23 @@ const Compras = {
       throw error;
     }
 
-    const precioContrato = Number(producto.precio || 0);
-    if (!Number.isFinite(precioContrato) || precioContrato <= 0) {
-      const error = new Error('El producto no tiene un precio de contrato válido');
-      error.statusCode = 409;
+    const pctRaw = options?.porcentajeGanancia;
+    const parsedPct = pctRaw === undefined || pctRaw === null || pctRaw === '' ? 0 : Number(pctRaw);
+    if (!Number.isFinite(parsedPct) || parsedPct < 0 || parsedPct > 1000) {
+      const error = new Error('El porcentaje de ganancia debe ser un número entre 0 y 1000');
+      error.statusCode = 400;
       throw error;
     }
 
-    if (Math.abs(parsedPrecioSolicitado - precioContrato) > 0.0001) {
-      const error = new Error('El precio unitario debe coincidir con el precio de contrato del producto');
-      error.statusCode = 409;
-      error.details = { precioContrato };
-      throw error;
-    }
-
-    const subtotal = parsedCantidad * precioContrato;
+    const subtotal = parsedCantidad * parsedPrecioSolicitado;
 
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
       await client.query(
-        'INSERT INTO detalle_compras (compra_id, producto_id, cantidad, precio_unitario, subtotal) VALUES ($1, $2, $3, $4, $5)',
-        [compraId, productoId, parsedCantidad, precioContrato, subtotal]
+        'INSERT INTO detalle_compras (compra_id, producto_id, cantidad, precio_unitario, subtotal, porcentaje_ganancia) VALUES ($1, $2, $3, $4, $5, $6)',
+        [compraId, productoId, parsedCantidad, parsedPrecioSolicitado, subtotal, parsedPct]
       );
 
       await client.query(
@@ -1575,10 +1888,10 @@ const Compras = {
 
     const applyReceiptStock = async (compraId) => {
       const detalleResult = await client.query(
-        `SELECT producto_id, SUM(cantidad)::int AS cantidad
+        `SELECT producto_id, cantidad, precio_unitario, COALESCE(porcentaje_ganancia, 0)::numeric AS pct
          FROM detalle_compras
          WHERE compra_id = $1
-         GROUP BY producto_id`,
+         ORDER BY id ASC`,
         [compraId]
       );
 
@@ -1588,10 +1901,13 @@ const Compras = {
         throw error;
       }
 
-      for (const detalle of detalleResult.rows) {
+      for (const row of detalleResult.rows) {
+        const costo = Number(row.precio_unitario);
+        const pct = Number(row.pct);
+        const precioVenta = Math.round(costo * (1 + (Number.isFinite(pct) ? pct : 0) / 100));
         await client.query(
-          'UPDATE productos SET stock = COALESCE(stock, 0) + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-          [Number(detalle.cantidad || 0), detalle.producto_id]
+          'UPDATE productos SET stock = COALESCE(stock, 0) + $1, precio = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3',
+          [Number(row.cantidad || 0), precioVenta, row.producto_id]
         );
       }
     };
@@ -1616,6 +1932,12 @@ const Compras = {
 
       if (normalizeStatus(compra.estado) === 'Recibida') {
         const error = new Error('La compra ya fue recibida y no puede modificarse');
+        error.statusCode = 409;
+        throw error;
+      }
+
+      if (normalizeStatus(compra.estado) === 'Cancelada' && requestedStatus !== 'Cancelada') {
+        const error = new Error('La compra ya fue cancelada y no puede reactivarse');
         error.statusCode = 409;
         throw error;
       }
@@ -3072,8 +3394,6 @@ const Usuarios = {
       throw error;
     }
 
-    const performPhysicalDelete = options.mode === 'physical';
-    const omitValidations = options.omit_validaciones === true || options.omit_validaciones === 'true';
     const impact = await getUserDeletionImpact(id);
 
     if (!impact) {
@@ -3082,80 +3402,39 @@ const Usuarios = {
       throw error;
     }
 
-    if (!omitValidations && impact.blockers.length > 0) {
+    if (impact.blockers.length > 0) {
       const error = new Error('No se puede eliminar el usuario porque tiene relaciones activas o transacciones recientes');
       error.statusCode = 409;
       error.details = { blockers: impact.blockers };
       throw error;
     }
 
-    if (performPhysicalDelete && !impact.canPhysicalDelete && !omitValidations) {
-      const error = new Error('La eliminacion fisica solo se permite despues de 90 dias inactivo');
-      error.statusCode = 409;
-      error.details = { daysInactive: impact.daysInactive };
-      throw error;
-    }
-
-    if (performPhysicalDelete) {
-      await ensureUserBackupTable();
-      await ensureUserSessionTable();
-      await ensureUserAuditTable();
-
-      await pool.query(
-        `INSERT INTO usuarios_backup (usuario_id, actor_id, reason, snapshot)
-         VALUES ($1, $2, $3, $4)`,
-        [id, options.actor_id ?? null, reason, JSON.stringify({ user: currentUser, impact })]
-      );
-
-      await pool.query('DELETE FROM usuarios_sesiones WHERE usuario_id = $1', [id]);
-      await pool.query('DELETE FROM usuarios WHERE id = $1', [id]);
-
-      await registerUserAudit({
-        usuarioId: Number(id),
-        accion: 'DELETE',
-        actorId: options.actor_id ?? null,
-        cambios: {
-          before: toUserSnapshot(currentUser),
-          after: null,
-          reason,
-          physicalDelete: true,
-          backupStored: true,
-          omitValidations,
-        },
-      });
-
-      return { mode: 'physical' };
-    }
-
-    if (String(currentUser.estado || '').toLowerCase() === 'eliminado') {
-      const error = new Error('El usuario ya fue eliminado');
-      error.statusCode = 409;
-      error.details = { reason: 'already_deleted' };
-      throw error;
-    }
+    await ensureUserBackupTable();
+    await ensureUserSessionTable();
+    await ensureUserAuditTable();
 
     await pool.query(
-      `UPDATE usuarios
-       SET estado = 'Eliminado',
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $1`,
-      [id]
+      `INSERT INTO usuarios_backup (usuario_id, actor_id, reason, snapshot)
+       VALUES ($1, $2, $3, $4)`,
+      [id, options.actor_id ?? null, reason, JSON.stringify({ user: currentUser, impact })]
     );
 
-    const updatedUser = await Usuarios.getById(id);
+    await pool.query('DELETE FROM usuarios_sesiones WHERE usuario_id = $1', [id]);
+    await pool.query('DELETE FROM usuarios WHERE id = $1', [id]);
+
     await registerUserAudit({
       usuarioId: Number(id),
       accion: 'DELETE',
       actorId: options.actor_id ?? null,
       cambios: {
         before: toUserSnapshot(currentUser),
-        after: toUserSnapshot(updatedUser),
+        after: null,
         reason,
-        logicalDelete: true,
-        omitValidations,
+        physicalDelete: true,
+        backupStored: true,
       },
     });
-    return { mode: 'logical' };
+    return { mode: 'physical' };
   },
   forceResetPassword: async (id, options = {}) => {
     const user = await Usuarios.getById(id);
