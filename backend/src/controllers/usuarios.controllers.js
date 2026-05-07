@@ -78,6 +78,14 @@ module.exports = {
         return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
       }
 
+      const motivo = typeof req.body?.motivo === 'string' ? req.body.motivo.trim() : '';
+      if (!motivo || motivo.length < 10 || motivo.length > 50) {
+        return res.status(400).json({
+          success: false,
+          message: 'El motivo es obligatorio y debe tener entre 10 y 50 caracteres',
+        });
+      }
+
       const limit = Number(req.query?.limit || 80);
       const activity = await models.Usuarios.getActivityById(req.params.id, limit);
       return res.json({ success: true, data: activity });
@@ -290,7 +298,7 @@ module.exports = {
       const updatedUser = await models.Usuarios.updateStatus(req.params.id, {
         estado,
         force: req.body?.force,
-        motivo: req.body?.motivo,
+        motivo,
         actor_id: req.user?.id || null,
       });
 
@@ -298,7 +306,7 @@ module.exports = {
         to: updatedUser.email,
         name: `${updatedUser.nombre || ''} ${updatedUser.apellido || ''}`.trim(),
         estado,
-        motivo: typeof req.body?.motivo === 'string' ? req.body.motivo.trim() : '',
+        motivo,
         changedBy: req.user?.email || null,
       });
 

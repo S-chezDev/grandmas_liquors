@@ -102,7 +102,131 @@ module.exports = {
       if (isClienteUser(req)) {
         return res.status(403).json({ success: false, message: 'No autorizado' });
       }
-      const id = await models.Domicilios.create(req.body);
+      const b = req.body || {};
+
+      let direccionFromBody = b.direccion;
+      if (direccionFromBody !== undefined && direccionFromBody !== null && typeof direccionFromBody === 'object') {
+        try {
+          direccionFromBody = JSON.stringify(direccionFromBody);
+        } catch {
+          direccionFromBody = null;
+        }
+      }
+      if (direccionFromBody !== undefined && direccionFromBody !== null && String(direccionFromBody).trim() !== '') {
+        direccionFromBody = String(direccionFromBody).trim();
+      } else {
+        direccionFromBody = null;
+      }
+
+      let fechaFromBody = b.fecha;
+      if (fechaFromBody && String(fechaFromBody).trim()) {
+        fechaFromBody = String(fechaFromBody).trim().split('T')[0];
+      } else {
+        fechaFromBody = null;
+      }
+
+      const pedido_id = Number(b.pedido_id ?? b.pedidoId);
+      if (!Number.isFinite(pedido_id) || pedido_id <= 0) {
+        return res.status(400).json({ success: false, message: 'pedido_id es requerido y debe ser válido' });
+      }
+
+      const repIdRaw = b.repartidor_id ?? b.repartidorId;
+      const repartidor_id =
+        repIdRaw !== undefined && repIdRaw !== null && String(repIdRaw).trim() !== ''
+          ? Number(repIdRaw)
+          : null;
+      if (repartidor_id === null || !Number.isFinite(repartidor_id) || repartidor_id <= 0) {
+        return res.status(400).json({ success: false, message: 'repartidor_id es requerido' });
+      }
+
+      const [repartidorUsuario, pedidoRow] = await Promise.all([
+        models.Usuarios.getById(repartidor_id),
+        models.Pedidos.getById(pedido_id),
+      ]);
+      if (!repartidorUsuario) {
+        return res.status(400).json({ success: false, message: 'Repartidor no encontrado' });
+      }
+      if (!pedidoRow) {
+        return res.status(404).json({ success: false, message: 'Pedido no encontrado' });
+      }
+
+      // Siempre tomar cliente del pedido en BD (evita desajustes con la lista del frontend)
+      const cliente_id = Number(pedidoRow.cliente_id);
+      if (!Number.isFinite(cliente_id) || cliente_id <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'El pedido no tiene un cliente válido asociado',
+        });
+      }
+
+      let direccion = direccionFromBody;
+      if (!direccion) {
+        const det = pedidoRow.detalles;
+        if (det && String(det).trim()) {
+          direccion = String(det).trim();
+        }
+      }
+      if (!direccion) {
+        try {
+          const cli = await models.Clientes.getById(cliente_id);
+          if (cli && cli.direccion && String(cli.direccion).trim()) {
+            direccion = String(cli.direccion).trim();
+          }
+        } catch {
+          /* ignorar */
+        }
+      }
+      if (!direccion) {
+        direccion = 'Sin dirección registrada';
+      }
+
+      let fecha = fechaFromBody;
+      if (!fecha) {
+        const fe = pedidoRow.fecha_entrega || pedidoRow.fecha;
+        if (fe && String(fe).trim()) {
+          fecha = String(fe).trim().split('T')[0];
+        }
+      }
+      if (!fecha) {
+        fecha = new Date().toISOString().split('T')[0];
+      }
+
+      const numeroRaw =
+        (typeof b.numero_domicilio === 'string' && b.numero_domicilio.trim()) ||
+        (typeof b.numeroDomicilio === 'string' && b.numeroDomicilio.trim()) ||
+        `DOM-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+      const numero = String(numeroRaw).slice(0, 50);
+
+      let repartidorNombre =
+        b.repartidor !== undefined && b.repartidor !== null && String(b.repartidor).trim() !== ''
+          ? String(b.repartidor).trim()
+          : `${repartidorUsuario.nombre || ''} ${repartidorUsuario.apellido || ''}`.trim() || null;
+      if (repartidorNombre) {
+        repartidorNombre = repartidorNombre.slice(0, 100);
+      }
+
+      const estadoAllow = ['Pendiente', 'En Camino', 'Entregado', 'Cancelado'];
+      const estRaw = String(b.estado || 'Pendiente').trim();
+      const estadoNorm =
+        estadoAllow.find((x) => x.toLowerCase() === estRaw.toLowerCase()) || 'Pendiente';
+
+      let horaVal = b.hora ?? null;
+      if (horaVal === '' || horaVal === undefined) horaVal = null;
+
+      const payload = {
+        numero_domicilio: numero,
+        pedido_id,
+        cliente_id,
+        direccion,
+        repartidor: repartidorNombre,
+        repartidor_id,
+        fecha,
+        hora: horaVal,
+        estado: estadoNorm,
+        detalle: b.detalle != null && String(b.detalle).trim() !== '' ? String(b.detalle).trim() : null,
+      };
+
+      const id = await models.Domicilios.create(payload);
       return res.status(201).json({ success: true, id, message: 'Domicilio creado exitosamente' });
     } catch (error) {
       return res.status(error.statusCode || 500).json({ success: false, message: error.message });
@@ -116,6 +240,38 @@ module.exports = {
       await models.Domicilios.update(req.params.id, req.body);
       await ensureVentaForDeliveredDomicilio(req.params.id);
       return res.json({ success: true, message: 'Domicilio actualizado exitosamente' });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({ success: false, message: error.message });
+    }
+  },
+  updateStatus: async (req, res) => {
+    try {
+      if (isClienteUser(req)) {
+        return res.status(403).json({ success: false, message: 'No autorizado' });
+      }
+
+      const estado = typeof req.body?.estado === 'string' ? req.body.estado.trim() : '';
+      const motivo = typeof req.body?.motivo_cancelacion === 'string' ? req.body.motivo_cancelacion.trim() : '';
+      if (!['Pendiente', 'En Camino', 'Entregado', 'Cancelado'].includes(estado)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Estado invalido. Valores permitidos: Pendiente, En Camino, Entregado, Cancelado',
+        });
+      }
+
+      if (estado === 'Cancelado' && (!motivo || motivo.length < 10 || motivo.length > 50)) {
+        return res.status(400).json({
+          success: false,
+          message: 'El motivo de cancelación es obligatorio y debe tener entre 10 y 50 caracteres',
+        });
+      }
+
+      await models.Domicilios.update(req.params.id, {
+        estado,
+        motivo_cancelacion: estado === 'Cancelado' ? motivo : undefined,
+      });
+      await ensureVentaForDeliveredDomicilio(req.params.id);
+      return res.json({ success: true, message: 'Estado del domicilio actualizado correctamente' });
     } catch (error) {
       return res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }

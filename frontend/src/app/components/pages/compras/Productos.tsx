@@ -1,0 +1,784 @@
+﻿import React, { useState, useEffect } from 'react';
+import { DataTable, Column } from '../../DataTable';
+import { Modal } from '../../Modal';
+import { Form, FormField, FormActions } from '../../Form';
+import { Button } from '../../Button';
+import { Plus, Eye, Edit, Trash2 } from 'lucide-react';
+import { api } from '../../../services/api';
+import type { Producto, Categoria } from '../../../services/types';
+import { toast } from 'sonner';
+
+export function Productos() {
+  const [productos, setProductos] = useState<Producto[]>([]);
+  const [categorias, setCategorias] = useState<Categoria[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  /** Evita usar solo `selectedProducto` para el formulario: puede quedar de otras vistas y mostrar campo de precio por error. */
+  const [productoFormularioModo, setProductoFormularioModo] = useState<'nuevo' | 'editar'>('nuevo');
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [isEstadoModalOpen, setIsEstadoModalOpen] = useState(false);
+  const [selectedProducto, setSelectedProducto] = useState<Producto | null>(null);
+  const [productoEstadoPendiente, setProductoEstadoPendiente] = useState<{
+    producto: Producto;
+    nuevoEstado: 'activo' | 'inactivo';
+  } | null>(null);
+  const [motivoEstado, setMotivoEstado] = useState('');
+  const [motivoEliminacion, setMotivoEliminacion] = useState('');
+  const [alertState, setAlertState] = useState({
+    isOpen: false
+  });
+
+  const [formData, setFormData] = useState({
+    nombre: '',
+    descripcion: '',
+    categoriaId: 0,
+    typo: 'terminado' as 'terminado' | 'de preparacion',
+    precioVenta: 0,
+    stockMinimo: 0,
+    estado: 'activo' as 'activo' | 'inactivo'
+  });
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filtroCategoria, setFiltroCategoria] = useState<string>('Todos');
+  const [filtroEstado, setFiltroEstado] = useState<string>('Todos');
+  const [filtroTipo, setFiltroTipo] = useState<string>('Todos');
+
+  useEffect(() => {
+    cargarDatos();
+  }, []);
+
+  const cargarDatos = async () => {
+    try {
+      setLoading(true);
+      const [productosData, categoriasData] = await Promise.all([
+        api.productos.getAll(),
+        api.categorias.getAll()
+      ]);
+      setProductos(productosData);
+      setCategorias(categoriasData.filter(c => c.estado === 'activo'));
+    } catch (error: any) {
+      toast.error('Error al cargar datos', { description: error.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatCurrency = (value: number) => {
+    return new Intl.NumberFormat('es-CO', {
+      style: 'currency',
+      currency: 'COP',
+      minimumFractionDigits: 0
+    }).format(value);
+  };
+
+  // Validar nombre único
+  const validarNombreUnico = (nombre: string, idActual?: number) => {
+    const existe = productos.find(p =>
+      p.nombre.toLowerCase() === nombre.toLowerCase() &&
+      p.id !== idActual
+    );
+    return !existe;
+  };
+
+  // Filtrar productos
+  const productosFiltrados = productos.filter(p => {
+    const categoria = categorias.find(c => c.id === p.categoriaId);
+
+    const matchBusqueda = searchQuery.length < 2 ||
+      p.nombre.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      p.descripcion.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      categoria?.nombre.toLowerCase().includes(searchQuery.toLowerCase());
+
+    const matchCategoria = filtroCategoria === 'Todos' ||
+      categoria?.id.toString() === filtroCategoria;
+
+    const matchEstado = filtroEstado === 'Todos' ||
+      (filtroEstado === 'Activo' && p.estado === 'activo') ||
+      (filtroEstado === 'Inactivo' && p.estado === 'inactivo');
+
+    const matchTipo = filtroTipo === 'Todos' || p.typo === filtroTipo;
+
+    return matchBusqueda && matchCategoria && matchEstado && matchTipo;
+  });
+
+  const columns: Column[] = [
+    { key: 'nombre', label: 'Producto' },
+    {
+      key: 'categoriaId',
+      label: 'Categoría',
+      render: (categoriaId: number) => {
+        const categoria = categorias.find(c => c.id === categoriaId);
+        return categoria?.nombre || 'Sin categoría';
+      }
+    },
+    {
+      key: 'typo',
+      label: 'Tipo',
+      render: (typo: string) => (
+        <span className={`px-2 py-1 rounded-full text-xs ${
+          typo === 'terminado' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
+        }`}>
+          {typo === 'terminado' ? 'Terminado' : 'De Preparación'}
+        </span>
+      )
+    },
+    {
+      key: 'precioVenta',
+      label: 'Precio',
+      render: (precio: number) => formatCurrency(precio)
+    },
+    {
+      key: 'stock',
+      label: 'Stock',
+      render: (stock: number, row: Producto) => (
+        <span className={stock <= row.stockMinimo ? 'text-red-600 font-medium' : ''}>
+          {stock} {stock <= row.stockMinimo && '⚠️'}
+        </span>
+      )
+    },
+    {
+      key: 'estado',
+      label: 'Estado',
+      render: (_: any, row: Producto) => (
+        <select
+          value={row.estado}
+          onChange={(e) => handleEstadoChange(row, e.target.value as 'activo' | 'inactivo')}
+          className="px-3 py-1 rounded-full text-xs border-0 cursor-pointer"
+          style={{
+            backgroundColor: row.estado === 'activo' ? '#dcfce7' : '#fee2e2',
+            color: row.estado === 'activo' ? '#166534' : '#991b1b'
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <option value="activo">Activo</option>
+          <option value="inactivo">Inactivo</option>
+        </select>
+      )
+    }
+  ];
+
+  const handleEstadoChange = (producto: Producto, nuevoEstado: 'activo' | 'inactivo') => {
+    if (producto.estado === nuevoEstado) return;
+    setProductoEstadoPendiente({ producto, nuevoEstado });
+    setMotivoEstado('');
+    setIsEstadoModalOpen(true);
+  };
+
+  const confirmarCambioEstado = async () => {
+    if (!productoEstadoPendiente) return;
+
+    if (motivoEstado.length < 10 || motivoEstado.length > 50) {
+      toast.error('Error de validación', {
+        description: 'El motivo debe tener entre 10 y 50 caracteres'
+      });
+      return;
+    }
+
+    try {
+      await api.productos.changeEstado(
+        productoEstadoPendiente.producto.id,
+        productoEstadoPendiente.nuevoEstado,
+        motivoEstado
+      );
+
+      toast.success('Estado actualizado', {
+        description: `Producto ${
+          productoEstadoPendiente.nuevoEstado === 'activo' ? 'activado' : 'inactivado'
+        } exitosamente`
+      });
+
+      setIsEstadoModalOpen(false);
+      setMotivoEstado('');
+      setProductoEstadoPendiente(null);
+      cargarDatos();
+    } catch (error: any) {
+      toast.error('Error al cambiar estado', { description: error.message });
+      cargarDatos();
+    }
+  };
+
+  const cerrarModalProductoFormulario = () => {
+    setIsModalOpen(false);
+    setProductoFormularioModo('nuevo');
+  };
+
+  const handleAdd = () => {
+    setSelectedProducto(null);
+    setProductoFormularioModo('nuevo');
+    setFormData({
+      nombre: '',
+      descripcion: '',
+      categoriaId: 0,
+      typo: 'terminado',
+      precioVenta: 0,
+      stockMinimo: 0,
+      estado: 'activo'
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleEdit = (producto: Producto) => {
+    setSelectedProducto(producto);
+    setProductoFormularioModo('editar');
+    setFormData({
+      nombre: producto.nombre,
+      descripcion: producto.descripcion,
+      categoriaId: producto.categoriaId,
+      typo: producto.typo,
+      precioVenta: producto.precioVenta,
+      stockMinimo: producto.stockMinimo,
+      estado: producto.estado
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleDelete = (producto: Producto) => {
+    setSelectedProducto(producto);
+    setMotivoEliminacion('');
+    setAlertState({ isOpen: true });
+  };
+
+  const confirmarEliminacion = async () => {
+    if (!selectedProducto) return;
+
+    if (motivoEliminacion.length < 10 || motivoEliminacion.length > 50) {
+      toast.error('Error de validación', {
+        description: 'El motivo debe tener entre 10 y 50 caracteres'
+      });
+      return;
+    }
+
+    try {
+      await api.productos.delete(selectedProducto.id, motivoEliminacion);
+
+      toast.success('Producto eliminado', {
+        description: 'El producto ha sido eliminado exitosamente'
+      });
+
+      setAlertState({ isOpen: false });
+      setMotivoEliminacion('');
+      setSelectedProducto(null);
+      cargarDatos();
+    } catch (error: any) {
+      toast.error('Error al eliminar producto', { description: error.message });
+    }
+  };
+
+  const handleView = (producto: Producto) => {
+    setSelectedProducto(producto);
+    setIsDetailModalOpen(true);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    // Validaciones
+    if (!validarNombreUnico(formData.nombre, productoFormularioModo === 'editar' ? selectedProducto?.id : undefined)) {
+      toast.error('Error de validación', {
+        description: 'Ya existe un producto con ese nombre'
+      });
+      return;
+    }
+
+    if (formData.categoriaId === 0) {
+      toast.error('Error de validación', {
+        description: 'Debe seleccionar una categoría'
+      });
+      return;
+    }
+
+    if (productoFormularioModo === 'editar' && formData.precioVenta < 0) {
+      toast.error('Error de validación', {
+        description: 'El precio no puede ser negativo'
+      });
+      return;
+    }
+
+    if (formData.stockMinimo < 0) {
+      toast.error('Error de validación', {
+        description: 'El stock mínimo no puede ser negativo'
+      });
+      return;
+    }
+
+    try {
+      if (productoFormularioModo === 'editar' && selectedProducto) {
+        await api.productos.update(selectedProducto.id, formData, 'Actualización de datos');
+
+        toast.success('Producto actualizado', {
+          description: 'Los datos del producto han sido actualizados exitosamente'
+        });
+      } else {
+        // Al crear, stock 0 y precio de venta 0 hasta registrar compra al proveedor
+        await api.productos.create({
+          ...formData,
+          precioVenta: 0,
+          precioCompra: 0,
+          ganancia: 0
+        });
+
+        toast.success('Producto creado', {
+          description: 'El producto ha sido creado exitosamente con stock inicial 0'
+        });
+      }
+
+      cerrarModalProductoFormulario();
+      cargarDatos();
+    } catch (error: any) {
+      toast.error(productoFormularioModo === 'editar' ? 'Error al actualizar producto' : 'Error al crear producto', {
+        description: error.message
+      });
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Cargando productos...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2>Gestión de Productos</h2>
+          <p className="text-muted-foreground">Administra el catálogo de productos</p>
+        </div>
+        <Button icon={<Plus className="w-5 h-5" />} onClick={handleAdd}>
+          Nuevo Producto
+        </Button>
+      </div>
+
+      {/* Filtros */}
+      <div className="bg-white rounded-lg border border-border p-4">
+        <div className="flex flex-col md:flex-row gap-3">
+          <div className="flex-1">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Buscar... (mín. 2, máx. 50 caracteres)"
+              className="w-full px-4 py-2.5 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+              maxLength={50}
+            />
+          </div>
+          <div className="flex gap-2">
+            <select
+              value={filtroCategoria}
+              onChange={(e) => setFiltroCategoria(e.target.value)}
+              className="px-3 py-2.5 border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary min-w-[180px] text-gray-500"
+            >
+              <option value="Todos">Filtrar por categoría</option>
+              {categorias.map(c => (
+                <option key={c.id} value={c.id.toString()}>{c.nombre}</option>
+              ))}
+            </select>
+            <select
+              value={filtroEstado}
+              onChange={(e) => setFiltroEstado(e.target.value)}
+              className="px-3 py-2.5 border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary min-w-[120px] text-gray-500"
+            >
+              <option value="Todos">Filtrar por estado</option>
+              <option value="Activo">Activo</option>
+              <option value="Inactivo">Inactivo</option>
+            </select>
+            <select
+              value={filtroTipo}
+              onChange={(e) => setFiltroTipo(e.target.value)}
+              className="px-3 py-2.5 border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary min-w-[180px] text-gray-500"
+            >
+              <option value="Todos">Filtrar por tipo</option>
+              <option value="terminado">Terminado</option>
+              <option value="de preparación">De preparación</option>
+            </select>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setSearchQuery('');
+                setFiltroCategoria('Todos');
+                setFiltroEstado('Todos');
+                setFiltroTipo('Todos');
+              }}
+              className="px-4"
+            >
+              Limpiar
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <DataTable
+        columns={columns}
+        data={productosFiltrados}
+        actions={[
+          {
+            label: 'Ver',
+            icon: <Eye className="w-4 h-4" />,
+            onClick: handleView,
+            variant: 'default'
+          },
+          {
+            label: 'Editar',
+            icon: <Edit className="w-4 h-4" />,
+            onClick: handleEdit,
+            variant: 'default'
+          },
+          {
+            label: 'Eliminar',
+            icon: <Trash2 className="w-4 h-4" />,
+            onClick: handleDelete,
+            variant: 'danger'
+          }
+        ]}
+      />
+
+      {/* Modal Nuevo/Editar */}
+      <Modal
+        isOpen={isModalOpen}
+        onClose={cerrarModalProductoFormulario}
+        title={productoFormularioModo === 'editar' ? 'Editar Producto' : 'Nuevo Producto'}
+      >
+        <Form onSubmit={handleSubmit}>
+          <FormField
+            label="Nombre del Producto"
+            name="nombre"
+            value={formData.nombre}
+            onChange={(value) => {
+              setFormData({ ...formData, nombre: value as string });
+              if (
+                value &&
+                !validarNombreUnico(
+                  value as string,
+                  productoFormularioModo === 'editar' ? selectedProducto?.id : undefined
+                )
+              ) {
+                toast.warning('Advertencia', {
+                  description: 'Ya existe un producto con ese nombre',
+                  duration: 2000
+                });
+              }
+            }}
+            placeholder="Ej: Licor de Café Artesanal"
+            required
+          />
+
+          <FormField
+            label="Descripción"
+            name="descripcion"
+            type="textarea"
+            value={formData.descripcion}
+            onChange={(value) => setFormData({ ...formData, descripcion: value as string })}
+            placeholder="Descripción del producto"
+            required
+          />
+
+          <div className="grid grid-cols-2 gap-4">
+            <FormField
+              label="Categoría"
+              name="categoriaId"
+              type="select"
+              value={formData.categoriaId.toString()}
+              onChange={(value) => setFormData({ ...formData, categoriaId: parseInt(value as string) })}
+              options={[
+                { value: '0', label: 'Seleccione una categoría' },
+                ...categorias.map(c => ({
+                  value: c.id.toString(),
+                  label: c.nombre
+                }))
+              ]}
+              required
+            />
+
+            <FormField
+              label="Tipo"
+              name="typo"
+              type="select"
+              value={formData.typo}
+              onChange={(value) => setFormData({ ...formData, typo: value as any })}
+              options={[
+                { value: 'terminado', label: 'Terminado' },
+                { value: 'de preparacion', label: 'De Preparación' }
+              ]}
+              required
+            />
+          </div>
+
+          <div className={`grid gap-4 ${productoFormularioModo === 'editar' ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            {productoFormularioModo === 'editar' && (
+              <FormField
+                label="Precio de Venta"
+                name="precioVenta"
+                type="number"
+                value={formData.precioVenta}
+                onChange={(value) => setFormData({ ...formData, precioVenta: parseInt(value as string) || 0 })}
+                min={0}
+                required
+              />
+            )}
+
+            <FormField
+              label="Stock Mínimo"
+              name="stockMinimo"
+              type="number"
+              value={formData.stockMinimo === 0 ? '' : formData.stockMinimo}
+              onChange={(value) => {
+                const num = parseInt(value as string) || 0;
+                if (num < 0) {
+                  toast.warning('No se permiten números negativos');
+                  return;
+                }
+                setFormData({ ...formData, stockMinimo: num });
+              }}
+              min={0}
+              required
+            />
+          </div>
+
+          {productoFormularioModo === 'nuevo' && (
+            <p className="text-xs text-muted-foreground bg-blue-50 p-3 rounded-lg">
+              ℹ️ El stock actual inicia en 0 y se incrementa al recibir compras. El precio de venta inicia en $0 y se
+              define al registrar la compra al proveedor (precio de compra y margen).
+            </p>
+          )}
+
+          <FormField
+            label="Estado"
+            name="estado"
+            type="select"
+            value={formData.estado}
+            onChange={(value) => setFormData({ ...formData, estado: value as any })}
+            options={[
+              { value: 'activo', label: 'Activo' },
+              { value: 'inactivo', label: 'Inactivo' }
+            ]}
+            required
+          />
+
+          <FormActions>
+            <Button variant="outline" type="button" onClick={() => cerrarModalProductoFormulario()}>
+              Cancelar
+            </Button>
+            <Button type="submit">
+              {productoFormularioModo === 'editar' ? 'Actualizar' : 'Crear'} Producto
+            </Button>
+          </FormActions>
+        </Form>
+      </Modal>
+
+      {/* Modal Detalle */}
+      <Modal
+        isOpen={isDetailModalOpen}
+        onClose={() => {
+          setIsDetailModalOpen(false);
+          setSelectedProducto(null);
+        }}
+        title="Detalle de Producto"
+        size="lg"
+      >
+        {selectedProducto && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4 p-4 bg-accent/50 rounded-lg">
+              <div>
+                <p className="text-sm text-muted-foreground">Nombre</p>
+                <p className="font-medium">{selectedProducto.nombre}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Categoría</p>
+                <p className="font-medium">
+                  {categorias.find(c => c.id === selectedProducto.categoriaId)?.nombre || 'Sin categoría'}
+                </p>
+              </div>
+              <div className="col-span-2">
+                <p className="text-sm text-muted-foreground">Descripción</p>
+                <p className="font-medium">{selectedProducto.descripcion}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Tipo</p>
+                <span className={`px-2 py-1 rounded-full text-xs ${
+                  selectedProducto.typo === 'terminado' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
+                }`}>
+                  {selectedProducto.typo === 'terminado' ? 'Terminado' : 'De Preparación'}
+                </span>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Precio de Compra</p>
+                <p className="font-medium">{formatCurrency(selectedProducto.precioCompra)}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Precio de Venta</p>
+                <p className="font-medium">{formatCurrency(selectedProducto.precioVenta)}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Ganancia</p>
+                <p className="font-medium">{selectedProducto.ganancia}%</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Stock Actual</p>
+                <p className={`font-medium ${selectedProducto.stock <= selectedProducto.stockMinimo ? 'text-red-600' : ''}`}>
+                  {selectedProducto.stock} {selectedProducto.stock <= selectedProducto.stockMinimo && '⚠️ Bajo'}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Stock Mínimo</p>
+                <p className="font-medium">{selectedProducto.stockMinimo}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Estado</p>
+                <span className={`px-3 py-1 rounded-full text-xs ${
+                  selectedProducto.estado === 'activo' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                }`}>
+                  {selectedProducto.estado === 'activo' ? 'Activo' : 'Inactivo'}
+                </span>
+              </div>
+            </div>
+
+            {/* Historial de cambios */}
+            {selectedProducto.historialCambios && selectedProducto.historialCambios.length > 0 && (
+              <div className="mt-6">
+                <h4 className="font-medium mb-3">Historial de Modificaciones</h4>
+                <div className="space-y-2">
+                  {selectedProducto.historialCambios.map((cambio, index) => (
+                    <div key={index} className="p-3 bg-accent/30 rounded-lg text-sm">
+                      <div className="flex justify-between items-start mb-1">
+                        <span className="font-medium">{cambio.accion}</span>
+                        <span className="text-muted-foreground text-xs">
+                          {new Date(cambio.fecha).toLocaleString('es-CO')}
+                        </span>
+                      </div>
+                      {cambio.motivo && (
+                        <p className="text-muted-foreground">{cambio.motivo}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-4 border-t">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setIsDetailModalOpen(false);
+                  setSelectedProducto(null);
+                }}
+              >
+                Cerrar
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Modal Cambio de Estado */}
+      <Modal
+        isOpen={isEstadoModalOpen}
+        onClose={() => {
+          setIsEstadoModalOpen(false);
+          setMotivoEstado('');
+          setProductoEstadoPendiente(null);
+        }}
+        title="Cambiar Estado de Producto"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Está a punto de cambiar el estado del producto{' '}
+            <strong>{productoEstadoPendiente?.producto.nombre}</strong> a{' '}
+            <strong>
+              {productoEstadoPendiente?.nuevoEstado === 'activo' ? 'Activo' : 'Inactivo'}
+            </strong>
+            .
+          </p>
+
+          <FormField
+            label="Motivo del cambio"
+            name="motivo"
+            type="textarea"
+            value={motivoEstado}
+            onChange={(value) => setMotivoEstado(value as string)}
+            placeholder="Ingrese el motivo del cambio de estado"
+            required
+          />
+
+          <p className="text-xs text-muted-foreground">
+            {motivoEstado.length}/50 caracteres (mínimo 10)
+          </p>
+
+          <FormActions>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsEstadoModalOpen(false);
+                setMotivoEstado('');
+                setProductoEstadoPendiente(null);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button onClick={confirmarCambioEstado}>
+              Confirmar Cambio
+            </Button>
+          </FormActions>
+        </div>
+      </Modal>
+
+      {/* Modal Eliminación */}
+      <Modal
+        isOpen={alertState.isOpen}
+        onClose={() => {
+          setAlertState({ isOpen: false });
+          setMotivoEliminacion('');
+          setSelectedProducto(null);
+        }}
+        title="Confirmar Eliminación de Producto"
+      >
+        <div className="space-y-4">
+          <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+            <p className="text-sm text-red-800">
+              <strong>¡Advertencia!</strong> Está a punto de eliminar el producto{' '}
+              <strong>{selectedProducto?.nombre}</strong>.
+            </p>
+            <p className="text-sm text-red-700 mt-2">
+              Esta acción no se puede deshacer.
+            </p>
+          </div>
+
+          <FormField
+            label="Motivo de la eliminación * (10-50 caracteres)"
+            name="motivoEliminacion"
+            type="textarea"
+            value={motivoEliminacion}
+            onChange={(value) => setMotivoEliminacion(value as string)}
+            placeholder="Ingrese el motivo de la eliminación"
+            required
+          />
+
+          <p className="text-xs text-muted-foreground">
+            {motivoEliminacion.length}/50 caracteres (mínimo 10)
+          </p>
+
+          <FormActions>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setAlertState({ isOpen: false });
+                setMotivoEliminacion('');
+                setSelectedProducto(null);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button variant="danger" onClick={confirmarEliminacion}>
+              Confirmar Eliminación
+            </Button>
+          </FormActions>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+

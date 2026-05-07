@@ -43,10 +43,10 @@ module.exports = {
         return res.status(400).json({ success: false, message: 'Estado es obligatorio' });
       }
 
-      if (!motivo || motivo.length < 10) {
+      if (!motivo || motivo.length < 10 || motivo.length > 50) {
         return res.status(400).json({
           success: false,
-          message: 'El motivo de cambio de estado es obligatorio y debe tener al menos 10 caracteres',
+          message: 'El motivo de cambio de estado es obligatorio y debe tener entre 10 y 50 caracteres',
         });
       }
 

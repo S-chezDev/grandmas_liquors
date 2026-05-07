@@ -16,12 +16,14 @@ const rolesRoutes = require('./roles.routes');
 const usuariosRoutes = require('./usuarios.routes');
 const authRoutes = require('./auth.routes');
 const publicRoutes = require('./public.routes');
+const dashboardRoutes = require('./dashboard.routes');
 const { authenticateJWT } = require('../middlewares/auth.middleware');
 
 const router = express.Router();
 
 router.use('/api/auth', authRoutes);
 router.use('/api/public', publicRoutes);
+router.use('/api/dashboard', authenticateJWT, dashboardRoutes);
 router.use('/api/categorias', authenticateJWT, categoriasRoutes);
 router.use('/api/productos', authenticateJWT, productosRoutes);
 router.use('/api/clientes', authenticateJWT, clientesRoutes);

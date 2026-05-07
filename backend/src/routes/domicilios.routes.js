@@ -5,6 +5,8 @@ const router = express.Router();
 router.get('/cliente/:clienteId', controller.getByCliente);
 router.get('/', controller.getAll);
 router.get('/pedido/:pedidoId', controller.getByPedido);
+router.put('/:id/estado', controller.updateStatus);
+router.patch('/:id/estado', controller.updateStatus);
 router.get('/:id', controller.getById);
 router.post('/', controller.create);
 router.put('/:id', controller.update);

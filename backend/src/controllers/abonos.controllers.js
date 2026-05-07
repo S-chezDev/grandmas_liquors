@@ -1,5 +1,5 @@
 const models = require('../models/entities.models');
-const { normalizeAbonoPayload } = require('./normalizador-http');
+const { normalizeAbonoPayload, parseMoneyCO, normalizeMetodoPago } = require('./normalizador-http');
 
 module.exports = {
   getAll: async (req, res) => {
@@ -34,7 +34,49 @@ module.exports = {
         return res.status(400).json({ success: false, message: normalized.error });
       }
 
-      const id = await models.Abonos.create(normalized.data);
+      const payload = normalized.data;
+      const pedidoId = Number(payload.pedido_id ?? payload.pedidoId);
+      if (!Number.isFinite(pedidoId) || pedidoId <= 0) {
+        return res.status(400).json({ success: false, message: 'pedido_id es requerido' });
+      }
+
+      const monto = parseMoneyCO(payload.monto);
+      if (monto === undefined || monto <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'monto inválido. Indique un valor mayor a 0 (número o formato COP, ej. 2500000 o 2.500.000).',
+        });
+      }
+
+      const fecha = payload.fecha;
+      if (!fecha || !String(fecha).trim()) {
+        return res.status(400).json({ success: false, message: 'fecha es requerida' });
+      }
+
+      const pedido = await models.Pedidos.getById(pedidoId);
+      if (!pedido) {
+        return res.status(404).json({ success: false, message: 'Pedido no encontrado' });
+      }
+
+      const clienteId = Number(pedido.cliente_id);
+      if (!Number.isFinite(clienteId) || clienteId <= 0) {
+        return res.status(400).json({ success: false, message: 'El pedido no tiene un cliente válido' });
+      }
+
+      const metodoNorm = normalizeMetodoPago(payload.metodo_pago);
+      const metodo_pago = metodoNorm || 'Efectivo';
+      const numero_abono = `ABO-${Date.now()}`;
+
+      const id = await models.Abonos.create({
+        numero_abono,
+        pedido_id: pedidoId,
+        cliente_id: clienteId,
+        monto,
+        fecha: String(fecha).trim().split('T')[0],
+        metodo_pago,
+        estado: payload.estado || 'Registrado',
+      });
+
       res.status(201).json({ success: true, id, message: 'Abono creado exitosamente' });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -68,9 +110,11 @@ module.exports = {
         return res.status(400).json({ success: false, message: 'Estado es requerido' });
       }
 
-      const estadosValidos = ['Registrado', 'Verificado', 'Cancelado'];
-      if (!estadosValidos.includes(estado)) {
-        return res.status(400).json({ success: false, message: `Estado inválido. Válidos: ${estadosValidos.join(', ')}` });
+      const estadosDestinoValidos = ['Registrado', 'Verificado', 'Cancelado'];
+      if (!estadosDestinoValidos.includes(estado)) {
+        return res
+          .status(400)
+          .json({ success: false, message: `Estado inválido. Válidos: ${estadosDestinoValidos.join(', ')}` });
       }
 
       const abonoActual = await models.Abonos.getById(req.params.id);
@@ -78,21 +122,40 @@ module.exports = {
         return res.status(404).json({ success: false, message: 'Abono no encontrado' });
       }
 
-      // Validar transiciones de estado permitidas
-      const transicionesPermitidas = {
-        'Registrado': ['Verificado', 'Cancelado'],
-        'Verificado': ['Cancelado'],
-        'Cancelado': []
+      const canon = (raw) => {
+        const t = String(raw || '').trim().toLowerCase();
+        if (t.includes('cancel')) return 'Cancelado';
+        if (t.includes('aplic')) return 'Aplicado';
+        if (t.includes('verif')) return 'Verificado';
+        if (t.includes('registr')) return 'Registrado';
+        return String(raw || '').trim();
       };
 
-      if (!transicionesPermitidas[abonoActual.estado]?.includes(estado)) {
-        return res.status(400).json({ 
-          success: false, 
-          message: `No se puede cambiar de ${abonoActual.estado} a ${estado}` 
+      const actual = canon(abonoActual.estado);
+      const estadosOrigenReconocidos = ['Registrado', 'Verificado', 'Cancelado', 'Aplicado'];
+      if (!estadosOrigenReconocidos.includes(actual)) {
+        return res.status(400).json({
+          success: false,
+          message: `Estado actual del abono no reconocido: ${abonoActual.estado}`,
         });
       }
 
-      await models.Abonos.update(req.params.id, { estado });
+      // Validar transiciones de estado permitidas
+      const transicionesPermitidas = {
+        Registrado: ['Verificado', 'Cancelado'],
+        Verificado: ['Cancelado'],
+        Aplicado: ['Cancelado'],
+        Cancelado: [],
+      };
+
+      if (!transicionesPermitidas[actual]?.includes(estado)) {
+        return res.status(400).json({ 
+          success: false, 
+          message: `No se puede cambiar de ${actual} a ${estado}` 
+        });
+      }
+
+      await models.Abonos.updateEstado(req.params.id, estado);
       return res.json({ success: true, message: 'Estado actualizado exitosamente' });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });

@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const controller = require('../controllers/usuarios.controllers');
 
 const router = express.Router();
@@ -7,8 +7,9 @@ router.get('/email/:email', controller.getByEmail);
 router.get('/documento/:documento', controller.getByDocumento);
 router.get('/telefono/:telefono', controller.getByTelefono);
 router.post('/', controller.create);
-// Rutas específicas ANTES de rutas genéricas con parámetro /:id
+// Rutas especÃ­ficas ANTES de rutas genÃ©ricas con parÃ¡metro /:id
 router.put('/:id/estado', controller.updateStatus);
+router.patch('/:id/estado', controller.updateStatus);
 router.put('/:id/rol', controller.assignRole);
 router.get('/:id/impacto-eliminacion', controller.getDeleteImpactById);
 router.get('/:id/detalle-completo', controller.getFullDetailById);
@@ -19,3 +20,4 @@ router.put('/:id', controller.update);
 router.delete('/:id', controller.delete);
 
 module.exports = router;
+

@@ -56,8 +56,12 @@ module.exports = {
 
       const pedido = await models.Pedidos.getById(req.params.id);
       if (!pedido) return res.status(404).json({ success: false, message: 'Pedido no encontrado' });
+      const notasPedido = pedido.detalles;
       const detalles = await models.Pedidos.getDetalles(req.params.id);
-      return res.json({ success: true, data: { ...pedido, detalles } });
+      return res.json({
+        success: true,
+        data: { ...pedido, detalles, detalles_texto: notasPedido },
+      });
     } catch (error) {
       return res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
@@ -122,13 +126,13 @@ module.exports = {
         'Cancelado': [] // Final
       };
 
-      // CLIENTE: Solo puede editar fecha_entrega y detalles si está en Pendiente o En Proceso
+      // CLIENTE: Solo puede editar si el pedido está en Pendiente
       if (isClienteUser(req)) {
         const estado = String(pedido?.estado || '');
-        if (estado !== 'Pendiente' && estado !== 'En Proceso') {
+        if (estado !== 'Pendiente') {
           return res.status(403).json({
             success: false,
-            message: 'Solo puedes editar pedidos en estado Pendiente o En Proceso',
+            message: 'Solo puedes editar pedidos en estado Pendiente',
           });
         }
         const allowed = {
@@ -192,7 +196,14 @@ module.exports = {
         return res.json({ success: true, message: 'Pedido actualizado exitosamente' });
       }
 
-      // Sin cambio de estado: actualizar como antes
+      // Sin cambio de estado: solo permitir edición en Pendiente
+      if (String(pedido.estado || '').trim() !== 'Pendiente') {
+        return res.status(400).json({
+          success: false,
+          message: 'Solo se pueden editar campos del pedido cuando está en estado Pendiente',
+        });
+      }
+
       await models.Pedidos.update(req.params.id, req.body);
       return res.json({ success: true, message: 'Pedido actualizado exitosamente' });
     } catch (error) {
@@ -246,10 +257,17 @@ module.exports = {
         });
       }
 
-      // Si se cancela, guardar motivo si se proporciona
+      // Si se cancela, motivo obligatorio (10-50)
       const datosActualizar = { estado };
-      if (estado === 'Cancelado' && motivo) {
-        datosActualizar.detalles = `${pedidoActual.detalles || ''} [CANCELADO: ${motivo}]`.trim();
+      if (estado === 'Cancelado') {
+        const motivoLimpio = typeof motivo === 'string' ? motivo.trim() : '';
+        if (!motivoLimpio || motivoLimpio.length < 10 || motivoLimpio.length > 50) {
+          return res.status(400).json({
+            success: false,
+            message: 'El motivo de cancelación es obligatorio y debe tener entre 10 y 50 caracteres',
+          });
+        }
+        datosActualizar.detalles = `${pedidoActual.detalles || ''} [CANCELADO: ${motivoLimpio}]`.trim();
       }
 
       await models.Pedidos.update(req.params.id, datosActualizar);

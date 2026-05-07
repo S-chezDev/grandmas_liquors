@@ -19,6 +19,10 @@ const VENTA_ESTADO_MAP = {
 const ABONO_ESTADO_MAP = {
   registrado: 'Registrado',
   activo: 'Registrado',
+  verificado: 'Verificado',
+  verificada: 'Verificado',
+  aplicado: 'Aplicado',
+  aplica: 'Aplicado',
   cancelado: 'Cancelado',
   cancelada: 'Cancelado',
   anulado: 'Cancelado',
@@ -62,18 +66,47 @@ const METODO_PAGO_MAP = {
 
 const canonicalizeWithMap = (value, map) => {
   if (value === undefined || value === null) return undefined;
-  if (typeof value !== 'string') return null;
-  const key = value.trim().toLowerCase();
+  const key = String(value).trim().toLowerCase();
   if (!key) return null;
   return map[key] || null;
 };
 
 const normalizeTipoDocumento = (value) => canonicalizeWithMap(value, TIPO_DOCUMENTO_MAP);
 
-const normalizeMetodoPago = (value) => canonicalizeWithMap(value, METODO_PAGO_MAP);
+const normalizeMetodoPago = (value) => {
+  if (value === undefined || value === null) return undefined;
+  return canonicalizeWithMap(String(value), METODO_PAGO_MAP);
+};
+
+/** Montos en COP: número o texto con puntos como separador de miles (ej. "2.500.000" → 2500000). */
+const parseMoneyCO = (value) => {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  let s = String(value).trim().replace(/\s/g, '');
+  if (!s) return undefined;
+  const hasCommaAsDecimal = /,\d{1,2}$/.test(s);
+  if (hasCommaAsDecimal) {
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else {
+    s = s.replace(/\./g, '');
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? n : undefined;
+};
 
 const normalizeVentaPayload = (payload = {}) => {
   const data = { ...payload };
+
+  if (payload.total !== undefined) {
+    const total = parseMoneyCO(payload.total);
+    if (total === undefined) {
+      return { error: 'Total de venta invalido. Use un numero o formato COP (ej. 2500000 o 2.500.000).' };
+    }
+    if (total < 0) {
+      return { error: 'Total de venta no puede ser negativo.' };
+    }
+    data.total = total;
+  }
 
   if (payload.estado !== undefined) {
     const estado = canonicalizeWithMap(payload.estado, VENTA_ESTADO_MAP);
@@ -94,6 +127,7 @@ const normalizeVentaPayload = (payload = {}) => {
       };
     }
     data.metodopago = metodoPago;
+    data.metodo_pago = metodoPago;
   }
 
   return { data };
@@ -106,7 +140,7 @@ const normalizeAbonoPayload = (payload = {}) => {
     const estado = canonicalizeWithMap(payload.estado, ABONO_ESTADO_MAP);
     if (!estado) {
       return {
-        error: 'Estado de abono invalido. Valores permitidos: Registrado, Cancelado.',
+        error: 'Estado de abono invalido. Valores permitidos: Registrado, Verificado, Cancelado, Aplicado.',
       };
     }
     data.estado = estado;
@@ -128,6 +162,12 @@ const normalizeAbonoPayload = (payload = {}) => {
 
 const normalizeClientePayload = (payload = {}) => {
   const data = { ...payload };
+  if (
+    data.documento === undefined &&
+    (payload.numeroDocumento !== undefined || payload.numero_documento !== undefined)
+  ) {
+    data.documento = payload.numeroDocumento ?? payload.numero_documento;
+  }
   const rawTipoDocumento = payload.tipoDocumento ?? payload.tipo_documento;
 
   if (rawTipoDocumento !== undefined) {
@@ -232,9 +272,10 @@ const normalizeProveedorPayload = (payload = {}) => {
     data.tipoDocumento = tipoDocumento;
   }
 
-  const rawTipoPersona = payload.tipoPersona ?? payload.tipo_persona;
+  const rawTipoPersona =
+    payload.tipoPersona ?? payload.tipo_persona ?? payload.tipo;
   if (rawTipoPersona !== undefined) {
-    const tipoPersona = canonicalizeWithMap(rawTipoPersona, TIPO_PERSONA_MAP);
+    const tipoPersona = canonicalizeWithMap(String(rawTipoPersona), TIPO_PERSONA_MAP);
     if (!tipoPersona) {
       return {
         error: 'Tipo de persona invalido. Valores permitidos: Natural, Juridica.',
@@ -281,11 +322,66 @@ const normalizeProveedorPayload = (payload = {}) => {
     data.observaciones = String(payload.observaciones).trim();
   }
 
+  /* Mapear campos del formulario UI (Proveedores.tsx) al modelo proveedores */
+  if (data.tipoPersona) {
+    if (data.tipoPersona === 'Juridica') {
+      const rzs =
+        payload.nombreRazonSocial ?? payload.nombre_razon_social ?? undefined;
+      if (rzs !== undefined && rzs !== null && String(rzs).trim()) {
+        const trimmed = String(rzs).trim();
+        if (
+          payload.nombreEmpresa === undefined &&
+          payload.nombre_empresa === undefined
+        ) {
+          data.nombreEmpresa = trimmed;
+        }
+      }
+    } else if (payload.nombre !== undefined || payload.apellido !== undefined) {
+      data.nombre = String(payload.nombre ?? '').trim();
+      data.apellido = String(payload.apellido ?? '').trim();
+    } else {
+      const rzs =
+        payload.nombreRazonSocial ?? payload.nombre_razon_social ?? undefined;
+      if (rzs !== undefined && rzs !== null && String(rzs).trim()) {
+        data.nombre = String(rzs).trim();
+        data.apellido = '';
+      }
+    }
+
+    const docRaw =
+      payload.nit !== undefined && payload.nit !== null
+        ? String(payload.nit).trim()
+        : '';
+    if (docRaw) {
+      if (data.tipoPersona === 'Juridica') {
+        data.nit = docRaw;
+      } else {
+        data.numeroDocumento = docRaw;
+        data.nit = null;
+      }
+    }
+
+    if (
+      data.tipoPersona === 'Natural' &&
+      data.tipoDocumento === undefined &&
+      payload.tipoDocumento === undefined &&
+      payload.tipo_documento === undefined
+    ) {
+      data.tipoDocumento = 'CC';
+    }
+  }
+
+  delete data.tipo;
+  delete data.nombreRazonSocial;
+  delete data.nombre_razon_social;
+
   return { data };
 };
 
 module.exports = {
   normalizeTipoDocumento,
+  normalizeMetodoPago,
+  parseMoneyCO,
   normalizeVentaPayload,
   normalizeAbonoPayload,
   normalizeClientePayload,

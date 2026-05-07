@@ -142,12 +142,267 @@ Al iniciar el servidor, deberías ver:
 ✓ Base de Datos: PostgreSQL Conectada
 ✓ Conexión App-Backend: Establecida
 
-📋 ENDPOINTS DISPONIBLES:
-   - GET    /api/health                 (Verificar estado)
-   - GET    /api/categorias             (Listar categorías)
-   - GET    /api/productos              (Listar productos)
-   - GET    /api/clientes               (Listar clientes)
-   ...más endpoints...
+Método	Ruta
+POST
+/api/auth/login
+GET
+/api/auth/me
+POST
+/api/auth/logout
+POST
+/api/auth/logout-all
+POST
+/api/auth/change-password
+POST
+/api/auth/password-reset-request
+POST
+/api/auth/password-reset-confirm
+POST
+/api/auth/register-cliente
+/api/public
+Método	Ruta
+GET
+/api/public/catalogo
+/api/categorias
+Método	Ruta
+GET
+/api/categorias
+GET
+/api/categorias/:id
+POST
+/api/categorias
+PUT
+/api/categorias/:id
+PUT
+/api/categorias/:id/estado
+DELETE
+/api/categorias/:id
+/api/productos
+Método	Ruta
+GET
+/api/productos
+GET
+/api/productos/categoria/:categoryId
+GET
+/api/productos/:id
+POST
+/api/productos
+PUT
+/api/productos/:id
+PUT
+/api/productos/:id/estado
+DELETE
+/api/productos/:id
+/api/clientes
+Método	Ruta
+GET
+/api/clientes
+GET
+/api/clientes/documento/:documento
+GET
+/api/clientes/email/:email
+GET
+/api/clientes/usuario/:usuarioId
+POST
+/api/clientes/perfil/foto
+GET
+/api/clientes/:id
+POST
+/api/clientes
+PUT
+/api/clientes/:id
+DELETE
+/api/clientes/:id
+/api/proveedores
+Método	Ruta
+GET
+/api/proveedores
+GET
+/api/proveedores/nit/:nit
+GET
+/api/proveedores/email/:email
+GET
+/api/proveedores/telefono/:telefono
+GET
+/api/proveedores/:id
+GET
+/api/proveedores/:id/historial
+GET
+/api/proveedores/:id/pendientes
+POST
+/api/proveedores
+PUT
+/api/proveedores/:id
+PUT
+/api/proveedores/:id/estado
+DELETE
+/api/proveedores/:id
+/api/pedidos
+Método	Ruta
+GET
+/api/pedidos/cliente/:clienteId
+POST
+/api/pedidos/producto
+PUT
+/api/pedidos/:id/estado
+GET
+/api/pedidos
+GET
+/api/pedidos/:id
+POST
+/api/pedidos
+PUT
+/api/pedidos/:id
+DELETE
+/api/pedidos/:id
+/api/ventas
+Método	Ruta
+GET
+/api/ventas/cliente/:clienteId
+GET
+/api/ventas
+GET
+/api/ventas/:id
+POST
+/api/ventas
+POST
+/api/ventas/producto
+PUT
+/api/ventas/:id
+DELETE
+/api/ventas/:id
+/api/abonos
+Método	Ruta
+GET
+/api/abonos
+GET
+/api/abonos/pedido/:pedidoId
+PUT
+/api/abonos/:id/estado
+GET
+/api/abonos/:id
+POST
+/api/abonos
+PUT
+/api/abonos/:id
+DELETE
+/api/abonos/:id
+/api/domicilios
+Método	Ruta
+GET
+/api/domicilios/cliente/:clienteId
+GET
+/api/domicilios
+GET
+/api/domicilios/pedido/:pedidoId
+GET
+/api/domicilios/:id
+POST
+/api/domicilios
+PUT
+/api/domicilios/:id
+DELETE
+/api/domicilios/:id
+/api/compras
+Método	Ruta
+GET
+/api/compras
+GET
+/api/compras/:id
+POST
+/api/compras
+POST
+/api/compras/producto
+PUT
+/api/compras/:id
+PUT
+/api/compras/:id/estado
+DELETE
+/api/compras/:id
+/api/insumos
+Método	Ruta
+GET
+/api/insumos
+GET
+/api/insumos/:id
+POST
+/api/insumos
+PUT
+/api/insumos/:id
+DELETE
+/api/insumos/:id
+/api/entregas-insumos
+Método	Ruta
+GET
+/api/entregas-insumos
+GET
+/api/entregas-insumos/:id
+POST
+/api/entregas-insumos
+PUT
+/api/entregas-insumos/:id
+DELETE
+/api/entregas-insumos/:id
+/api/produccion
+Método	Ruta
+GET
+/api/produccion
+GET
+/api/produccion/:id
+POST
+/api/produccion
+PUT
+/api/produccion/:id
+PUT
+/api/produccion/:id/estado
+DELETE
+/api/produccion/:id
+/api/roles
+Método	Ruta
+GET
+/api/roles
+GET
+/api/roles/:id
+GET
+/api/roles/:id/auditoria
+POST
+/api/roles
+PUT
+/api/roles/:id
+PUT
+/api/roles/:id/permisos
+DELETE
+/api/roles/:id
+/api/usuarios
+Método	Ruta
+GET
+/api/usuarios
+GET
+/api/usuarios/email/:email
+GET
+/api/usuarios/documento/:documento
+GET
+/api/usuarios/telefono/:telefono
+POST
+/api/usuarios
+PUT
+/api/usuarios/:id/estado
+PUT
+/api/usuarios/:id/rol
+GET
+/api/usuarios/:id/impacto-eliminacion
+GET
+/api/usuarios/:id/detalle-completo
+POST
+/api/usuarios/:id/reset-password-forzado
+GET
+/api/usuarios/:id/historial
+GET
+/api/usuarios/:id
+PUT
+/api/usuarios/:id
+DELETE
+/api/usuarios/:id
 
 🌐 URL Base: http://localhost:3002
 

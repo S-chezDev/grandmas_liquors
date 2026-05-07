@@ -581,6 +581,43 @@ module.exports = {
       });
     }
   },
+  updateStatus: async (req, res) => {
+    try {
+      if (isClienteUser(req)) {
+        return res.status(403).json({ success: false, message: 'No autorizado' });
+      }
+
+      const estado = typeof req.body?.estado === 'string' ? req.body.estado.trim() : '';
+      const motivo = typeof req.body?.motivo === 'string' ? req.body.motivo.trim() : '';
+
+      if (!['Activo', 'Inactivo'].includes(estado)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Estado invalido. Valores permitidos: Activo, Inactivo',
+        });
+      }
+
+      if (!motivo || motivo.length < 10 || motivo.length > 50) {
+        return res.status(400).json({
+          success: false,
+          message: 'El motivo es obligatorio y debe tener entre 10 y 50 caracteres',
+        });
+      }
+
+      const updated = await models.Clientes.updateStatus(req.params.id, { estado, motivo });
+      return res.json({
+        success: true,
+        message: 'Estado del cliente actualizado correctamente.',
+        data: updated,
+      });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        message: error.message,
+        details: error.details,
+      });
+    }
+  },
   uploadProfilePhoto: async (req, res) => {
     try {
       if (!req.user?.id) {

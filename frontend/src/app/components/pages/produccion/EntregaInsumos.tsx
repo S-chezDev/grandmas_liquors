@@ -1,0 +1,406 @@
+﻿import React, { useState, useEffect } from 'react';
+import { DataTable, Column, commonActions } from '../../DataTable';
+import { Modal } from '../../Modal';
+import { Form, FormField, FormActions } from '../../Form';
+import { Button } from '../../Button';
+import { Plus, Calendar } from 'lucide-react';
+import { api } from '../../../services/api';
+import { toast } from 'sonner';
+import type { EntregaInsumo, Usuario } from '../../../services/types';
+
+function esRolProductor(u: Usuario) {
+  return /^productor$/i.test(String(u.rol || '').trim());
+}
+
+function etiquetaProductorEnLista(u: Usuario) {
+  const nombre = `${u.nombre} ${u.apellido}`.trim();
+  return u.estado === 'activo' ? nombre : `${nombre} (Inactivo)`;
+}
+
+interface EntregaInsumoView extends EntregaInsumo {
+  productorNombre?: string;
+}
+
+export function EntregaInsumos() {
+  const [entregas, setEntregas] = useState<EntregaInsumoView[]>([]);
+  const [productores, setProductores] = useState<Usuario[]>([]);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [selectedEntrega, setSelectedEntrega] = useState<EntregaInsumoView | null>(null);
+  const [motivo, setMotivo] = useState('');
+  const [busqueda, setBusqueda] = useState('');
+  const [filtroProductor, setFiltroProductor] = useState<string>('');
+  const [filtroFecha, setFiltroFecha] = useState<string>('');
+  const [formData, setFormData] = useState({
+    insumo: '',
+    cantidad: 1,
+    productorId: 0,
+    fecha: new Date().toISOString().split('T')[0],
+    hora: new Date().toTimeString().slice(0, 5)
+  });
+
+  useEffect(() => {
+    cargarDatos();
+  }, []);
+
+  const cargarDatos = async () => {
+    try {
+      const [entregasData, usuariosData] = await Promise.all([
+        api.entregasInsumos.getAll(),
+        api.usuarios.getAll()
+      ]);
+
+      const listaProductores = usuariosData.filter(esRolProductor).sort((a, b) =>
+        `${a.nombre} ${a.apellido}`.localeCompare(`${b.nombre} ${b.apellido}`, 'es', { sensitivity: 'base' })
+      );
+      setProductores(listaProductores);
+
+      const entregasConInfo = entregasData.map((entrega) => {
+        const productor = usuariosData.find((u) => u.id === entrega.operarioId);
+        return {
+          ...entrega,
+          productorNombre: productor ? `${productor.nombre} ${productor.apellido}` : 'Desconocido',
+        };
+      });
+
+      setEntregas(entregasConInfo);
+    } catch (error) {
+      toast.error('Error al cargar datos');
+    }
+  };
+
+  const columns: Column[] = [
+    {
+      key: 'id',
+      label: 'ID',
+      render: (value: number) => `#${String(value).padStart(4, '0')}`
+    },
+    {
+      key: 'insumo',
+      label: 'Insumo'
+    },
+    {
+      key: 'cantidad',
+      label: 'Cantidad',
+      render: (cantidad: number) => `${cantidad} unidades`
+    },
+    {
+      key: 'productorNombre',
+      label: 'Productor',
+    },
+    {
+      key: 'fecha',
+      label: 'Fecha'
+    },
+    {
+      key: 'hora',
+      label: 'Hora'
+    }
+  ];
+
+  const handleAdd = () => {
+    setFormData({
+      insumo: '',
+      cantidad: 1,
+      productorId: 0,
+      fecha: new Date().toISOString().split('T')[0],
+      hora: new Date().toTimeString().slice(0, 5)
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleDelete = (entrega: EntregaInsumoView) => {
+    setSelectedEntrega(entrega);
+    setMotivo('');
+    setIsDeleteModalOpen(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!selectedEntrega) return;
+
+    if (motivo.length < 10 || motivo.length > 50) {
+      toast.error('El motivo debe tener entre 10 y 50 caracteres');
+      return;
+    }
+
+    try {
+      await api.entregasInsumos.delete(selectedEntrega.id, motivo);
+      toast.success('Entrega eliminada exitosamente');
+      setIsDeleteModalOpen(false);
+      cargarDatos();
+    } catch (error: any) {
+      toast.error(error.message || 'Error al eliminar entrega');
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!formData.insumo.trim()) {
+      toast.error('Ingrese el nombre del insumo');
+      return;
+    }
+
+    if (formData.insumo.length < 2 || formData.insumo.length > 50) {
+      toast.error('El nombre del insumo debe tener entre 2 y 50 caracteres');
+      return;
+    }
+
+    if (formData.cantidad < 1) {
+      toast.error('La cantidad debe ser mayor a 0');
+      return;
+    }
+
+    if (!formData.productorId) {
+      toast.error('Seleccione un productor');
+      return;
+    }
+
+    if (!productores.some((p) => p.id === formData.productorId)) {
+      toast.error('El productor seleccionado no está en la lista de usuarios con rol Productor');
+      return;
+    }
+
+    try {
+      await api.entregasInsumos.create({
+        insumo: formData.insumo.trim(),
+        cantidad: formData.cantidad,
+        operarioId: formData.productorId,
+        fecha: formData.fecha,
+        hora: formData.hora,
+      });
+
+      toast.success('Entrega de insumo registrada exitosamente');
+      setIsModalOpen(false);
+      cargarDatos();
+    } catch (error: any) {
+      toast.error(error.message || 'Error al registrar entrega');
+    }
+  };
+
+  const entregasFiltradas = entregas.filter(entrega => {
+    const matchBusqueda =
+      busqueda.length === 0 ||
+      (busqueda.length >= 2 &&
+        (entrega.insumo.toLowerCase().includes(busqueda.toLowerCase()) ||
+          entrega.productorNombre?.toLowerCase().includes(busqueda.toLowerCase()) ||
+          String(entrega.id).includes(busqueda)));
+
+    const matchProductor = !filtroProductor || String(entrega.operarioId) === filtroProductor;
+    const matchFecha = !filtroFecha || entrega.fecha === filtroFecha;
+
+    return matchBusqueda && matchProductor && matchFecha;
+  });
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2>Entrega de Insumos</h2>
+          <p className="text-muted-foreground">
+            Registra entregas de insumos a usuarios con rol Productor
+          </p>
+        </div>
+        <Button icon={<Plus className="w-5 h-5" />} onClick={handleAdd}>
+          Nueva Entrega
+        </Button>
+      </div>
+
+      <div className="bg-white rounded-lg border border-border p-4">
+        <div className="flex flex-col md:flex-row gap-3">
+          <div className="flex-1">
+            <input
+              type="text"
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              placeholder="Buscar... (mín. 2, máx. 50 caracteres)"
+              className="w-full px-4 py-2.5 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+              maxLength={50}
+            />
+          </div>
+          <div className="flex gap-2">
+            <div className="relative min-w-[180px]">
+              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+              <input
+                type="date"
+                value={filtroFecha}
+                onChange={(e) => setFiltroFecha(e.target.value)}
+                placeholder="Filtrar por fecha"
+                className="w-full pl-10 pr-3 py-2.5 border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary text-gray-500"
+              />
+            </div>
+            <select
+              value={filtroProductor}
+              onChange={(e) => setFiltroProductor(e.target.value)}
+              className="px-3 py-2.5 border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary min-w-[200px] text-gray-500"
+            >
+              <option value="">Filtrar por productor</option>
+              {productores.map((p) => (
+                <option key={p.id} value={String(p.id)}>
+                  {etiquetaProductorEnLista(p)}
+                </option>
+              ))}
+            </select>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setBusqueda('');
+                setFiltroProductor('');
+                setFiltroFecha('');
+              }}
+              className="px-4"
+            >
+              Limpiar
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <DataTable
+        columns={columns}
+        data={entregasFiltradas}
+        actions={[
+          commonActions.delete(handleDelete)
+        ]}
+      />
+
+      {/* Modal de formulario */}
+      <Modal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title="Nueva Entrega de Insumo"
+        size="lg"
+      >
+        <Form onSubmit={handleSubmit}>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2">
+              <FormField
+                label="Insumo"
+                name="insumo"
+                value={formData.insumo}
+                onChange={(value) => setFormData({ ...formData, insumo: value as string })}
+                placeholder="Nombre del insumo (2-50 caracteres)"
+                required
+              />
+            </div>
+
+            <FormField
+              label="Cantidad"
+              name="cantidad"
+              type="number"
+              value={formData.cantidad}
+              onChange={(value) => setFormData({ ...formData, cantidad: value as number })}
+              placeholder="Unidades"
+              required
+            />
+
+            <FormField
+              label="Productor"
+              name="productorId"
+              type="select"
+              selectPlaceholder={false}
+              value={formData.productorId}
+              onChange={(value) =>
+                setFormData({ ...formData, productorId: Number(value) || 0 })
+              }
+              options={[
+                { value: 0, label: 'Seleccione un productor' },
+                ...productores.map((p) => ({
+                  value: p.id,
+                  label: etiquetaProductorEnLista(p),
+                })),
+              ]}
+              required
+            />
+            {productores.length === 0 && (
+              <p className="col-span-2 text-sm text-muted-foreground">
+                No hay usuarios con rol Productor. Asigne el rol en Gestión de usuarios o Gestión de roles.
+              </p>
+            )}
+
+            <FormField
+              label="Fecha"
+              name="fecha"
+              type="date"
+              value={formData.fecha}
+              onChange={(value) => setFormData({ ...formData, fecha: value as string })}
+              required
+            />
+
+            <FormField
+              label="Hora"
+              name="hora"
+              type="time"
+              value={formData.hora}
+              onChange={(value) => setFormData({ ...formData, hora: value as string })}
+              required
+            />
+          </div>
+
+          <div className="p-4 bg-accent/50 rounded-lg">
+            <p className="text-sm text-muted-foreground">
+              Al registrar esta entrega, se agregará automáticamente al inventario de insumos.
+            </p>
+          </div>
+
+          <FormActions>
+            <Button variant="outline" onClick={() => setIsModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="submit">
+              Registrar Entrega
+            </Button>
+          </FormActions>
+        </Form>
+      </Modal>
+
+      {/* Modal de confirmación de eliminación */}
+      <Modal
+        isOpen={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        title="Eliminar Entrega de Insumo"
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="p-4 bg-red-50 rounded-lg border border-red-200">
+            <p className="text-sm text-red-700">
+              ¿Está seguro de eliminar esta entrega?
+            </p>
+            <p className="text-sm text-red-600 mt-2">
+              <strong>Insumo:</strong> {selectedEntrega?.insumo}
+            </p>
+            <p className="text-sm text-red-600">
+              <strong>Cantidad:</strong> {selectedEntrega?.cantidad} unidades
+            </p>
+          </div>
+
+          <FormField
+            label="Motivo de Eliminación"
+            name="motivo"
+            type="textarea"
+            value={motivo}
+            onChange={(value) => setMotivo(value as string)}
+            placeholder="Ingrese el motivo de eliminación (10-50 caracteres)"
+            required
+          />
+
+          {motivo && (
+            <p className="text-xs text-muted-foreground">
+              {motivo.length} / 50 caracteres
+            </p>
+          )}
+
+          <FormActions>
+            <Button variant="outline" onClick={() => setIsDeleteModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button variant="danger" onClick={handleConfirmDelete}>
+              Eliminar
+            </Button>
+          </FormActions>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+

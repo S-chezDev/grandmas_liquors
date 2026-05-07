@@ -3,6 +3,7 @@ const controller = require('../controllers/insumos.controllers');
 
 const router = express.Router();
 router.get('/', controller.getAll);
+router.get('/resumen-gestion', controller.getResumenGestion);
 router.get('/:id', controller.getById);
 router.post('/', controller.create);
 router.put('/:id', controller.update);

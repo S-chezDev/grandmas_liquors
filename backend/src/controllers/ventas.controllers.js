@@ -108,4 +108,50 @@ module.exports = {
       return res.status(500).json({ success: false, message: error.message });
     }
   },
+  updateStatus: async (req, res) => {
+    try {
+      if (isClienteUser(req)) {
+        return res.status(403).json({ success: false, message: 'No autorizado' });
+      }
+
+      const raw = String(req.body?.estado || '').trim();
+      const lower = raw.toLowerCase();
+      let normalized = null;
+      if (lower === 'pendiente') normalized = 'Pendiente';
+      else if (lower === 'completada' || lower === 'completado') normalized = 'Completada';
+      else if (lower === 'cancelada' || lower === 'cancelado') normalized = 'Cancelada';
+      else if (['Pendiente', 'Completada', 'Cancelada'].includes(raw)) normalized = raw;
+
+      if (!normalized) {
+        return res.status(400).json({
+          success: false,
+          message: 'Estado inválido. Valores permitidos: Pendiente, Completada, Cancelada',
+        });
+      }
+
+      const venta = await models.Ventas.getById(req.params.id);
+      if (!venta) return res.status(404).json({ success: false, message: 'Venta no encontrada' });
+
+      const cur = String(venta.estado || '').trim();
+      if (['Completada', 'Cancelada'].includes(cur)) {
+        return res.status(409).json({
+          success: false,
+          message: 'La venta ya está en estado final y no puede modificarse',
+        });
+      }
+
+      if (cur !== 'Pendiente') {
+        return res.status(400).json({ success: false, message: 'Solo se puede cambiar el estado desde Pendiente' });
+      }
+
+      if (normalized === 'Pendiente') {
+        return res.status(400).json({ success: false, message: 'Seleccione un estado distinto al actual' });
+      }
+
+      await models.Ventas.update(req.params.id, { estado: normalized });
+      return res.json({ success: true, message: 'Estado de venta actualizado exitosamente' });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({ success: false, message: error.message });
+    }
+  },
 };
