@@ -23,6 +23,9 @@ interface EntregaInsumoView extends EntregaInsumo {
 
 export function EntregaInsumos() {
   const [entregas, setEntregas] = useState<EntregaInsumoView[]>([]);
+  const [catalogoInsumos, setCatalogoInsumos] = useState<
+    { id: number; nombre: string; unidad: string; estado: 'activo' | 'inactivo' }[]
+  >([]);
   const [productores, setProductores] = useState<Usuario[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -32,11 +35,11 @@ export function EntregaInsumos() {
   const [filtroProductor, setFiltroProductor] = useState<string>('');
   const [filtroFecha, setFiltroFecha] = useState<string>('');
   const [formData, setFormData] = useState({
-    insumo: '',
+    insumoId: 0,
     cantidad: 1,
     productorId: 0,
     fecha: new Date().toISOString().split('T')[0],
-    hora: new Date().toTimeString().slice(0, 5)
+    hora: new Date().toTimeString().slice(0, 5),
   });
 
   useEffect(() => {
@@ -45,10 +48,20 @@ export function EntregaInsumos() {
 
   const cargarDatos = async () => {
     try {
-      const [entregasData, usuariosData] = await Promise.all([
+      const [entregasData, usuariosData, insumosCat] = await Promise.all([
         api.entregasInsumos.getAll(),
-        api.usuarios.getAll()
+        api.usuarios.getAll(),
+        api.insumos.listCatalogo(),
       ]);
+
+      setCatalogoInsumos(
+        insumosCat.filter((i) => i.estado === 'activo').map((i) => ({
+          id: i.id,
+          nombre: i.nombre,
+          unidad: i.unidad,
+          estado: i.estado,
+        }))
+      );
 
       const listaProductores = usuariosData.filter(esRolProductor).sort((a, b) =>
         `${a.nombre} ${a.apellido}`.localeCompare(`${b.nombre} ${b.apellido}`, 'es', { sensitivity: 'base' })
@@ -82,7 +95,8 @@ export function EntregaInsumos() {
     {
       key: 'cantidad',
       label: 'Cantidad',
-      render: (cantidad: number) => `${cantidad} unidades`
+      render: (cantidad: number, row: EntregaInsumoView) =>
+        row.unidad ? `${cantidad} ${row.unidad}` : `${cantidad} unidades`,
     },
     {
       key: 'productorNombre',
@@ -100,11 +114,11 @@ export function EntregaInsumos() {
 
   const handleAdd = () => {
     setFormData({
-      insumo: '',
+      insumoId: 0,
       cantidad: 1,
       productorId: 0,
       fecha: new Date().toISOString().split('T')[0],
-      hora: new Date().toTimeString().slice(0, 5)
+      hora: new Date().toTimeString().slice(0, 5),
     });
     setIsModalOpen(true);
   };
@@ -136,13 +150,14 @@ export function EntregaInsumos() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!formData.insumo.trim()) {
-      toast.error('Ingrese el nombre del insumo');
+    if (!formData.insumoId) {
+      toast.error('Seleccione un insumo del catálogo');
       return;
     }
 
-    if (formData.insumo.length < 2 || formData.insumo.length > 50) {
-      toast.error('El nombre del insumo debe tener entre 2 y 50 caracteres');
+    const insSel = catalogoInsumos.find((i) => i.id === formData.insumoId);
+    if (!insSel) {
+      toast.error('El insumo seleccionado no está disponible (debe estar activo)');
       return;
     }
 
@@ -163,7 +178,8 @@ export function EntregaInsumos() {
 
     try {
       await api.entregasInsumos.create({
-        insumo: formData.insumo.trim(),
+        insumoId: formData.insumoId,
+        unidad: insSel.unidad,
         cantidad: formData.cantidad,
         operarioId: formData.productorId,
         fecha: formData.fecha,
@@ -275,13 +291,28 @@ export function EntregaInsumos() {
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <FormField
-                label="Insumo"
-                name="insumo"
-                value={formData.insumo}
-                onChange={(value) => setFormData({ ...formData, insumo: value as string })}
-                placeholder="Nombre del insumo (2-50 caracteres)"
+                label="Insumo (catálogo)"
+                name="insumoId"
+                type="select"
+                selectPlaceholder={false}
+                value={formData.insumoId}
+                onChange={(value) =>
+                  setFormData({ ...formData, insumoId: Number(value) || 0 })
+                }
+                options={[
+                  { value: 0, label: 'Seleccione un insumo activo' },
+                  ...catalogoInsumos.map((i) => ({
+                    value: i.id,
+                    label: `${i.nombre} (${i.unidad})`,
+                  })),
+                ]}
                 required
               />
+              {catalogoInsumos.length === 0 && (
+                <p className="text-sm text-muted-foreground mt-1">
+                  No hay insumos activos. Cree uno en el módulo Insumos primero.
+                </p>
+              )}
             </div>
 
             <FormField

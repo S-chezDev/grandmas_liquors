@@ -7,7 +7,9 @@ import { Modal } from '../Modal';
 import { AlertDialog } from '../AlertDialog';
 import { useAuth } from '../AuthContext';
 import { api } from '../../services/api';
-import logoImage from '../../../imports/android-chrome-192x192.png';
+
+// Logo local - using favicon from public folder
+const LOGO_URL = '/favicon/apple-touch-icon.png';
 
 interface LoginProps {
   onLogin: (email: string, password: string) => Promise<void>;
@@ -167,7 +169,7 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-20 h-20 bg-white rounded-2xl mb-4 shadow-lg overflow-hidden">
             <img
-              src={logoImage}
+              src={LOGO_URL}
               alt="Grandma's Liqueurs Logo"
               className="w-full h-full object-cover"
             />

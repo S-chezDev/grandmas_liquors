@@ -6,9 +6,29 @@ import { Button } from '../../Button';
 import { Plus, FileText, Calendar } from 'lucide-react';
 import { api } from '../../../services/api';
 import { toast } from 'sonner';
-import type { OrdenProduccion, Producto, Usuario } from '../../../services/types';
+import type { OrdenProduccion, Producto, Usuario, ProductoInsumoRecetaLine } from '../../../services/types';
 import { MotivoModal } from '../../MotivoModal';
 import { AlertDialog } from '../../AlertDialog';
+
+function totalRequeridoLinea(cantidadRequerida: number, ordenCantidad: number): number {
+  return Number(cantidadRequerida) * Math.max(1, ordenCantidad);
+}
+
+function totalMlVolumen(unidad: string, totalLinea: number): number | null {
+  const u = String(unidad || '')
+    .trim()
+    .toLowerCase();
+  if (u === 'mililitros') return totalLinea;
+  if (u === 'litros') return totalLinea * 1000;
+  return null;
+}
+
+function etiquetaEnvasesAprox(unidad: string, totalLinea: number, envaseMl: number): string {
+  const ml = totalMlVolumen(unidad, totalLinea);
+  if (ml == null) return '—';
+  if (envaseMl <= 0) return '—';
+  return String(Math.ceil(ml / envaseMl));
+}
 
 interface OrdenProduccionView extends OrdenProduccion {
   productoNombre?: string;
@@ -47,10 +67,48 @@ export function Produccion() {
   // Estados para validaciones en tiempo real
   const [fechaValida, setFechaValida] = useState<boolean | null>(null);
   const [tiempoValido, setTiempoValido] = useState<boolean | null>(null);
+  const [recetaLineas, setRecetaLineas] = useState<ProductoInsumoRecetaLine[]>([]);
+  const [envaseMl, setEnvaseMl] = useState('');
+  const [detalleReceta, setDetalleReceta] = useState<ProductoInsumoRecetaLine[]>([]);
+  const [detalleEnvaseMl, setDetalleEnvaseMl] = useState('');
 
   useEffect(() => {
-    cargarDatos();
-  }, []);
+    if (!formData.productoId) {
+      setRecetaLineas([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await api.productoInsumos.getByProducto(formData.productoId);
+        if (!cancelled) setRecetaLineas(rows as ProductoInsumoRecetaLine[]);
+      } catch {
+        if (!cancelled) setRecetaLineas([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [formData.productoId]);
+
+  useEffect(() => {
+    if (!isDetailModalOpen || !selectedOrden?.productoId) {
+      setDetalleReceta([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await api.productoInsumos.getByProducto(selectedOrden.productoId);
+        if (!cancelled) setDetalleReceta(rows as ProductoInsumoRecetaLine[]);
+      } catch {
+        if (!cancelled) setDetalleReceta([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isDetailModalOpen, selectedOrden?.productoId]);
 
   // Cerrar listas desplegables al hacer clic fuera
   useEffect(() => {
@@ -93,6 +151,10 @@ export function Produccion() {
       toast.error('Error al cargar datos');
     }
   };
+
+  useEffect(() => {
+    cargarDatos();
+  }, []);
 
   // Filtrar productos según búsqueda
   const productosFiltrados = productos.filter(p => {
@@ -228,11 +290,13 @@ export function Produccion() {
     // Resetear validaciones
     setFechaValida(true); // Fecha de hoy es válida
     setTiempoValido(true); // 60 minutos es válido
+    setEnvaseMl('');
     setIsModalOpen(true);
   };
 
   const handleViewDetail = (orden: OrdenProduccionView) => {
     setSelectedOrden(orden);
+    setDetalleEnvaseMl('');
     setIsDetailModalOpen(true);
   };
 
@@ -655,6 +719,79 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
             </div>
           </div>
 
+          {formData.productoId > 0 && (
+            <div className="mt-4 space-y-3">
+              <h4 className="text-sm font-medium">Receta (consumo previsto)</h4>
+              {recetaLineas.length === 0 ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                  No hay líneas de receta para este producto. Defina la receta en la API o administración
+                  antes de producir; consulte{' '}
+                  <code className="rounded bg-white/60 px-1 text-xs">docs/MODULO_PRODUCCION_FLUJO.md</code>{' '}
+                  en el repositorio.
+                </div>
+              ) : (
+                <>
+                  <div className="overflow-x-auto rounded-lg border border-border">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/50">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-medium">Insumo</th>
+                          <th className="px-3 py-2 text-right font-medium">Por unidad</th>
+                          <th className="px-3 py-2 text-right font-medium">Total</th>
+                          <th className="px-3 py-2 text-left font-medium">Unidad</th>
+                          <th className="px-3 py-2 text-right font-medium">Envases (aprox.)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {recetaLineas.map((line) => {
+                          const porUnidad = Number(line.cantidad_requerida);
+                          const total = totalRequeridoLinea(porUnidad, formData.cantidad);
+                          const unidad = line.unidad || '';
+                          const envaseNum = parseFloat(String(envaseMl).replace(',', '.'));
+                          const envases = etiquetaEnvasesAprox(
+                            unidad,
+                            total,
+                            Number.isFinite(envaseNum) && envaseNum > 0 ? envaseNum : 0
+                          );
+                          return (
+                            <tr key={line.id} className="border-t border-border">
+                              <td className="px-3 py-2">
+                                {line.insumo_nombre?.trim() || `Insumo #${line.insumo_id}`}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums">{porUnidad}</td>
+                              <td className="px-3 py-2 text-right font-medium tabular-nums">{total}</td>
+                              <td className="px-3 py-2">{unidad}</td>
+                              <td className="px-3 py-2 text-right tabular-nums">{envases}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex flex-wrap items-end gap-3">
+                    <div>
+                      <label className="mb-1 block text-xs text-muted-foreground">
+                        Tamaño del envase (ml)
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        step="any"
+                        value={envaseMl}
+                        onChange={(e) => setEnvaseMl(e.target.value)}
+                        placeholder="Ej. 100"
+                        className="w-36 rounded-lg border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    </div>
+                    <p className="pb-2 text-xs text-muted-foreground">
+                      Solo aplica a insumos en litros o mililitros; otras unidades muestran —.
+                    </p>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           <div className="p-4 bg-accent/50 rounded-lg">
             <p className="text-sm text-muted-foreground">
               La orden de producción se creará en estado "Pendiente".
@@ -726,6 +863,74 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                 <label className="text-sm text-muted-foreground">Tiempo de Preparación</label>
                 <p className="mt-1">{selectedOrden.tiempoPreparacion} minutos</p>
               </div>
+            </div>
+
+            <div className="space-y-3">
+              <h4 className="text-sm font-medium">Receta para esta orden</h4>
+              {detalleReceta.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No hay receta registrada para este producto (o no se pudo cargar).
+                </p>
+              ) : (
+                <>
+                  <div className="overflow-x-auto rounded-lg border border-border">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/50">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-medium">Insumo</th>
+                          <th className="px-3 py-2 text-right font-medium">Por unidad</th>
+                          <th className="px-3 py-2 text-right font-medium">Total orden</th>
+                          <th className="px-3 py-2 text-left font-medium">Unidad</th>
+                          <th className="px-3 py-2 text-right font-medium">Envases (aprox.)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detalleReceta.map((line) => {
+                          const porUnidad = Number(line.cantidad_requerida);
+                          const total = totalRequeridoLinea(porUnidad, selectedOrden.cantidad);
+                          const unidad = line.unidad || '';
+                          const envaseNum = parseFloat(String(detalleEnvaseMl).replace(',', '.'));
+                          const envases = etiquetaEnvasesAprox(
+                            unidad,
+                            total,
+                            Number.isFinite(envaseNum) && envaseNum > 0 ? envaseNum : 0
+                          );
+                          return (
+                            <tr key={line.id} className="border-t border-border">
+                              <td className="px-3 py-2">
+                                {line.insumo_nombre?.trim() || `Insumo #${line.insumo_id}`}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums">{porUnidad}</td>
+                              <td className="px-3 py-2 text-right font-medium tabular-nums">{total}</td>
+                              <td className="px-3 py-2">{unidad}</td>
+                              <td className="px-3 py-2 text-right tabular-nums">{envases}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex flex-wrap items-end gap-3">
+                    <div>
+                      <label className="mb-1 block text-xs text-muted-foreground">
+                        Tamaño del envase (ml)
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        step="any"
+                        value={detalleEnvaseMl}
+                        onChange={(e) => setDetalleEnvaseMl(e.target.value)}
+                        placeholder="Ej. 100"
+                        className="w-36 rounded-lg border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    </div>
+                    <p className="pb-2 text-xs text-muted-foreground">
+                      Cálculo orientativo para volúmenes (L / ml).
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Motivo de cancelación */}

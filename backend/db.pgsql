@@ -69,6 +69,7 @@ CREATE TABLE categorias (
     id SERIAL PRIMARY KEY,
     nombre VARCHAR(100) NOT NULL UNIQUE,
     descripcion TEXT,
+    cantidad_productos INTEGER NOT NULL DEFAULT 0,
     estado VARCHAR(20) DEFAULT 'Activo',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -336,7 +337,25 @@ CREATE TABLE entregas_insumos (
 );
 
 -- ========================================
--- TABLA: produccion (nuevo CHECK de estados, productor_id)
+-- TABLA: insumo_movimientos (auditoría de inventario de insumos)
+-- ========================================
+CREATE TABLE insumo_movimientos (
+    id SERIAL PRIMARY KEY,
+    insumo_id INTEGER NOT NULL REFERENCES insumos(id) ON DELETE CASCADE,
+    tipo_movimiento VARCHAR(30) NOT NULL,
+    cantidad DECIMAL(12,4) NOT NULL,
+    unidad VARCHAR(20) NOT NULL,
+    saldo_anterior DECIMAL(12,4),
+    saldo_nuevo DECIMAL(12,4),
+    referencia_tabla VARCHAR(50),
+    referencia_id INTEGER,
+    usuario_id INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+    razon TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ========================================
+-- TABLA: produccion (alineada con modelo actual)
 -- ========================================
 CREATE TABLE produccion (
     id SERIAL PRIMARY KEY,
@@ -345,10 +364,10 @@ CREATE TABLE produccion (
     pedido_id INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
     cantidad INTEGER NOT NULL CHECK (cantidad > 0),
     fecha DATE NOT NULL,
-    productor_id INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+    responsable VARCHAR(150),
     tiempo_preparacion_minutos INTEGER DEFAULT 1 CHECK (tiempo_preparacion_minutos > 0),
-    estado VARCHAR(30) DEFAULT 'Pendiente'
-        CHECK (estado IN ('Pendiente','En Proceso','Completada','Cancelada')),
+    estado VARCHAR(40) DEFAULT 'Orden Recibida'
+        CHECK (estado IN ('Orden Recibida','Orden en preparacion','Orden Lista','Cancelada')),
     notes TEXT,
     insumos_gastados JSONB DEFAULT '[]'::jsonb,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -679,9 +698,12 @@ CREATE INDEX idx_compras_proveedor_fecha ON compras(proveedor_id, fecha DESC);
 CREATE INDEX idx_producto_insumos_producto ON producto_insumos(producto_id);
 CREATE INDEX idx_producto_insumos_insumo ON producto_insumos(insumo_id);
 CREATE INDEX idx_entregas_insumos_fecha ON entregas_insumos(fecha DESC);
+CREATE INDEX idx_insumo_movimientos_insumo ON insumo_movimientos(insumo_id);
+CREATE INDEX idx_insumo_movimientos_usuario ON insumo_movimientos(usuario_id);
+CREATE INDEX idx_insumo_movimientos_fecha ON insumo_movimientos(created_at DESC);
 CREATE INDEX idx_produccion_fecha ON produccion(fecha DESC);
 CREATE INDEX idx_produccion_pedido ON produccion(pedido_id);
-CREATE INDEX idx_produccion_productor ON produccion(productor_id);
+CREATE INDEX idx_produccion_responsable ON produccion(responsable);
 CREATE INDEX idx_detalle_pedidos_pedido ON detalle_pedidos(pedido_id);
 CREATE INDEX idx_detalle_ventas_venta ON detalle_ventas(venta_id);
 CREATE INDEX idx_detalle_compras_compra ON detalle_compras(compra_id);

@@ -1,26 +1,35 @@
 ﻿import React, { useState, useEffect } from 'react';
 import { DataTable, Column } from '../../DataTable';
 import { Modal } from '../../Modal';
-import { FormField } from '../../Form';
+import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Package } from 'lucide-react';
+import { Plus, Package } from 'lucide-react';
 import { api } from '../../../services/api';
 import { toast } from 'sonner';
-import type { Insumo, Usuario, Producto } from '../../../services/types';
+import type { Insumo } from '../../../services/types';
+import { INSUMO_UNIDADES_API } from '../../../services/types';
 
 interface InsumoView extends Insumo {
   operarioNombre?: string;
-  productoNombre?: string;
 }
 
 export function Insumos() {
   const [insumos, setInsumos] = useState<InsumoView[]>([]);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [selectedInsumo, setSelectedInsumo] = useState<InsumoView | null>(null);
   const [busqueda, setBusqueda] = useState('');
   const [filtroFecha, setFiltroFecha] = useState<string>('');
   const [filtroOperario, setFiltroOperario] = useState<string>('');
-  const [operarios, setOperarios] = useState<Usuario[]>([]);
+
+  const [formNuevo, setFormNuevo] = useState({
+    nombre: '',
+    descripcion: '',
+    unidad: 'Unidades' as string,
+    cantidad: 0,
+    stockMinimo: 10,
+    estado: 'activo' as 'activo' | 'inactivo',
+  });
 
   useEffect(() => {
     cargarDatos();
@@ -28,61 +37,94 @@ export function Insumos() {
 
   const cargarDatos = async () => {
     try {
-      const [insumosData, usuariosData, productosData] = await Promise.all([
-        api.insumos.getAll(),
-        api.usuarios.getAll(),
-        api.productos.getAll()
-      ]);
+      const insumosData = await api.insumos.getAll();
 
-      const operariosData = usuariosData.filter(u => u.rol === 'Productor');
-      setOperarios(operariosData);
-
-      const insumosConInfo = insumosData.map(insumo => {
-        const operario = usuariosData.find(u => u.id === insumo.operarioId);
-        const producto = insumo.productoRelacionadoId
-          ? productosData.find(p => p.id === insumo.productoRelacionadoId)
-          : null;
-        return {
-          ...insumo,
-          operarioNombre: operario ? `${operario.nombre} ${operario.apellido}` : 'Desconocido',
-          productoNombre: producto?.nombre
-        };
-      });
+      const insumosConInfo: InsumoView[] = insumosData.map((insumo) => ({
+        ...insumo,
+        operarioNombre: insumo.operario?.trim() || undefined,
+      }));
 
       setInsumos(insumosConInfo);
-    } catch (error) {
+    } catch {
       toast.error('Error al cargar datos');
     }
   };
+
+  const handleNuevoInsumo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const nombre = formNuevo.nombre.trim();
+    if (nombre.length < 2 || nombre.length > 150) {
+      toast.error('El nombre debe tener entre 2 y 150 caracteres');
+      return;
+    }
+    if (!INSUMO_UNIDADES_API.includes(formNuevo.unidad as (typeof INSUMO_UNIDADES_API)[number])) {
+      toast.error('Seleccione una unidad válida');
+      return;
+    }
+    if (formNuevo.cantidad < 0) {
+      toast.error('La cantidad no puede ser negativa');
+      return;
+    }
+    if (formNuevo.stockMinimo < 0) {
+      toast.error('El stock mínimo no puede ser negativo');
+      return;
+    }
+
+    try {
+      await api.insumos.create({
+        nombre,
+        descripcion: formNuevo.descripcion.trim() || undefined,
+        unidad: formNuevo.unidad,
+        cantidad: formNuevo.cantidad,
+        stock_minimo: formNuevo.stockMinimo,
+        estado: formNuevo.estado === 'activo' ? 'Activo' : 'Inactivo',
+      });
+      toast.success('Insumo registrado en catálogo');
+      setIsCreateModalOpen(false);
+      setFormNuevo({
+        nombre: '',
+        descripcion: '',
+        unidad: 'Unidades',
+        cantidad: 0,
+        stockMinimo: 10,
+        estado: 'activo',
+      });
+      cargarDatos();
+    } catch (err: any) {
+      toast.error(err.message || 'Error al crear insumo');
+    }
+  };
+
+  const operariosUnicos = Array.from(
+    new Set(insumos.map((i) => i.operarioNombre).filter(Boolean) as string[])
+  ).sort((a, b) => a.localeCompare(b, 'es'));
 
   const columns: Column[] = [
     {
       key: 'id',
       label: 'ID',
-      render: (value: number) => `#${String(value).padStart(4, '0')}`
+      render: (value: number) => `#${String(value).padStart(4, '0')}`,
     },
     {
       key: 'nombre',
-      label: 'Insumo'
+      label: 'Insumo',
     },
     {
       key: 'cantidad',
       label: 'Cantidad',
-      render: (cantidad: number) => `${cantidad} unidades`
+      render: (_: number, row: InsumoView) =>
+        `${row.cantidad} ${row.unidad ? `(${row.unidad})` : ''}`.trim(),
     },
     {
       key: 'operarioNombre',
-      label: 'Operario'
+      label: 'Último operario',
+      render: (v: string | undefined) => v || '—',
     },
     {
-      key: 'fecha',
-      label: 'Fecha'
+      key: 'fechaUltimaModificacion',
+      label: 'Última entrega',
+      render: (v: string | undefined) => v || '—',
     },
-    {
-      key: 'productoNombre',
-      label: 'Producto Relacionado',
-      render: (value: string | undefined) => value || '-'
-    }
   ];
 
   const handleViewDetail = (insumo: InsumoView) => {
@@ -90,15 +132,18 @@ export function Insumos() {
     setIsDetailModalOpen(true);
   };
 
-  const insumosFiltrados = insumos.filter(insumo => {
-    const matchBusqueda = busqueda.length === 0 ||
-      busqueda.length >= 2 &&
-      (insumo.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-       insumo.operarioNombre?.toLowerCase().includes(busqueda.toLowerCase()) ||
-       String(insumo.id).includes(busqueda));
+  const insumosFiltrados = insumos.filter((insumo) => {
+    const matchBusqueda =
+      busqueda.length === 0 ||
+      (busqueda.length >= 2 &&
+        (insumo.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
+          (insumo.operarioNombre || '').toLowerCase().includes(busqueda.toLowerCase()) ||
+          String(insumo.id).includes(busqueda)));
 
-    const matchFecha = !filtroFecha || insumo.fecha === filtroFecha;
-    const matchOperario = !filtroOperario || String(insumo.operarioId) === filtroOperario;
+    const matchFecha =
+      !filtroFecha || (insumo.fechaUltimaModificacion || '') === filtroFecha;
+    const matchOperario =
+      !filtroOperario || (insumo.operarioNombre || '') === filtroOperario;
 
     return matchBusqueda && matchFecha && matchOperario;
   });
@@ -108,13 +153,20 @@ export function Insumos() {
       <div className="flex items-center justify-between">
         <div>
           <h2>Inventario de Insumos</h2>
-          <p className="text-muted-foreground">Visualiza el inventario de insumos entregados a operarios</p>
+          <p className="text-muted-foreground">
+            Catálogo y stock; las entregas a productores aumentan el inventario registrado.
+          </p>
         </div>
-        <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 rounded-lg border border-blue-200">
-          <Package className="w-5 h-5 text-blue-600" />
-          <span className="text-sm font-medium text-blue-700">
-            Total: {insumos.reduce((sum, i) => sum + i.cantidad, 0)} unidades
-          </span>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 rounded-lg border border-blue-200">
+            <Package className="w-5 h-5 text-blue-600" />
+            <span className="text-sm font-medium text-blue-700">
+              Total en vista: {insumosFiltrados.reduce((sum, i) => sum + i.cantidad, 0)}
+            </span>
+          </div>
+          <Button icon={<Plus className="w-5 h-5" />} onClick={() => setIsCreateModalOpen(true)}>
+            Nuevo insumo
+          </Button>
         </div>
       </div>
 
@@ -130,7 +182,7 @@ export function Insumos() {
               maxLength={50}
             />
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <input
               type="date"
               value={filtroFecha}
@@ -143,9 +195,9 @@ export function Insumos() {
               className="px-3 py-2.5 border border-border rounded-lg bg-white text-gray-500 focus:outline-none focus:ring-2 focus:ring-primary min-w-[200px]"
             >
               <option value="">Filtrar por operario</option>
-              {operarios.map(o => (
-                <option key={o.id} value={String(o.id)}>
-                  {o.nombre} {o.apellido}
+              {operariosUnicos.map((o) => (
+                <option key={o} value={o}>
+                  {o}
                 </option>
               ))}
             </select>
@@ -166,8 +218,9 @@ export function Insumos() {
 
       <div className="p-4 bg-accent/50 rounded-lg">
         <p className="text-sm text-muted-foreground">
-          Los insumos se agregan automáticamente al inventario cuando se registra una entrega en el módulo "Entrega de Insumos".
-          Este módulo es de solo visualización.
+          Use <strong>Nuevo insumo</strong> para dar de alta materiales en el catálogo (con stock inicial
+          opcional). Use <strong>Entrega de insumos</strong> para cargar inventario a un productor
+          concretando cantidad y movimiento.
         </p>
       </div>
 
@@ -176,15 +229,85 @@ export function Insumos() {
         data={insumosFiltrados}
         actions={[
           {
-            label: 'Ver Detalle',
-            icon: <span className="text-xs">ðŸ‘ï¸</span>,
+            label: 'Ver detalle',
             onClick: handleViewDetail,
-            variant: 'secondary'
-          }
+            variant: 'secondary',
+          },
         ]}
       />
 
-      {/* Modal de detalle */}
+      <Modal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        title="Nuevo insumo (catálogo)"
+        size="lg"
+      >
+        <Form onSubmit={handleNuevoInsumo}>
+          <FormField
+            label="Nombre"
+            name="nombre"
+            value={formNuevo.nombre}
+            onChange={(v) => setFormNuevo({ ...formNuevo, nombre: v as string })}
+            placeholder="Ej. Alcohol etílico 96°"
+            required
+          />
+          <FormField
+            label="Descripción"
+            name="descripcion"
+            type="textarea"
+            value={formNuevo.descripcion}
+            onChange={(v) => setFormNuevo({ ...formNuevo, descripcion: v as string })}
+            placeholder="Opcional"
+          />
+          <FormField
+            label="Unidad"
+            name="unidad"
+            type="select"
+            selectPlaceholder={false}
+            value={formNuevo.unidad}
+            onChange={(v) => setFormNuevo({ ...formNuevo, unidad: v as string })}
+            options={INSUMO_UNIDADES_API.map((u) => ({ value: u, label: u }))}
+            required
+          />
+          <div className="grid grid-cols-2 gap-4">
+            <FormField
+              label="Cantidad inicial"
+              name="cantidad"
+              type="number"
+              value={formNuevo.cantidad}
+              min={0}
+              onChange={(v) => setFormNuevo({ ...formNuevo, cantidad: Number(v) || 0 })}
+            />
+            <FormField
+              label="Stock mínimo"
+              name="stockMinimo"
+              type="number"
+              value={formNuevo.stockMinimo}
+              min={0}
+              onChange={(v) => setFormNuevo({ ...formNuevo, stockMinimo: Number(v) || 0 })}
+            />
+          </div>
+          <FormField
+            label="Estado"
+            name="estado"
+            type="select"
+            selectPlaceholder={false}
+            value={formNuevo.estado}
+            onChange={(v) => setFormNuevo({ ...formNuevo, estado: v as 'activo' | 'inactivo' })}
+            options={[
+              { value: 'activo', label: 'Activo' },
+              { value: 'inactivo', label: 'Inactivo' },
+            ]}
+          />
+          <FormActions>
+            <Button type="button" variant="outline" onClick={() => setIsCreateModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="submit">Guardar</Button>
+          </FormActions>
+        </Form>
+      </Modal>
+
       <Modal
         isOpen={isDetailModalOpen}
         onClose={() => setIsDetailModalOpen(false)}
@@ -193,7 +316,6 @@ export function Insumos() {
       >
         {selectedInsumo && (
           <div className="space-y-6">
-            {/* Header */}
             <div className="flex items-center justify-between p-4 bg-accent rounded-lg">
               <div>
                 <h3 className="text-lg">#{String(selectedInsumo.id).padStart(4, '0')}</h3>
@@ -201,45 +323,22 @@ export function Insumos() {
               </div>
               <div className="text-right">
                 <p className="text-sm text-muted-foreground">Cantidad</p>
-                <p className="text-xl font-semibold">{selectedInsumo.cantidad}</p>
+                <p className="text-xl font-semibold">
+                  {selectedInsumo.cantidad}
+                  {selectedInsumo.unidad ? ` ${selectedInsumo.unidad}` : ''}
+                </p>
               </div>
             </div>
 
-            {/* Información general */}
             <div className="grid grid-cols-2 gap-6">
               <div>
-                <label className="text-sm text-muted-foreground">ID</label>
-                <p className="mt-1">#{String(selectedInsumo.id).padStart(4, '0')}</p>
+                <label className="text-sm text-muted-foreground">Último operario (entrega)</label>
+                <p className="mt-1">{selectedInsumo.operarioNombre || '—'}</p>
               </div>
               <div>
-                <label className="text-sm text-muted-foreground">Insumo</label>
-                <p className="mt-1">{selectedInsumo.nombre}</p>
+                <label className="text-sm text-muted-foreground">Fecha última entrega</label>
+                <p className="mt-1">{selectedInsumo.fechaUltimaModificacion || '—'}</p>
               </div>
-              <div>
-                <label className="text-sm text-muted-foreground">Cantidad</label>
-                <p className="mt-1">{selectedInsumo.cantidad} unidades</p>
-              </div>
-              <div>
-                <label className="text-sm text-muted-foreground">Operario</label>
-                <p className="mt-1">{selectedInsumo.operarioNombre}</p>
-              </div>
-              <div>
-                <label className="text-sm text-muted-foreground">Fecha</label>
-                <p className="mt-1">{selectedInsumo.fecha}</p>
-              </div>
-              <div>
-                <label className="text-sm text-muted-foreground">Producto Relacionado</label>
-                <p className="mt-1">{selectedInsumo.productoNombre || 'No especificado'}</p>
-              </div>
-            </div>
-
-            {/* Información adicional */}
-            <div className="p-4 bg-accent/50 rounded-lg">
-              <label className="text-sm text-muted-foreground block mb-2">Información</label>
-              <p className="text-sm">
-                Este insumo fue entregado al operario {selectedInsumo.operarioNombre} el día {selectedInsumo.fecha}.
-                {selectedInsumo.productoNombre && ` Relacionado con el producto "${selectedInsumo.productoNombre}".`}
-              </p>
             </div>
           </div>
         )}

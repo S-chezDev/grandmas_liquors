@@ -12,6 +12,7 @@ const comprasRoutes = require('./compras.routes');
 const insumosRoutes = require('./insumos.routes');
 const entregasInsumosRoutes = require('./entregas-insumos.routes');
 const produccionRoutes = require('./produccion.routes');
+const productoInsumosRoutes = require('./producto-insumos.routes');
 const rolesRoutes = require('./roles.routes');
 const usuariosRoutes = require('./usuarios.routes');
 const authRoutes = require('./auth.routes');
@@ -36,6 +37,7 @@ router.use('/api/compras', authenticateJWT, comprasRoutes);
 router.use('/api/insumos', authenticateJWT, insumosRoutes);
 router.use('/api/entregas-insumos', authenticateJWT, entregasInsumosRoutes);
 router.use('/api/produccion', authenticateJWT, produccionRoutes);
+router.use('/api/producto-insumos', authenticateJWT, productoInsumosRoutes);
 router.use('/api/roles', authenticateJWT, rolesRoutes);
 router.use('/api/usuarios', authenticateJWT, usuariosRoutes);
 

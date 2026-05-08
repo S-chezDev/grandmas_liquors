@@ -23,7 +23,9 @@ import {
   User
 } from 'lucide-react';
 import { useAuth } from './AuthContext';
-import logoImage from '../../imports/android-chrome-192x192.png';
+
+// Logo local - using favicon from public folder
+const LOGO_URL = '/favicon/apple-touch-icon.png';
 
 interface SubMenuItem {
   name: string;
@@ -175,7 +177,7 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
           <div className="mb-2 flex items-center gap-2 sm:gap-3">
             <div className="w-8 h-8 sm:w-9 sm:h-9 md:w-10 md:h-10 bg-white rounded-lg flex items-center justify-center overflow-hidden flex-shrink-0">
               <img
-                src={logoImage}
+                src={LOGO_URL}
                 alt="Grandma's Liqueurs Logo"
                 className="w-full h-full object-cover"
               />
@@ -190,7 +192,7 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
           <div className="mb-2 flex items-center justify-center">
             <div className="w-8 h-8 sm:w-9 sm:h-9 md:w-10 md:h-10 bg-white rounded-lg flex items-center justify-center overflow-hidden">
               <img
-                src={logoImage}
+                src={LOGO_URL}
                 alt="Grandma's Liqueurs Logo"
                 className="w-full h-full object-cover"
               />

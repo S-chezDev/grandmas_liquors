@@ -157,6 +157,7 @@ function mapCategoria(r: any): Categoria {
     nombre: r.nombre || '',
     descripcion: r.descripcion || '',
     estado: prodEstadoUi(r.estado) as Categoria['estado'],
+    productos: Number(r.productos ?? r.cantidad_productos ?? 0),
     createdAt: r.created_at || '',
     updatedAt: r.updated_at || '',
     historialCambios: [],
@@ -585,23 +586,63 @@ export const api = {
     },
     getById: async (id: number) => mapCategoria(await apiFetchData(`/api/categorias/${id}`)),
     create: async (data: Partial<Categoria>) => {
+      // Validación defensiva: asegurar que nombre y descripción sean válidos
+      const nombre = String(data?.nombre || '').trim();
+      const descripcion = String(data?.descripcion || '').trim();
+
+      if (!nombre) {
+        throw new Error('El nombre de la categoría es obligatorio');
+      }
+
+      if (nombre.length < 3) {
+        throw new Error('El nombre debe tener al menos 3 caracteres');
+      }
+
+      if (descripcion.length < 10) {
+        throw new Error('La descripción debe tener al menos 10 caracteres');
+      }
+
       await apiFetch('/api/categorias', {
         method: 'POST',
-        json: { nombre: data.nombre, descripcion: data.descripcion, estado: dbAct((data.estado as any) || 'activo') },
+        json: {
+          nombre,
+          descripcion,
+          estado: dbAct((data.estado as any) || 'activo'),
+        },
       });
     },
     update: async (id: number, updates: Partial<Categoria>, _motivo?: string) => {
+      // Validación defensiva
+      const nombre = String(updates?.nombre || '').trim();
+      const descripcion = String(updates?.descripcion || '').trim();
+
+      if (!nombre) {
+        throw new Error('El nombre de la categoría es obligatorio');
+      }
+
+      if (nombre.length < 3) {
+        throw new Error('El nombre debe tener al menos 3 caracteres');
+      }
+
+      if (descripcion.length < 10) {
+        throw new Error('La descripción debe tener al menos 10 caracteres');
+      }
+
       await apiFetch(`/api/categorias/${id}`, {
         method: 'PUT',
         json: {
-          nombre: updates.nombre,
-          descripcion: updates.descripcion,
+          nombre,
+          descripcion,
           estado: updates.estado ? dbAct(updates.estado as 'activo' | 'inactivo') : undefined,
         },
       });
     },
-    delete: async (id: number, motivo: string) => {
-      await apiFetch(`/api/categorias/${id}`, { method: 'DELETE', json: { motivo } });
+    delete: async (id: number, motivo: string, reubicarEnCategoriaId?: number) => {
+      const json: Record<string, unknown> = { motivo };
+      if (reubicarEnCategoriaId !== undefined && reubicarEnCategoriaId !== null) {
+        json.reubicarEnCategoriaId = reubicarEnCategoriaId;
+      }
+      await apiFetch(`/api/categorias/${id}`, { method: 'DELETE', json });
     },
     changeEstado: async (id: number, estado: 'activo' | 'inactivo', motivo: string) => {
       await apiFetch(`/api/categorias/${id}/estado`, {
@@ -772,6 +813,31 @@ export const api = {
     },
   },
 
+  productoInsumos: {
+    getAll: async () => apiFetchData<any[]>('/api/producto-insumos'),
+    getByProducto: async (productoId: number) =>
+      apiFetchData<any[]>(`/api/producto-insumos/producto/${productoId}`),
+    getById: async (id: number) => apiFetchData<any>(`/api/producto-insumos/${id}`),
+    create: async (data: {
+      producto_id: number;
+      insumo_id: number;
+      cantidad_requerida: number;
+      unidad: string;
+      notas?: string | null;
+    }) => {
+      await apiFetch('/api/producto-insumos', { method: 'POST', json: data });
+    },
+    update: async (
+      id: number,
+      data: Partial<{ cantidad_requerida: number; unidad: string; notas: string | null }>
+    ) => {
+      await apiFetch(`/api/producto-insumos/${id}`, { method: 'PUT', json: data });
+    },
+    delete: async (id: number) => {
+      await apiFetch(`/api/producto-insumos/${id}`, { method: 'DELETE' });
+    },
+  },
+
   entregasInsumos: {
     getAll: async () => {
       const rows = await apiFetchData<any[]>('/api/entregas-insumos');
@@ -781,6 +847,7 @@ export const api = {
             id: Number(r.id),
             insumo: r.insumo_nombre || String(r.insumo_id),
             cantidad: Number(r.cantidad),
+            unidad: r.unidad != null ? String(r.unidad) : undefined,
             operarioId: Number(r.operario_id),
             fecha: String(r.fecha || '').split('T')[0],
             hora: r.hora || '',
@@ -814,12 +881,44 @@ export const api = {
       );
       return rows.map((r) => ({
         id: Number(r.id),
-        nombre: r.nombre,
+        nombre: String(r.nombre || ''),
         cantidad: Number(r.cantidad ?? 0),
         unidad: r.unidad,
-        operario: r.operario,
+        operario: r.operario != null ? String(r.operario) : undefined,
         fechaUltimaModificacion: r.fecha ? String(r.fecha).split('T')[0] : '',
       }));
+    },
+    listCatalogo: async () => {
+      const rows = await apiFetchData<any[]>('/api/insumos');
+      return rows.map((r) => ({
+        id: Number(r.id),
+        nombre: String(r.nombre || ''),
+        descripcion: r.descripcion != null ? String(r.descripcion) : '',
+        cantidad: Number(r.cantidad ?? 0),
+        unidad: String(r.unidad || ''),
+        stockMinimo: Number(r.stock_minimo ?? 0),
+        estado: prodEstadoUi(r.estado) as 'activo' | 'inactivo',
+      }));
+    },
+    create: async (data: {
+      nombre: string;
+      descripcion?: string;
+      unidad: string;
+      cantidad?: number;
+      stock_minimo?: number;
+      estado?: 'Activo' | 'Inactivo';
+    }) => {
+      await apiFetch('/api/insumos', {
+        method: 'POST',
+        json: {
+          nombre: data.nombre,
+          descripcion: data.descripcion || null,
+          unidad: data.unidad,
+          cantidad: data.cantidad ?? 0,
+          stock_minimo: data.stock_minimo ?? 10,
+          estado: data.estado || 'Activo',
+        },
+      });
     },
   },
 

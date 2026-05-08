@@ -21,6 +21,7 @@ export function Categorias() {
   } | null>(null);
   const [motivoEstado, setMotivoEstado] = useState('');
   const [motivoEliminacion, setMotivoEliminacion] = useState('');
+  const [categoriaDestinoEliminar, setCategoriaDestinoEliminar] = useState('');
   const [alertState, setAlertState] = useState({
     isOpen: false
   });
@@ -59,12 +60,6 @@ export function Categorias() {
     return !existe;
   };
 
-  // Contar productos por categoría
-  const contarProductos = (categoriaId: number) => {
-    // En una app real esto vendría del backend
-    return 0; // Placeholder
-  };
-
   // Filtrar categorías
   const categoriasFiltradas = categorias.filter(c => {
     const matchBusqueda = searchQuery.length < 2 ||
@@ -84,8 +79,8 @@ export function Categorias() {
     {
       key: 'id',
       label: 'Productos',
-      render: (id: number) => {
-        const count = contarProductos(id);
+      render: (_: number, row: Categoria) => {
+        const count = row.productos ?? 0;
         return `${count} producto${count !== 1 ? 's' : ''}`;
       }
     },
@@ -173,6 +168,7 @@ export function Categorias() {
   const handleDelete = (categoria: Categoria) => {
     setSelectedCategoria(categoria);
     setMotivoEliminacion('');
+    setCategoriaDestinoEliminar('');
     setAlertState({ isOpen: true });
   };
 
@@ -186,8 +182,32 @@ export function Categorias() {
       return;
     }
 
+    const productosAsociados = selectedCategoria.productos ?? 0;
+    const otrasCategorias = categorias.filter((c) => c.id !== selectedCategoria.id);
+
+    if (productosAsociados > 0) {
+      if (otrasCategorias.length === 0) {
+        toast.error('No se puede eliminar', {
+          description:
+            'Esta categoría tiene productos y no hay otra categoría destino. Cree una categoría nueva primero.'
+        });
+        return;
+      }
+      const destId = parseInt(categoriaDestinoEliminar, 10);
+      if (!Number.isFinite(destId)) {
+        toast.error('Error de validación', {
+          description: 'Seleccione la categoría a la que se moverán los productos.'
+        });
+        return;
+      }
+    }
+
     try {
-      await api.categorias.delete(selectedCategoria.id, motivoEliminacion);
+      await api.categorias.delete(
+        selectedCategoria.id,
+        motivoEliminacion,
+        productosAsociados > 0 ? parseInt(categoriaDestinoEliminar, 10) : undefined
+      );
 
       toast.success('Categoría eliminada', {
         description: 'La categoría ha sido eliminada exitosamente'
@@ -195,6 +215,7 @@ export function Categorias() {
 
       setAlertState({ isOpen: false });
       setMotivoEliminacion('');
+      setCategoriaDestinoEliminar('');
       setSelectedCategoria(null);
       cargarCategorias();
     } catch (error: any) {
@@ -430,7 +451,7 @@ export function Categorias() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Productos</p>
-                <p className="font-medium">{contarProductos(selectedCategoria.id)} productos</p>
+                <p className="font-medium">{(selectedCategoria.productos ?? 0)} productos</p>
               </div>
             </div>
 
@@ -529,6 +550,7 @@ export function Categorias() {
         onClose={() => {
           setAlertState({ isOpen: false });
           setMotivoEliminacion('');
+          setCategoriaDestinoEliminar('');
           setSelectedCategoria(null);
         }}
         title="Confirmar Eliminación de Categoría"
@@ -542,7 +564,36 @@ export function Categorias() {
             <p className="text-sm text-red-700 mt-2">
               Esta acción no se puede deshacer.
             </p>
+            {(selectedCategoria?.productos ?? 0) > 0 && (
+              <p className="text-sm text-amber-800 mt-2">
+                Esta categoría tiene <strong>{selectedCategoria!.productos}</strong> producto
+                {selectedCategoria!.productos !== 1 ? 's' : ''}. Debe elegir otra categoría
+                para reubicarlos antes de eliminar.
+              </p>
+            )}
           </div>
+
+          {(selectedCategoria?.productos ?? 0) > 0 &&
+            categorias.filter((c) => c.id !== selectedCategoria!.id).length > 0 && (
+              <FormField
+                label="Reubicar productos en"
+                name="categoriaDestinoEliminar"
+                type="select"
+                value={categoriaDestinoEliminar}
+                onChange={(v) => setCategoriaDestinoEliminar(String(v))}
+                required
+                options={categorias
+                  .filter((c) => c.id !== selectedCategoria!.id)
+                  .map((c) => ({ value: c.id, label: c.nombre }))}
+              />
+            )}
+
+          {(selectedCategoria?.productos ?? 0) > 0 &&
+            categorias.filter((c) => c.id !== selectedCategoria!.id).length === 0 && (
+              <p className="text-sm text-destructive">
+                No hay otra categoría disponible. Cree una categoría nueva y vuelva a intentar.
+              </p>
+            )}
 
           <FormField
             label="Motivo de la eliminación"
@@ -564,6 +615,7 @@ export function Categorias() {
               onClick={() => {
                 setAlertState({ isOpen: false });
                 setMotivoEliminacion('');
+                setCategoriaDestinoEliminar('');
                 setSelectedCategoria(null);
               }}
             >

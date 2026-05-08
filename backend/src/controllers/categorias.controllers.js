@@ -58,10 +58,17 @@ module.exports = {
   },
   delete: async (req, res) => {
     try {
-      await models.Categorias.delete(req.params.id);
+      const raw = req.body?.reubicarEnCategoriaId;
+      const reubicarEnCategoriaId =
+        raw === undefined || raw === null || raw === ''
+          ? null
+          : parseInt(String(raw), 10);
+      await models.Categorias.delete(req.params.id, {
+        reubicarEnCategoriaId: Number.isFinite(reubicarEnCategoriaId) ? reubicarEnCategoriaId : null,
+      });
       res.json({ success: true, message: 'Categoria eliminada exitosamente' });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
   }
 };

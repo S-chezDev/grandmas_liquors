@@ -95,6 +95,7 @@ app.listen(PORT, () => {
   console.log(`   - GET    /api/insumos                (Listar insumos)`);
   console.log(`   - GET    /api/entregas-insumos       (Listar entregas)`);
   console.log(`   - GET    /api/produccion             (Listar producción)`);
+  console.log(`   - GET    /api/producto-insumos       (Recetas producto–insumo)`);
   console.log(`\n🌐 URL Base: http://localhost:${PORT}`);
   console.log(`\n════════════════════════════════════════════════════════════\n`);
 });

@@ -5,7 +5,9 @@ import { AlertDialog } from '../AlertDialog';
 import { Modal } from '../Modal';
 import { Form, FormField, FormActions } from '../Form';
 import { api } from '../../services/api';
-import logoImage from '../../../imports/android-chrome-192x192.png';
+
+// Logo local - using favicon from public folder
+const LOGO_URL = '/favicon/apple-touch-icon.png';
 
 interface Producto {
   id: string;
@@ -331,7 +333,7 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
             <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2 sm:gap-3">
               <div className="w-8 h-8 sm:w-9 sm:h-9 md:w-10 md:h-10 bg-white rounded-lg flex items-center justify-center overflow-hidden flex-shrink-0">
                 <img
-                  src={logoImage}
+                  src={LOGO_URL}
                   alt="Grandma's Liqueurs Logo"
                   className="w-full h-full object-cover"
                 />
@@ -437,7 +439,7 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center overflow-hidden">
                     <img
-                      src={logoImage}
+                      src={LOGO_URL}
                       alt="Grandma's Liqueurs Logo"
                       className="w-full h-full object-cover"
                     />
@@ -983,7 +985,7 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center overflow-hidden">
                   <img
-                    src={logoImage}
+                    src={LOGO_URL}
                     alt="Grandma's Liqueurs Logo"
                     className="w-full h-full object-cover"
                   />

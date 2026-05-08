@@ -31,7 +31,7 @@ module.exports = {
       await models.EntregasInsumos.update(req.params.id, req.body);
       res.json({ success: true, message: 'Entrega actualizada exitosamente' });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
   },
   delete: async (req, res) => {
@@ -39,7 +39,7 @@ module.exports = {
       await models.EntregasInsumos.delete(req.params.id);
       res.json({ success: true, message: 'Entrega eliminada exitosamente' });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
   }
 };

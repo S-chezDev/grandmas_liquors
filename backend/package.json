@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "migrate": "node logic-migrations/migrate.js",
+    "migrate": "node run-migrations.js",
+    "db:data": "node run-db-data.js",
     "test": "jest --detectOpenHandles",
     "validate:crud": "node scripts/validate-crud.js"
   },

@@ -30,6 +30,8 @@ export interface Categoria {
   nombre: string;
   descripcion: string;
   estado: 'activo' | 'inactivo';
+  /** Cantidad de productos en la categoría (desde el API). */
+  productos?: number;
   createdAt: string;
   updatedAt: string;
   historialCambios: HistorialCambio[];
@@ -110,6 +112,7 @@ export interface EntregaInsumo {
   id: number;
   insumo: string;
   cantidad: number;
+  unidad?: string;
   /** ID del usuario con rol productor (columna operario_id en BD). */
   operarioId: number;
   fecha: string;
@@ -117,13 +120,47 @@ export interface EntregaInsumo {
   createdAt: string;
 }
 
+/** Unidades válidas en POST/PUT de insumos (backend). */
+export const INSUMO_UNIDADES_API = [
+  'Litros',
+  'Kilogramos',
+  'Gramos',
+  'Unidades',
+  'Cajas',
+  'Botellas',
+  'Mililitros',
+] as const;
+
+export type InsumoUnidadApi = (typeof INSUMO_UNIDADES_API)[number];
+
 export interface Insumo {
   id: number;
   nombre: string;
   cantidad: number;
-  operarioId: number;
-  fecha: string;
+  unidad?: string;
+  descripcion?: string;
+  stockMinimo?: number;
+  estado?: 'activo' | 'inactivo';
+  /** Resumen gestión: texto del último operario (entrega). */
+  operario?: string;
+  fechaUltimaModificacion?: string;
+  /** No viene del resumen; uso legado en algunas vistas. */
+  operarioId?: number;
+  fecha?: string;
   productoRelacionadoId?: number;
+}
+
+/** Línea de receta desde GET /api/producto-insumos/producto/:id */
+export interface ProductoInsumoRecetaLine {
+  id: number;
+  producto_id: number;
+  insumo_id: number;
+  cantidad_requerida: number;
+  unidad: string;
+  notas?: string | null;
+  insumo_nombre?: string;
+  stock_actual?: number;
+  stock_minimo?: number;
 }
 
 export interface Cliente {

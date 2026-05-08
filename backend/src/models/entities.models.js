@@ -211,9 +211,17 @@ const Categorias = {
 
     const nombre = String(data?.nombre || '').trim();
     const descripcion = String(data?.descripcion || '').trim();
+    const estado = String(data?.estado || 'Activo').trim();
 
     if (!nombre) {
       const error = new Error('El nombre de la categoría es obligatorio');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    // Validar estado permitido
+    if (!['Activo', 'Inactivo'].includes(estado)) {
+      const error = new Error('Estado inválido. Valores permitidos: Activo, Inactivo');
       error.statusCode = 400;
       throw error;
     }
@@ -230,7 +238,7 @@ const Categorias = {
 
     const result = await pool.query(
       'INSERT INTO categorias (nombre, descripcion, estado, cantidad_productos) VALUES ($1, $2, $3, $4) RETURNING id',
-      [nombre, descripcion || null, 'Activo', 0]
+      [nombre, descripcion || null, estado, 0]
     );
     return result.rows[0].id;
   },
@@ -294,8 +302,83 @@ const Categorias = {
 
     return Categorias.getById(id);
   },
-  delete: async (id) => {
-    await pool.query('DELETE FROM categorias WHERE id = $1', [id]);
+  delete: async (id, options = {}) => {
+    const idNum = parseInt(String(id), 10);
+    if (!Number.isFinite(idNum)) {
+      const error = new Error('ID de categoría inválido');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const current = await Categorias.getById(idNum);
+    if (!current) {
+      const error = new Error('Categoria no encontrada');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const countRes = await pool.query(
+      'SELECT COUNT(*)::int AS n FROM productos WHERE categoria_id = $1',
+      [idNum]
+    );
+    const numProductos = countRes.rows[0]?.n ?? 0;
+
+    const rawDest = options.reubicarEnCategoriaId;
+    const destId =
+      rawDest === null || rawDest === undefined || rawDest === ''
+        ? null
+        : parseInt(String(rawDest), 10);
+
+    if (numProductos === 0) {
+      await pool.query('DELETE FROM categorias WHERE id = $1', [idNum]);
+      return true;
+    }
+
+    if (!Number.isFinite(destId)) {
+      const error = new Error(
+        `No se puede eliminar la categoría porque tiene ${numProductos} producto(s) asociado(s). ` +
+          'Indique una categoría destino para reubicar los productos.'
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (destId === idNum) {
+      const error = new Error('La categoría destino debe ser distinta de la que se elimina');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const destRow = await pool.query('SELECT id FROM categorias WHERE id = $1 LIMIT 1', [destId]);
+    if (!destRow.rows[0]) {
+      const error = new Error('La categoría destino no existe');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `UPDATE productos SET categoria_id = $1, updated_at = CURRENT_TIMESTAMP WHERE categoria_id = $2`,
+        [destId, idNum]
+      );
+      await client.query('DELETE FROM categorias WHERE id = $1', [idNum]);
+      await client.query('COMMIT');
+    } catch (e) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (_r) {
+        /* ignore */
+      }
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    await ensureCategoriaProductCountColumn();
+    await syncCategoriaProductCount(destId);
+
     return true;
   }
 };
@@ -2750,15 +2833,115 @@ const EntregasInsumos = {
       error.statusCode = 400;
       throw error;
     }
-    await pool.query(
-      'UPDATE entregas_insumos SET insumo_id = $1, cantidad = $2, unidad = $3, operario_id = $4, fecha = $5, hora = $6 WHERE id = $7',
-      [data.insumo_id || current.insumo_id, cantidad, unidad, operarioId, data.fecha || current.fecha, data.hora || current.hora, id]
-    );
-    return true;
+    const newInsumoId = data.insumo_id !== undefined ? Number(data.insumo_id) : Number(current.insumo_id);
+    if (!Number.isFinite(newInsumoId) || newInsumoId <= 0) {
+      const error = new Error('El insumo es obligatorio y debe ser válido');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const oldInsumo = Number(current.insumo_id);
+    const oldCant = Number(current.cantidad);
+    const newInsumo = newInsumoId;
+    const newCant = Number(cantidad);
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT id FROM entregas_insumos WHERE id = $1 FOR UPDATE', [id]);
+
+      if (oldInsumo === newInsumo) {
+        const delta = newCant - oldCant;
+        if (delta !== 0) {
+          const up = await client.query(
+            `UPDATE insumos SET cantidad = COALESCE(cantidad, 0) + $1, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $2 AND COALESCE(cantidad, 0) + $1 >= 0
+             RETURNING id`,
+            [delta, oldInsumo]
+          );
+          if (up.rowCount === 0) {
+            const err = new Error(
+              'No se puede actualizar la entrega: el inventario del insumo quedaría negativo'
+            );
+            err.statusCode = 409;
+            throw err;
+          }
+        }
+      } else {
+        const rev = await client.query(
+          `UPDATE insumos SET cantidad = COALESCE(cantidad, 0) - $1, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $2 AND COALESCE(cantidad, 0) >= $1
+           RETURNING id`,
+          [oldCant, oldInsumo]
+        );
+        if (rev.rowCount === 0) {
+          const err = new Error(
+            'No se puede actualizar la entrega: el inventario del insumo original quedaría negativo'
+          );
+          err.statusCode = 409;
+          throw err;
+        }
+        const add = await client.query(
+          `UPDATE insumos SET cantidad = COALESCE(cantidad, 0) + $1, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $2
+           RETURNING id`,
+          [newCant, newInsumo]
+        );
+        if (add.rowCount === 0) {
+          const err = new Error('Insumo destino no encontrado');
+          err.statusCode = 404;
+          throw err;
+        }
+      }
+
+      await client.query(
+        'UPDATE entregas_insumos SET insumo_id = $1, cantidad = $2, unidad = $3, operario_id = $4, fecha = $5, hora = $6 WHERE id = $7',
+        [newInsumo, newCant, unidad, operarioId, data.fecha || current.fecha, data.hora || current.hora, id]
+      );
+      await client.query('COMMIT');
+      return true;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   },
   delete: async (id) => {
-    await pool.query('DELETE FROM entregas_insumos WHERE id = $1', [id]);
-    return true;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const row = await client.query('SELECT * FROM entregas_insumos WHERE id = $1 FOR UPDATE', [id]);
+      if (!row.rows[0]) {
+        await client.query('ROLLBACK');
+        const error = new Error('Entrega no encontrada');
+        error.statusCode = 404;
+        throw error;
+      }
+      const e = row.rows[0];
+      const sub = await client.query(
+        `UPDATE insumos SET cantidad = COALESCE(cantidad, 0) - $1, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2 AND COALESCE(cantidad, 0) >= $1
+         RETURNING id`,
+        [Number(e.cantidad), e.insumo_id]
+      );
+      if (sub.rowCount === 0) {
+        await client.query('ROLLBACK');
+        const err = new Error(
+          'No se puede eliminar la entrega: el inventario del insumo quedaría negativo'
+        );
+        err.statusCode = 409;
+        throw err;
+      }
+      await client.query('DELETE FROM entregas_insumos WHERE id = $1', [id]);
+      await client.query('COMMIT');
+      return true;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 };
 
@@ -3061,6 +3244,38 @@ const Produccion = {
         return previous ? `${previous}\n${entry}` : entry;
       })();
 
+      if (nextStatus === 'Orden Lista') {
+        const addStock = await client.query(
+          `UPDATE productos
+           SET stock = COALESCE(stock, 0) + $1, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $2
+           RETURNING id`,
+          [Number(current.cantidad), current.producto_id]
+        );
+        if (addStock.rowCount === 0) {
+          const error = new Error('Producto de la orden de producción no encontrado');
+          error.statusCode = 404;
+          throw error;
+        }
+      }
+
+      if (nextStatus === 'Cancelada') {
+        await ensureProductoInsumosTable();
+        const recetas = await client.query(
+          `SELECT insumo_id, cantidad_requerida FROM producto_insumos WHERE producto_id = $1`,
+          [current.producto_id]
+        );
+        const ordenQty = Number(current.cantidad);
+        for (const r of recetas.rows) {
+          const need = Number(r.cantidad_requerida) * ordenQty;
+          if (!Number.isFinite(need) || need <= 0) continue;
+          await client.query(
+            `UPDATE insumos SET cantidad = COALESCE(cantidad, 0) + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+            [need, r.insumo_id]
+          );
+        }
+      }
+
       await client.query(
         'UPDATE produccion SET estado = $1, notes = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3',
         [nextStatus, nextNotes ?? null, id]
@@ -3166,7 +3381,12 @@ const ProductoInsumos = {
     return true;
   },
   delete: async (id) => {
-    await pool.query('DELETE FROM producto_insumos WHERE id = $1', [id]);
+    const r = await pool.query('DELETE FROM producto_insumos WHERE id = $1 RETURNING id', [id]);
+    if (r.rowCount === 0) {
+      const error = new Error('Receta no encontrada');
+      error.statusCode = 404;
+      throw error;
+    }
     return true;
   }
 };
