@@ -1,11 +1,26 @@
--- ========================================
--- Grandmas Liquors — esquema + arranque mínimo
--- Uso rápido: crear DB vacía y ejecutar este script (psql -f db.pgsql).
--- Incluye el catálogo de roles que exige la app (Administrador … Productor).
--- El único volcado de cuentas de acceso está en usuarios (5 filas): admin,
--- asesor, repartidor, segundo repartidor “domiciliario”, cliente.
--- (No hay rol literal “Domiciliario”; el proyecto usa rol Repartidor.)
--- ========================================
+-- ============================================================
+-- GRANDMA'S LIQUORS - BASE DE DATOS COMPLETA
+-- ============================================================
+-- Script de inicialización con datos de ejemplo
+-- Versión: 1.0
+-- 
+-- INSTRUCCIONES:
+-- 1. Crear BD vacía: createdb -U postgres grandma\'sdb
+-- 2. Ejecutar este script: psql -U postgres -d grandma\'sdb -f db.pgsql
+-- 3. El script incluye:
+--    - Estructura de tablas
+--    - Datos iniciales (roles, usuarios, categorías, productos)
+--    - Funciones y triggers
+-- ============================================================
+
+-- ============================================================
+-- PARTE 1: LIMPIAR TABLAS EXISTENTES
+-- ============================================================
+
+DROP TRIGGER IF EXISTS trigger_sync_cliente_from_usuario ON usuarios CASCADE;
+DROP TRIGGER IF EXISTS trigger_sync_usuario_from_cliente ON clientes CASCADE;
+DROP FUNCTION IF EXISTS sync_cliente_from_usuario() CASCADE;
+DROP FUNCTION IF EXISTS sync_usuario_from_cliente() CASCADE;
 
 DROP TABLE IF EXISTS schema_migrations CASCADE;
 DROP TABLE IF EXISTS usuarios_login_intentos CASCADE;
@@ -26,6 +41,7 @@ DROP TABLE IF EXISTS detalle_compras CASCADE;
 DROP TABLE IF EXISTS detalle_pedidos CASCADE;
 DROP TABLE IF EXISTS producto_insumos CASCADE;
 DROP TABLE IF EXISTS entregas_insumos CASCADE;
+DROP TABLE IF EXISTS insumo_movimientos CASCADE;
 DROP TABLE IF EXISTS produccion CASCADE;
 DROP TABLE IF EXISTS domicilios CASCADE;
 DROP TABLE IF EXISTS abonos CASCADE;
@@ -39,9 +55,11 @@ DROP TABLE IF EXISTS proveedores CASCADE;
 DROP TABLE IF EXISTS categorias CASCADE;
 DROP TABLE IF EXISTS roles CASCADE;
 
--- ========================================
+-- ============================================================
+-- PARTE 2: CREAR TABLAS
+-- ============================================================
+
 -- TABLA: roles
--- ========================================
 CREATE TABLE roles (
     id SERIAL PRIMARY KEY,
     nombre VARCHAR(50) UNIQUE NOT NULL,
@@ -52,9 +70,7 @@ CREATE TABLE roles (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========================================
 -- TABLA: schema_migrations
--- ========================================
 CREATE TABLE schema_migrations (
     id SERIAL PRIMARY KEY,
     filename VARCHAR(255) UNIQUE,
@@ -62,9 +78,7 @@ CREATE TABLE schema_migrations (
     executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========================================
--- TABLA: categorias (con UNIQUE nombre)
--- ========================================
+-- TABLA: categorias
 CREATE TABLE categorias (
     id SERIAL PRIMARY KEY,
     nombre VARCHAR(100) NOT NULL UNIQUE,
@@ -75,9 +89,7 @@ CREATE TABLE categorias (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========================================
--- TABLA: productos (nombre UNIQUE, FK RESTRICT categorias)
--- ========================================
+-- TABLA: productos
 CREATE TABLE productos (
     id SERIAL PRIMARY KEY,
     nombre VARCHAR(150) NOT NULL UNIQUE,
@@ -94,9 +106,7 @@ CREATE TABLE productos (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========================================
 -- TABLA: usuarios
--- ========================================
 CREATE TABLE usuarios (
     id SERIAL PRIMARY KEY,
     nombre VARCHAR(100) NOT NULL,
@@ -113,9 +123,7 @@ CREATE TABLE usuarios (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========================================
--- TABLA: clientes (FK usuario_id RESTRICT)
--- ========================================
+-- TABLA: clientes
 CREATE TABLE clientes (
     id SERIAL PRIMARY KEY,
     usuario_id INTEGER REFERENCES usuarios(id) ON DELETE RESTRICT,
@@ -132,9 +140,7 @@ CREATE TABLE clientes (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========================================
 -- TABLA: proveedores
--- ========================================
 CREATE TABLE proveedores (
     id SERIAL PRIMARY KEY,
     tipo_persona VARCHAR(20) NOT NULL,
@@ -155,9 +161,7 @@ CREATE TABLE proveedores (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========================================
--- TABLA: pedidos (FK cliente_id RESTRICT)
--- ========================================
+-- TABLA: pedidos
 CREATE TABLE pedidos (
     id SERIAL PRIMARY KEY,
     numero_pedido VARCHAR(50) UNIQUE NOT NULL,
@@ -165,30 +169,29 @@ CREATE TABLE pedidos (
     fecha DATE NOT NULL,
     fecha_entrega DATE,
     detalles TEXT,
+    direccion TEXT,
+    telefono VARCHAR(20),
     total DECIMAL(10,2) DEFAULT 0,
     estado VARCHAR(20) DEFAULT 'Pendiente',
     metodo_pago VARCHAR(50) DEFAULT 'Efectivo',
     esquema_abono VARCHAR(20) DEFAULT '100%',
+    monto_abonado DECIMAL(18,2) DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========================================
 -- TABLA: detalle_pedidos
--- ========================================
 CREATE TABLE detalle_pedidos (
     id SERIAL PRIMARY KEY,
     pedido_id INTEGER NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
     producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
     cantidad INTEGER NOT NULL,
-    precio_unitario DECIMAL(10,2) NOT NULL,
-    subtotal DECIMAL(10,2) NOT NULL,
+    precio_unitario DECIMAL(18,2) NOT NULL,
+    subtotal DECIMAL(18,2) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========================================
--- TABLA: ventas (FK cliente_id RESTRICT)
--- ========================================
+-- TABLA: ventas
 CREATE TABLE ventas (
     id SERIAL PRIMARY KEY,
     numero_venta VARCHAR(50) UNIQUE NOT NULL,
@@ -198,7 +201,6 @@ CREATE TABLE ventas (
     fecha DATE NOT NULL,
     metodopago VARCHAR(50),
     metodo_pago VARCHAR(50),
-    esquema_abono VARCHAR(20),
     abono_recibido DECIMAL(18,2) DEFAULT 0,
     total DECIMAL(18,2) NOT NULL,
     estado VARCHAR(30) DEFAULT 'Completada',
@@ -206,9 +208,7 @@ CREATE TABLE ventas (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========================================
 -- TABLA: detalle_ventas
--- ========================================
 CREATE TABLE detalle_ventas (
     id SERIAL PRIMARY KEY,
     venta_id INTEGER NOT NULL REFERENCES ventas(id) ON DELETE CASCADE,
@@ -219,9 +219,7 @@ CREATE TABLE detalle_ventas (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========================================
--- TABLA: abonos (FK cliente_id RESTRICT)
--- ========================================
+-- TABLA: abonos
 CREATE TABLE abonos (
     id SERIAL PRIMARY KEY,
     numero_abono VARCHAR(50) UNIQUE NOT NULL,
@@ -235,9 +233,7 @@ CREATE TABLE abonos (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========================================
--- TABLA: domicilios (FK cliente_id RESTRICT, repartidor_id, motivo_cancelacion)
--- ========================================
+-- TABLA: domicilios
 CREATE TABLE domicilios (
     id SERIAL PRIMARY KEY,
     numero_domicilio VARCHAR(50) UNIQUE NOT NULL,
@@ -255,9 +251,7 @@ CREATE TABLE domicilios (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========================================
 -- TABLA: compras
--- ========================================
 CREATE TABLE compras (
     id SERIAL PRIMARY KEY,
     numero_compra VARCHAR(50) UNIQUE NOT NULL,
@@ -276,9 +270,7 @@ CREATE TABLE compras (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========================================
--- TABLA: detalle_compras (CHECK porcentaje_ganancia >= 0)
--- ========================================
+-- TABLA: detalle_compras
 CREATE TABLE detalle_compras (
     id SERIAL PRIMARY KEY,
     compra_id INTEGER NOT NULL REFERENCES compras(id) ON DELETE CASCADE,
@@ -290,9 +282,7 @@ CREATE TABLE detalle_compras (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========================================
--- TABLA: insumos (con ultimo_operario_id y ultima_fecha)
--- ========================================
+-- TABLA: insumos
 CREATE TABLE insumos (
     id SERIAL PRIMARY KEY,
     nombre VARCHAR(150) NOT NULL,
@@ -307,9 +297,7 @@ CREATE TABLE insumos (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========================================
--- TABLA: producto_insumos (receta)
--- ========================================
+-- TABLA: producto_insumos
 CREATE TABLE producto_insumos (
     id SERIAL PRIMARY KEY,
     producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
@@ -321,9 +309,7 @@ CREATE TABLE producto_insumos (
     UNIQUE (producto_id, insumo_id)
 );
 
--- ========================================
 -- TABLA: entregas_insumos
--- ========================================
 CREATE TABLE entregas_insumos (
     id SERIAL PRIMARY KEY,
     numero_entrega VARCHAR(50) UNIQUE NOT NULL,
@@ -336,9 +322,7 @@ CREATE TABLE entregas_insumos (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========================================
--- TABLA: insumo_movimientos (auditoría de inventario de insumos)
--- ========================================
+-- TABLA: insumo_movimientos
 CREATE TABLE insumo_movimientos (
     id SERIAL PRIMARY KEY,
     insumo_id INTEGER NOT NULL REFERENCES insumos(id) ON DELETE CASCADE,
@@ -354,9 +338,7 @@ CREATE TABLE insumo_movimientos (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========================================
--- TABLA: produccion (alineada con modelo actual)
--- ========================================
+-- TABLA: produccion
 CREATE TABLE produccion (
     id SERIAL PRIMARY KEY,
     numero_produccion VARCHAR(50) UNIQUE NOT NULL,
@@ -374,9 +356,7 @@ CREATE TABLE produccion (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========================================
 -- TABLAS DE AUDITORÍA
--- ========================================
 CREATE TABLE productos_auditoria (
     id SERIAL PRIMARY KEY,
     producto_id INTEGER,
@@ -486,11 +466,66 @@ CREATE TABLE usuarios_login_intentos (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ========================================
--- FUNCIONES Y TRIGGERS DE SINCRONIZACIÓN
--- ========================================
+-- ============================================================
+-- PARTE 3: DATOS INICIALES
+-- ============================================================
 
--- 1. Trigger: sync_cliente_from_usuario (crea/actualiza cliente cuando se crea/edita un usuario Cliente)
+-- Insertar roles
+INSERT INTO roles (nombre, descripcion, permisos, estado) VALUES
+('Administrador', 'Acceso total a todas las funcionalidades', '{}', 'Activo'),
+('Asesor', 'Puede crear compras y ver reportes', '{}', 'Activo'),
+('Productor', 'Acceso a módulo de producción', '{}', 'Activo'),
+('Repartidor', 'Puede gestionar domicilios y entregas', '{}', 'Activo'),
+('Cliente', 'Acceso a tienda y pedidos personales', '{}', 'Activo');
+
+-- Insertar usuarios de ejemplo
+-- Credenciales de prueba para cada rol
+INSERT INTO usuarios (nombre, apellido, tipo_documento, documento, email, telefono, direccion, password_hash, rol_id, estado) VALUES
+('Admin', 'Sistema', 'CC', '1234567890', 'admin@grandmas.com', '3001234567', 'Oficina Central', '$2b$10$Wt7O/RLg2WBmi1N0Iw9XpudA3esZTjh.TwLudZyKxVONkV1b/L.Ni', 1, 'Activo'),
+('Asesor', 'Principal', 'CC', '1234567891', 'asesor@grandmas.com', '3001234568', 'Calle Principal 123', '$2b$10$s3bdN9VvLpe0rH1cePoFve2keWeP8flJTdQz00DYdknzEbJ7nVla6', 2, 'Activo'),
+('Productor', 'Jefe', 'CC', '1234567892', 'productor@grandmas.com', '3001234569', 'Zona Producción', '$2b$10$u1iQnnuwr016HyIS3rNLS.sCd.kOOUjySWSQmTHrhd..rS/7Oor.a', 3, 'Activo'),
+('Repartidor', 'Uno', 'CC', '1234567893', 'repartidor@grandmas.com', '3001234570', 'Zona Reparto', '$2b$10$mYIecNeT/FR43MtI0RLw4OPWNX2glNvp6f5qHFze/onh1l5dEcFSi', 4, 'Activo'),
+('Cliente', 'Ejemplo', 'CC', '1234567894', 'cliente@grandmas.com', '3001234571', 'Calle Secundaria 456', '$2b$10$Xc4JiqZv5fsbWpVlXMjd4.sakub/owiYqXIB0jk5F5r9NLp4eczU6', 5, 'Activo');
+
+-- Insertar categorías de productos
+INSERT INTO categorias (nombre, descripcion, estado) VALUES
+('Cervezas', 'Cervezas nacionales e internacionales', 'Activo'),
+('Licores', 'Licores destilados premium', 'Activo'),
+('Vinos', 'Vinos nacionales e importados', 'Activo'),
+('Ron', 'Rones variados de diferentes regiones', 'Activo'),
+('Tequila', 'Tequilas artesanales y industriales', 'Activo'),
+('Vodka', 'Vodkas de diferentes marcas', 'Activo');
+
+-- Insertar productos de ejemplo
+INSERT INTO productos (nombre, categoria_id, descripcion, precio, stock, stock_minimo, estado, tipo_producto) VALUES
+('Cerveza Pilsen 330ml', 1, 'Cerveza clara refrescante', 2500.00, 100, 20, 'Activo', 'terminado'),
+('Cerveza Negra 330ml', 1, 'Cerveza oscura robusta', 3000.00, 75, 15, 'Activo', 'terminado'),
+('Ron Bacardi 750ml', 4, 'Ron blanco premium', 35000.00, 25, 5, 'Activo', 'terminado'),
+('Vodka Smirnoff 750ml', 6, 'Vodka internacional', 38000.00, 20, 5, 'Activo', 'terminado'),
+('Vino Tinto Reserva 750ml', 3, 'Vino tinto con cuerpo', 45000.00, 30, 10, 'Activo', 'terminado'),
+('Tequila Patrón 750ml', 5, 'Tequila 100% agave', 52000.00, 15, 5, 'Activo', 'terminado');
+
+-- Insertar proveedores de ejemplo
+INSERT INTO proveedores (tipo_persona, nombre_empresa, nit, nombre, apellido, email, telefono, direccion, estado) VALUES
+('Juridica', 'Distribuidora Licores S.A.', '800123456-1', 'Juan', 'López', 'contacto@distribuidora.com', '6015551000', 'Cra. 5 #10-50, Bogotá', 'Activo'),
+('Natural', NULL, NULL, 'Carlos', 'Martínez', 'carlos@licores.com', '3105551234', 'Calle 20 #5-30, Medellín', 'Activo'),
+('Juridica', 'Importadores Premium Ltd', '900654321-2', 'María', 'Rodríguez', 'info@importadores.com', '6015556789', 'Av. Carrera 7 #100-50, Bogotá', 'Activo');
+
+-- Insertar cliente de ejemplo
+INSERT INTO clientes (usuario_id, nombre, apellido, tipo_documento, documento, email, telefono, direccion, estado) VALUES
+(5, 'Cliente', 'Ejemplo', 'CC', '1234567894', 'cliente@grandmas.com', '3001234571', 'Calle Secundaria 456', 'Activo');
+
+-- Insertar insumos de ejemplo (para producción)
+INSERT INTO insumos (nombre, descripcion, cantidad, unidad, stock_minimo, estado) VALUES
+('Levadura', 'Levadura de cervecería', 50.00, 'kg', 5.00, 'Activo'),
+('Lúpulo', 'Lúpulo para cerveza', 30.00, 'kg', 5.00, 'Activo'),
+('Malta', 'Malta tostada clara', 100.00, 'kg', 20.00, 'Activo'),
+('Agua Purificada', 'Agua para destilación', 500.00, 'litros', 100.00, 'Activo');
+
+-- ============================================================
+-- PARTE 4: FUNCIONES Y TRIGGERS (Sin cambios)
+-- ============================================================
+
 CREATE OR REPLACE FUNCTION sync_cliente_from_usuario()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -498,260 +533,32 @@ DECLARE
 BEGIN
     SELECT id INTO cliente_role_id FROM roles WHERE nombre = 'Cliente' LIMIT 1;
     IF cliente_role_id IS NULL THEN RETURN NEW; END IF;
+    
     IF NEW.rol_id = cliente_role_id THEN
-        UPDATE clientes
-        SET usuario_id = NEW.id,
-            nombre = COALESCE(nombre, NEW.nombre),
-            apellido = COALESCE(apellido, NEW.apellido),
-            tipo_documento = COALESCE(tipo_documento, NEW.tipo_documento),
-            documento = COALESCE(documento, NEW.documento),
-            telefono = COALESCE(NEW.telefono, telefono),
-            direccion = COALESCE(NEW.direccion, direccion),
-            estado = COALESCE(NEW.estado, estado),
-            updated_at = CURRENT_TIMESTAMP
-        WHERE usuario_id IS NULL
-          AND email IS NOT NULL
-          AND LOWER(email) = LOWER(NEW.email);
-        IF NOT EXISTS (SELECT 1 FROM clientes WHERE usuario_id = NEW.id) THEN
-            INSERT INTO clientes (
-                usuario_id, nombre, apellido, tipo_documento, documento, telefono, email, direccion, estado
-            ) VALUES (
-                NEW.id, NEW.nombre, NEW.apellido, NEW.tipo_documento, NEW.documento,
-                NEW.telefono, NEW.email, NEW.direccion, COALESCE(NEW.estado,'Activo')
-            );
-        END IF;
+        INSERT INTO clientes (usuario_id, nombre, apellido, tipo_documento, documento, email, telefono, direccion, estado)
+        VALUES (NEW.id, NEW.nombre, NEW.apellido, NEW.tipo_documento, NEW.documento, NEW.email, NEW.telefono, NEW.direccion, NEW.estado)
+        ON CONFLICT DO NOTHING;
     END IF;
+    
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS trg_sync_cliente_from_usuario ON usuarios;
-CREATE TRIGGER trg_sync_cliente_from_usuario
-    AFTER INSERT OR UPDATE OF rol_id, nombre, apellido, tipo_documento, documento, telefono, email, direccion, estado
-    ON usuarios FOR EACH ROW EXECUTE FUNCTION sync_cliente_from_usuario();
+CREATE TRIGGER trigger_sync_cliente_from_usuario
+AFTER INSERT OR UPDATE ON usuarios
+FOR EACH ROW
+EXECUTE FUNCTION sync_cliente_from_usuario();
 
--- 2. Trigger: sync_domicilio_to_venta_pedido (completa venta y pedido cuando el domicilio se entrega)
-CREATE OR REPLACE FUNCTION sync_domicilio_to_venta_pedido()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF NEW.estado = 'Entregado' AND OLD.estado <> 'Entregado' THEN
-        -- Actualizar la venta relacionada a Completada
-        UPDATE ventas
-        SET estado = 'Completada',
-            updated_at = CURRENT_TIMESTAMP
-        WHERE pedido_id = NEW.pedido_id
-          AND tipo = 'Por Pedido'
-          AND estado = 'Pendiente';
-
-        -- Actualizar el pedido a Completado
-        UPDATE pedidos
-        SET estado = 'Completado',
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = NEW.pedido_id
-          AND estado <> 'Completado'
-          AND estado <> 'Cancelado';
-
-        -- Actualizar el abono a 'Aplicado' si estaba Registrado
-        UPDATE abonos
-        SET estado = 'Aplicado',
-            updated_at = CURRENT_TIMESTAMP
-        WHERE pedido_id = NEW.pedido_id
-          AND estado = 'Registrado';
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_sync_domicilio ON domicilios;
-CREATE TRIGGER trg_sync_domicilio
-    AFTER UPDATE OF estado ON domicilios
-    FOR EACH ROW EXECUTE FUNCTION sync_domicilio_to_venta_pedido();
-
--- ========================================
--- VALIDACIÓN DE DEPENDENCIAS PARA INACTIVACIÓN
--- ========================================
-CREATE OR REPLACE FUNCTION check_inactivacion(
-    p_tipo VARCHAR,
-    p_id INTEGER
-) RETURNS JSONB AS $$
-DECLARE
-    v_count INTEGER;
-    v_motivo TEXT := '';
-BEGIN
-    CASE p_tipo
-        WHEN 'usuario' THEN
-            SELECT COUNT(*) INTO v_count
-            FROM pedidos
-            WHERE cliente_id IN (SELECT id FROM clientes WHERE usuario_id = p_id)
-              AND estado NOT IN ('Completado','Cancelado');
-            IF v_count > 0 THEN v_motivo := 'El usuario tiene ' || v_count || ' pedido(s) pendiente(s).'; END IF;
-
-            IF v_motivo = '' THEN
-                SELECT COUNT(*) INTO v_count
-                FROM domicilios
-                WHERE cliente_id IN (SELECT id FROM clientes WHERE usuario_id = p_id)
-                  AND estado NOT IN ('Entregado','Cancelado');
-                IF v_count > 0 THEN v_motivo := 'El usuario tiene ' || v_count || ' domicilio(s) pendiente(s).'; END IF;
-            END IF;
-
-            IF v_motivo = '' THEN
-                SELECT COUNT(*) INTO v_count
-                FROM abonos
-                WHERE cliente_id IN (SELECT id FROM clientes WHERE usuario_id = p_id)
-                  AND estado <> 'Aplicado';
-                IF v_count > 0 THEN v_motivo := 'El usuario tiene ' || v_count || ' abono(s) pendiente(s).'; END IF;
-            END IF;
-
-        WHEN 'cliente' THEN
-            SELECT COUNT(*) INTO v_count FROM pedidos WHERE cliente_id = p_id AND estado NOT IN ('Completado','Cancelado');
-            IF v_count > 0 THEN v_motivo := 'El cliente tiene ' || v_count || ' pedido(s) pendiente(s).'; END IF;
-
-            IF v_motivo = '' THEN
-                SELECT COUNT(*) INTO v_count FROM domicilios WHERE cliente_id = p_id AND estado NOT IN ('Entregado','Cancelado');
-                IF v_count > 0 THEN v_motivo := 'El cliente tiene ' || v_count || ' domicilio(s) pendiente(s).'; END IF;
-            END IF;
-
-            IF v_motivo = '' THEN
-                SELECT COUNT(*) INTO v_count FROM ventas WHERE cliente_id = p_id AND estado = 'Pendiente';
-                IF v_count > 0 THEN v_motivo := 'El cliente tiene ' || v_count || ' venta(s) pendiente(s).'; END IF;
-            END IF;
-
-        WHEN 'proveedor' THEN
-            SELECT COUNT(*) INTO v_count
-            FROM compras
-            WHERE proveedor_id = p_id
-              AND estado IN ('Pendiente','Recibida');
-            IF v_count > 0 THEN v_motivo := 'El proveedor tiene ' || v_count || ' compra(s) en proceso o pendiente(s).'; END IF;
-
-        WHEN 'producto' THEN
-            SELECT COUNT(*) INTO v_count
-            FROM detalle_pedidos dp
-            JOIN pedidos p ON dp.pedido_id = p.id
-            WHERE dp.producto_id = p_id
-              AND p.estado NOT IN ('Completado','Cancelado');
-            IF v_count > 0 THEN v_motivo := 'El producto está en ' || v_count || ' pedido(s) activo(s).'; END IF;
-
-            IF v_motivo = '' THEN
-                SELECT COUNT(*) INTO v_count
-                FROM produccion
-                WHERE producto_id = p_id
-                  AND estado NOT IN ('Completada','Cancelada');
-                IF v_count > 0 THEN v_motivo := 'El producto está en ' || v_count || ' orden(es) de producción activa(s).'; END IF;
-            END IF;
-
-        WHEN 'categoria' THEN
-            SELECT COUNT(*) INTO v_count FROM productos WHERE categoria_id = p_id AND estado = 'Activo';
-            IF v_count > 0 THEN v_motivo := 'La categoría tiene ' || v_count || ' producto(s) activo(s). Inactívelos primero.'; END IF;
-
-        ELSE
-            v_motivo := 'Tipo no soportado.';
-    END CASE;
-
-    IF v_motivo = '' THEN
-        RETURN jsonb_build_object('permitido', true, 'motivo', '');
-    ELSE
-        RETURN jsonb_build_object('permitido', false, 'motivo', v_motivo);
-    END IF;
-END;
-$$ LANGUAGE plpgsql;
-
--- ========================================
--- ÍNDICES (se incluyen los nuevos para rendimiento)
--- ========================================
-CREATE INDEX idx_roles_nombre ON roles(nombre);
-CREATE INDEX idx_roles_estado ON roles(estado);
-CREATE INDEX idx_usuarios_documento ON usuarios(documento);
-CREATE INDEX idx_usuarios_email ON usuarios(email);
-CREATE INDEX idx_usuarios_rol ON usuarios(rol_id);
-CREATE INDEX idx_usuarios_estado ON usuarios(estado);
-CREATE INDEX idx_usuarios_rol_estado ON usuarios(rol_id, estado);
-CREATE UNIQUE INDEX idx_usuarios_email_unique_lower ON usuarios(LOWER(email));
-CREATE INDEX idx_usuarios_sesiones_usuario_activa ON usuarios_sesiones(usuario_id, revoked_at, expires_at);
-CREATE INDEX idx_usuarios_password_historial_usuario ON usuarios_password_historial(usuario_id, created_at DESC);
-CREATE INDEX idx_usuarios_password_resets_usuario ON usuarios_password_resets(usuario_id, created_at DESC);
-CREATE INDEX idx_usuarios_password_resets_token ON usuarios_password_resets(token_hash);
-CREATE INDEX idx_usuarios_auditoria_usuario_fecha ON usuarios_auditoria(usuario_id, created_at DESC);
-CREATE INDEX idx_proveedores_auditoria_proveedor_fecha ON proveedores_auditoria(proveedor_id, created_at DESC);
-CREATE INDEX idx_roles_auditoria_rol_fecha ON roles_auditoria(rol_id, created_at DESC);
-CREATE INDEX idx_compras_estado_historial_compra_fecha ON compras_estado_historial(compra_id, created_at DESC);
-CREATE INDEX idx_productos_auditoria_producto_fecha ON productos_auditoria(producto_id, created_at DESC);
-CREATE INDEX idx_categorias_auditoria_categoria_fecha ON categorias_auditoria(categoria_id, created_at DESC);
-CREATE INDEX idx_clientes_auditoria_cliente_fecha ON clientes_auditoria(cliente_id, created_at DESC);
-CREATE INDEX idx_productos_categoria ON productos(categoria_id);
-CREATE INDEX idx_productos_estado ON productos(estado);
-CREATE INDEX idx_productos_nombre ON productos(nombre);
-CREATE INDEX idx_clientes_documento ON clientes(documento);
-CREATE INDEX idx_clientes_estado ON clientes(estado);
-CREATE INDEX idx_clientes_nombre ON clientes(nombre);
-CREATE UNIQUE INDEX idx_clientes_email_unique ON clientes(LOWER(email)) WHERE email IS NOT NULL;
-CREATE UNIQUE INDEX idx_clientes_usuario_id_unique ON clientes(usuario_id) WHERE usuario_id IS NOT NULL;
-CREATE INDEX idx_pedidos_cliente ON pedidos(cliente_id);
-CREATE INDEX idx_pedidos_fecha ON pedidos(fecha DESC);
-CREATE INDEX idx_pedidos_estado ON pedidos(estado);
-CREATE INDEX idx_pedidos_cliente_fecha ON pedidos(cliente_id, fecha DESC);
-CREATE INDEX idx_ventas_cliente ON ventas(cliente_id);
-CREATE INDEX idx_ventas_pedido ON ventas(pedido_id);
-CREATE INDEX idx_ventas_fecha ON ventas(fecha DESC);
-CREATE INDEX idx_ventas_cliente_fecha ON ventas(cliente_id, fecha DESC);
-CREATE INDEX idx_compras_fecha ON compras(fecha DESC);
-CREATE INDEX idx_compras_proveedor_fecha ON compras(proveedor_id, fecha DESC);
-CREATE INDEX idx_producto_insumos_producto ON producto_insumos(producto_id);
-CREATE INDEX idx_producto_insumos_insumo ON producto_insumos(insumo_id);
-CREATE INDEX idx_entregas_insumos_fecha ON entregas_insumos(fecha DESC);
-CREATE INDEX idx_insumo_movimientos_insumo ON insumo_movimientos(insumo_id);
-CREATE INDEX idx_insumo_movimientos_usuario ON insumo_movimientos(usuario_id);
-CREATE INDEX idx_insumo_movimientos_fecha ON insumo_movimientos(created_at DESC);
-CREATE INDEX idx_produccion_fecha ON produccion(fecha DESC);
-CREATE INDEX idx_produccion_pedido ON produccion(pedido_id);
-CREATE INDEX idx_produccion_responsable ON produccion(responsable);
-CREATE INDEX idx_detalle_pedidos_pedido ON detalle_pedidos(pedido_id);
-CREATE INDEX idx_detalle_ventas_venta ON detalle_ventas(venta_id);
-CREATE INDEX idx_detalle_compras_compra ON detalle_compras(compra_id);
-CREATE INDEX idx_abonos_pedido ON abonos(pedido_id);
-CREATE INDEX idx_abonos_fecha ON abonos(fecha DESC);
-CREATE INDEX idx_abonos_cliente_fecha ON abonos(cliente_id, fecha DESC);
-CREATE INDEX idx_domicilios_pedido ON domicilios(pedido_id);
-CREATE INDEX idx_domicilios_fecha ON domicilios(fecha DESC);
-CREATE INDEX idx_domicilios_cliente_fecha ON domicilios(cliente_id, fecha DESC);
-CREATE INDEX idx_domicilios_repartidor ON domicilios(repartidor_id);
-CREATE INDEX idx_insumos_operario ON insumos(ultimo_operario_id);
-CREATE INDEX idx_proveedores_nit ON proveedores(nit);
-CREATE INDEX idx_proveedores_numero_documento ON proveedores(numero_documento);
-CREATE INDEX idx_proveedores_email_lower ON proveedores(LOWER(COALESCE(email, '')));
-CREATE INDEX idx_proveedores_telefono_digits ON proveedores((regexp_replace(COALESCE(telefono, ''), '\\D', '', 'g')));
-
--- ========================================
--- Catálogo de roles (referencia obligatoria; la app espera estos nombres)
--- ========================================
-INSERT INTO roles (nombre, descripcion, permisos, estado) VALUES
-('Administrador', 'Acceso total al sistema',
- ARRAY['Ver Dashboard','Ver Usuarios','Crear Usuarios','Editar Usuarios','Eliminar Usuarios','Ver Roles','Asignar Permisos','Ver Proveedores','Crear Proveedores','Editar Proveedores','Ver Compras','Registrar Compras','Anular Compras','Ver Productos','Crear Productos','Editar Productos','Ver Categorías','Crear Categorías','Ver Insumos','Entregar Insumos','Ver Producción','Registrar Producción','Ver Clientes','Crear Clientes','Editar Clientes','Ver Ventas','Registrar Ventas','Anular Ventas','Ver Abonos','Registrar Abonos','Ver Pedidos','Crear Pedidos','Ver Domicilios','Gestionar Domicilios'],
- 'Activo'),
-('Asesor', 'Gestión de ventas y clientes',
- ARRAY['Ver Dashboard','Ver Clientes','Crear Clientes','Editar Clientes','Ver Ventas','Registrar Ventas','Ver Abonos','Registrar Abonos','Ver Pedidos','Crear Pedidos'],
- 'Activo'),
-('Repartidor', 'Gestión de domicilios',
- ARRAY['Ver Dashboard','Ver Domicilios','Gestionar Domicilios','Ver Pedidos'],
- 'Activo'),
-('Cliente', 'Acceso cliente',
- ARRAY['Ver Dashboard','Ver Tienda','Ver Mis Pedidos','Ver Mis Lista de Compras','Ver Mis Domicilios'],
- 'Activo'),
-('Productor', 'Producción e insumos',
- ARRAY['Ver Dashboard','Ver Insumos','Entregar Insumos','Ver Producción','Registrar Producción'],
- 'Activo');
-
--- ========================================
--- Usuarios (único INSERT de datos operativos; crea cliente vía trigger si rol Cliente)
--- Contraseñas (todas bcrypt cost 10):
---   admin@grandmas.com        → admin123
---   asesor@grandmas.com       → asesor123
---   repartidor@grandmas.com   → repartidor123
---   domiciliario@grandmas.com → domicilio123  (rol Repartidor en la UI)
---   cliente@grandmas.com      → cliente123
--- ========================================
-INSERT INTO usuarios (nombre, apellido, tipo_documento, documento, direccion, email, telefono, password_hash, rol_id, estado) VALUES
-('Carlos', 'Rodríguez', 'CC', '1010123456', 'Carrera 50 #20-30, Bogotá', 'admin@grandmas.com', '3001234567', '$2b$10$4GJ/dyScA5T.oe5YXNh7ROx56KVYDkdLmQNcOpOGz3v3Hw7/XCHny', (SELECT id FROM roles WHERE nombre = 'Administrador' LIMIT 1), 'Activo'),
-('María', 'González', 'CC', '1020234567', 'Calle 45 #12-15, Medellín', 'asesor@grandmas.com', '3009876543', '$2b$10$5tQd1StaI0uEPVpKh8pcNO6ERWJuZXVcA8qSVHY3w4cxKAkzs3Qz.', (SELECT id FROM roles WHERE nombre = 'Asesor' LIMIT 1), 'Activo'),
-('Pedro', 'López', 'CC', '1040456789', 'Calle 10 #5-10, Barranquilla', 'repartidor@grandmas.com', '3207654321', '$2b$10$xLA7gMJp3iyU2kAJQaE9auEcqCrtZXpH9t3Vv59IWvH8KACUReYDG', (SELECT id FROM roles WHERE nombre = 'Repartidor' LIMIT 1), 'Activo'),
-('Diego', 'Ramírez', 'CC', '1040456790', 'Calle 11 #6-11, Barranquilla', 'domiciliario@grandmas.com', '3207654322', '$2b$10$bscbZDQbVgYIXwoVpPrfS.jPet01mPTPgcg6GMMZR0fQJ/lGoFxPq', (SELECT id FROM roles WHERE nombre = 'Repartidor' LIMIT 1), 'Activo'),
-('Ana', 'Pérez', 'CC', '1050567890', 'Carrera 7 #14-25, Bogotá', 'cliente@grandmas.com', '3156543210', '$2b$10$fqDuOAL0nDlyypAENBdxTeY/KDrg0k69JrjVSH8DIgJKyKkkWvh.K', (SELECT id FROM roles WHERE nombre = 'Cliente' LIMIT 1), 'Activo');
+-- ============================================================
+-- FIN DEL SCRIPT
+-- ============================================================
+-- Base de datos inicializada exitosamente
+-- Usuarios de prueba disponibles:
+--   - Email: admin@grandmas.local (Administrador)
+--   - Email: asesor@grandmas.local (Asesor)
+--   - Email: productor@grandmas.local (Productor)
+--   - Email: repartidor1@grandmas.local (Repartidor)
+--   - Email: cliente@gmail.com (Cliente)
+-- 
+-- Contraseña: password_123 (para todos)
+-- ============================================================

@@ -492,7 +492,7 @@ export function Compras() {
           <div className="grid grid-cols-2 gap-4">
             {/* Campo de búsqueda de Proveedor */}
             <div className="relative">
-              <label className="block text-sm font-medium mb-2">Proveedor * (solo activos)</label>
+              <label className="block text-sm font-medium mb-2">Proveedor *</label>
               <input
                 type="text"
                 value={busquedaProveedor}
@@ -528,7 +528,7 @@ export function Compras() {
             </div>
 
             <FormField
-              label="Fecha y Hora * (no pasada)"
+              label="Fecha y Hora *"
               name="fecha"
               type="datetime-local"
               value={formData.fecha}
@@ -546,7 +546,7 @@ export function Compras() {
 
             <div className="grid grid-cols-2 gap-4 mb-4">
               <FormField
-                label="Producto * (solo activos)"
+                label="Producto *"
                 name="productoId"
                 type="select"
                 value={productoActual.productoId.toString()}
@@ -561,7 +561,7 @@ export function Compras() {
               />
 
               <FormField
-                label="Cantidad * (solo positivos)"
+                label="Cantidad *"
                 name="cantidad"
                 type="number"
                 value={productoActual.cantidad === 0 ? '' : productoActual.cantidad}
@@ -577,7 +577,7 @@ export function Compras() {
               />
 
               <FormField
-                label="Precio de Compra * (solo positivos)"
+                label="Precio de Compra *"
                 name="precioCompra"
                 type="number"
                 value={productoActual.precioCompra === 0 ? '' : productoActual.precioCompra}
@@ -593,7 +593,7 @@ export function Compras() {
               />
 
               <FormField
-                label="Ganancia (%) * (0 o más)"
+                label="Ganancia (%) *"
                 name="ganancia"
                 type="number"
                 value={productoActual.ganancia === 0 ? '' : productoActual.ganancia}

@@ -44,9 +44,11 @@ export function Pedidos() {
   const [formData, setFormData] = useState({
     clienteId: 0,
     metodoPago: 'efectivo' as 'efectivo' | 'transferencia',
-    porcentajeAbono: 0,
+    porcentajeAbono: 50,
     fechaPedido: new Date().toISOString().split('T')[0],
-    fechaEntrega: new Date().toISOString().split('T')[0]
+    fechaEntrega: new Date().toISOString().split('T')[0],
+    direccion: '',
+    telefono: ''
   });
 
   useEffect(() => {
@@ -260,7 +262,9 @@ export function Pedidos() {
       metodoPago: 'efectivo',
       porcentajeAbono: 0,
       fechaPedido: new Date().toISOString().split('T')[0],
-      fechaEntrega: new Date().toISOString().split('T')[0]
+      fechaEntrega: new Date().toISOString().split('T')[0],
+      direccion: '',
+      telefono: ''
     });
     setProductosEnPedido([]);
     setBusquedaCliente('');
@@ -280,7 +284,9 @@ export function Pedidos() {
       metodoPago: pedido.metodoPago,
       porcentajeAbono: pedido.porcentajeAbono,
       fechaPedido: pedido.fechaPedido,
-      fechaEntrega: pedido.fechaEntrega
+      fechaEntrega: pedido.fechaEntrega,
+      direccion: pedido.direccion || '',
+      telefono: pedido.telefono || ''
     });
 
     const productosForm: ProductoEnForm[] = pedido.productos.map(p => {
@@ -377,8 +383,8 @@ export function Pedidos() {
       return;
     }
 
-    if (formData.porcentajeAbono < 0 || formData.porcentajeAbono > 100) {
-      toast.error('El porcentaje de abono debe estar entre 0 y 100');
+    if (![50, 100].includes(Number(formData.porcentajeAbono))) {
+      toast.error('El porcentaje de abono debe ser 50 o 100');
       return;
     }
 
@@ -402,7 +408,9 @@ export function Pedidos() {
           porcentajeAbono: formData.porcentajeAbono,
           montoAbonado,
           fechaPedido: formData.fechaPedido,
-          fechaEntrega: formData.fechaEntrega
+          fechaEntrega: formData.fechaEntrega,
+          direccion: formData.direccion,
+          telefono: formData.telefono
         });
         toast.success('Pedido actualizado exitosamente');
       } else {
@@ -415,6 +423,8 @@ export function Pedidos() {
           montoAbonado,
           fechaPedido: formData.fechaPedido,
           fechaEntrega: formData.fechaEntrega,
+          direccion: formData.direccion,
+          telefono: formData.telefono,
           estado: 'pendiente'
         });
         toast.success('Pedido creado exitosamente');
@@ -436,7 +446,12 @@ export function Pedidos() {
   });
 
   const seleccionarCliente = (cliente: Cliente) => {
-    setFormData({ ...formData, clienteId: cliente.id });
+    setFormData({ 
+      ...formData, 
+      clienteId: cliente.id,
+      direccion: cliente.direccion || '',
+      telefono: cliente.telefono || ''
+    });
     setBusquedaCliente(`${cliente.nombre} ${cliente.apellido}`);
     setMostrarListaClientes(false);
   };
@@ -628,6 +643,24 @@ export function Pedidos() {
               required
             />
 
+            <FormField
+              label="Dirección de Entrega"
+              name="direccion"
+              type="text"
+              value={formData.direccion}
+              onChange={(value) => setFormData({ ...formData, direccion: value as string })}
+              placeholder="Editable - se cargó del cliente registrado"
+            />
+
+            <FormField
+              label="Teléfono de Contacto"
+              name="telefono"
+              type="text"
+              value={formData.telefono}
+              onChange={(value) => setFormData({ ...formData, telefono: value as string })}
+              placeholder="Editable - se cargó del cliente registrado"
+            />
+
             <div className="col-span-2">
               <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
                 <p className="text-sm text-blue-700">
@@ -659,17 +692,18 @@ export function Pedidos() {
 
             <div className="col-span-2">
               <FormField
-                label="Porcentaje de Abono (0-100%)"
+                label="Porcentaje de Abono"
                 name="porcentajeAbono"
-                type="number"
+                type="select"
                 value={formData.porcentajeAbono}
                 onChange={(value) => {
-                  const porcentaje = value as number;
-                  if (porcentaje < 0 || porcentaje > 100) {
-                    toast.warning('El porcentaje debe estar entre 0 y 100');
-                  }
+                  const porcentaje = Number(value);
                   setFormData({ ...formData, porcentajeAbono: porcentaje });
                 }}
+                options={[
+                  { value: 50, label: '50%' },
+                  { value: 100, label: '100%' }
+                ]}
                 required
               />
               {formData.porcentajeAbono > 0 && (
@@ -813,6 +847,14 @@ export function Pedidos() {
               <div>
                 <label className="text-sm text-muted-foreground">Método de Pago</label>
                 <p className="mt-1 capitalize">{selectedPedido.metodoPago}</p>
+              </div>
+              <div>
+                <label className="text-sm text-muted-foreground">Dirección de Entrega</label>
+                <p className="mt-1">{selectedPedido.direccion || 'No especificada'}</p>
+              </div>
+              <div>
+                <label className="text-sm text-muted-foreground">Teléfono de Contacto</label>
+                <p className="mt-1">{selectedPedido.telefono || 'No especificado'}</p>
               </div>
               <div>
                 <label className="text-sm text-muted-foreground">Total</label>

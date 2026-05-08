@@ -20,8 +20,59 @@ const ensureVentaForDeliveredDomicilio = async (domicilioId) => {
     if (!pedido) return;
 
     const ventaExistente = await models.Ventas.getByPedido(domicilio.pedido_id);
-    if (ventaExistente?.id) return;
 
+    // Actualizar pedido: forzar esquema_abono a 100%
+    try {
+      await models.Pedidos.update(pedido.id, { esquema_abono: '100%' });
+    } catch (e) {
+      // ignore
+    }
+
+    // Gestionar abonos: si la suma de abonos registrados es menor al total, crear abono final y marcar todos como completados
+    try {
+      const abonos = await models.Abonos.getByPedido(pedido.id);
+      const totalPedido = Number(pedido.total || 0);
+      const sumPagado = (Array.isArray(abonos) ? abonos : []).reduce((s, a) => s + Number(a.monto || 0), 0);
+      if (totalPedido > sumPagado) {
+        const faltante = Math.round(totalPedido - sumPagado);
+        const numero_abono = `ABO-${Date.now()}`;
+        await models.Abonos.create({
+          numero_abono,
+          pedido_id: pedido.id,
+          cliente_id: pedido.cliente_id,
+          monto: faltante,
+          fecha: new Date().toISOString().split('T')[0],
+          metodo_pago: 'Contraentrega',
+          estado: 'Registrado',
+        });
+      }
+
+      // Marcar todos los abonos como completados en la gestión (modelo actual acepta cualquier string)
+      const allAbonos = await models.Abonos.getByPedido(pedido.id);
+      for (const a of Array.isArray(allAbonos) ? allAbonos : []) {
+        try {
+          await models.Abonos.updateEstado(a.id, 'Completado');
+        } catch (e) {
+          // continuar
+        }
+      }
+    } catch (e) {
+      // no bloquear flujo
+    }
+
+    if (ventaExistente?.id) {
+      try {
+        const ventaActual = await models.Ventas.getById(ventaExistente.id);
+        if (ventaActual && !['Completada', 'Cancelada'].includes(String(ventaActual.estado || ''))) {
+          await models.Ventas.update(ventaExistente.id, { estado: 'Completada' });
+        }
+      } catch (e) {
+        // ignorar errores
+      }
+      return;
+    }
+
+    // Crear venta por pedido y marcarla como Completada
     const ventaId = await models.Ventas.create({
       numero_venta: buildVentaNumber(),
       tipo: 'Por Pedido',
@@ -30,7 +81,7 @@ const ensureVentaForDeliveredDomicilio = async (domicilioId) => {
       fecha: new Date().toISOString().split('T')[0],
       metodopago: 'Contraentrega',
       total: Number(pedido.total || 0),
-      estado: 'Pendiente', // ✅ CORRECTO: Venta inicia en Pendiente, no Completada
+      estado: 'Completada',
     });
 
     const detalles = await models.Pedidos.getDetalles(pedido.id);

@@ -47,6 +47,33 @@ async function runMigrations() {
       }
     }
 
+    // Ejecutar ALTERs de sincronización para DB existentes
+    console.log('🔧 Aplicando alteraciones de sincronización (si aplican)...');
+    try {
+      await client.query(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS monto_abonado DECIMAL(18,2) DEFAULT 0`);
+      // Asegurar tipos numéricos amplios en tablas críticas (silencioso si no aplica)
+      try {
+        await client.query(`ALTER TABLE ventas ALTER COLUMN total TYPE NUMERIC(18,2)`);
+      } catch (_) {
+        // ignore
+      }
+      try {
+        await client.query(`ALTER TABLE detalle_ventas ALTER COLUMN precio_unitario TYPE NUMERIC(18,2)`);
+        await client.query(`ALTER TABLE detalle_ventas ALTER COLUMN subtotal TYPE NUMERIC(18,2)`);
+      } catch (_) {
+        // ignore
+      }
+      try {
+        await client.query(`ALTER TABLE detalle_pedidos ALTER COLUMN precio_unitario TYPE NUMERIC(18,2)`);
+        await client.query(`ALTER TABLE detalle_pedidos ALTER COLUMN subtotal TYPE NUMERIC(18,2)`);
+      } catch (_) {
+        // ignore
+      }
+      console.log('✓ Alteraciones aplicadas (si fueron necesarias)\n');
+    } catch (err) {
+      console.warn('⚠️  Error al aplicar alteraciones de sincronización:', err.message);
+    }
+
     console.log('✅ ¡Todas las migraciones completadas exitosamente!');
     process.exit(0);
   } catch (error) {

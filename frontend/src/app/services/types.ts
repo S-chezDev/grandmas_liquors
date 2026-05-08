@@ -197,6 +197,8 @@ export interface Pedido {
   montoAbonado: number;
   fechaPedido: string;
   fechaEntrega: string;
+  direccion?: string;
+  telefono?: string;
   estado: 'pendiente' | 'en proceso' | 'completado' | 'cancelado';
   createdAt: string;
   updatedAt: string;

@@ -277,6 +277,8 @@ function mapPedidoListRow(r: any): Pedido {
     montoAbonado: Number(r.monto_abonado ?? 0),
     fechaPedido: String(r.fecha || '').split('T')[0],
     fechaEntrega: String(r.fecha_entrega || '').split('T')[0],
+    direccion: r.direccion || undefined,
+    telefono: r.telefono || undefined,
     estado: pedidoEstadoUi(r.estado) as Pedido['estado'],
     createdAt: r.created_at || '',
     updatedAt: r.updated_at || '',
@@ -301,6 +303,8 @@ function mapPedidoDetail(r: any): Pedido {
     montoAbonado: Number(r.monto_abonado ?? 0),
     fechaPedido: String(r.fecha || '').split('T')[0],
     fechaEntrega: String(r.fecha_entrega || '').split('T')[0],
+    direccion: r.direccion || undefined,
+    telefono: r.telefono || undefined,
     estado: pedidoEstadoUi(r.estado) as Pedido['estado'],
     createdAt: r.created_at || '',
     updatedAt: r.updated_at || '',
@@ -984,6 +988,8 @@ export const api = {
           fecha: data.fechaPedido,
           fecha_entrega: data.fechaEntrega,
           detalles: '',
+          direccion: data.direccion || null,
+          telefono: data.telefono || null,
           total: data.total,
           estado: 'Pendiente',
           metodo_pago: metodoPagoDb(String(data.metodoPago || 'efectivo')),
@@ -1005,6 +1011,8 @@ export const api = {
           numero_pedido: updates.id ? undefined : undefined,
           fecha: updates.fechaPedido,
           fecha_entrega: updates.fechaEntrega,
+          direccion: updates.direccion,
+          telefono: updates.telefono,
           total: updates.total,
           metodo_pago: updates.metodoPago ? metodoPagoDb(updates.metodoPago) : undefined,
           esquema_abono: updates.porcentajeAbono === 50 ? '50%' : updates.porcentajeAbono === 100 ? '100%' : undefined,
@@ -1029,10 +1037,7 @@ export const api = {
       return rows.map(mapVenta);
     },
     create: async (data: Partial<Venta>) => {
-      const cid = data.clienteId != null ? Number(data.clienteId) : NaN;
-      if (!Number.isFinite(cid) || cid <= 0) {
-        throw new Error('Seleccione un cliente válido');
-      }
+      const cid = data.clienteId != null && Number.isFinite(Number(data.clienteId)) && Number(data.clienteId) > 0 ? Number(data.clienteId) : null;
 
       const coerceMoney = (v: unknown): number => {
         if (typeof v === 'number' && Number.isFinite(v)) return v;

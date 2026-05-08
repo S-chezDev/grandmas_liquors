@@ -58,7 +58,7 @@ export function Domicilios() {
             .toLowerCase() === 'repartidor' && u.estado === 'activo'
       );
       setRepartidores(repartidoresData);
-      setPedidos(pedidosData.filter(p => p.estado === 'pendiente' || p.estado === 'en proceso'));
+      setPedidos(pedidosData.filter(p => p.estado === 'pendiente' || p.estado === 'en proceso' || p.estado === 'completado'));
       setClientes(clientesData);
 
       const domiciliosConInfo = domiciliosData.map(domicilio => {

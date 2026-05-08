@@ -10,28 +10,6 @@ const normalizeEstado = (value) => String(value || '').trim().toLowerCase();
 
 const buildDomicilioNumber = () => `DOM-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
-const ensureDomicilioForCompletedPedido = async (pedidoId) => {
-  const pedido = await models.Pedidos.getById(pedidoId);
-  if (!pedido) return;
-
-  if (normalizeEstado(pedido.estado) !== 'completado') return;
-
-  const existing = await models.Domicilios.getByPedido(pedidoId);
-  if (existing?.id) return;
-
-  await models.Domicilios.create({
-    numero_domicilio: buildDomicilioNumber(),
-    pedido_id: Number(pedido.id),
-    cliente_id: Number(pedido.cliente_id),
-    direccion: pedido.detalles || 'Sin direccion registrada en el pedido',
-    repartidor: null,
-    fecha: pedido.fecha_entrega || new Date().toISOString().split('T')[0],
-    hora: null,
-    estado: 'Pendiente',
-    detalle: `Domicilio autogenerado desde pedido ${pedido.numero_pedido || `PED-${pedido.id}`}`,
-  });
-};
-
 module.exports = {
   getAll: async (req, res) => {
     try {
@@ -40,10 +18,12 @@ module.exports = {
         if (!own) {
           return res.status(403).json({ success: false, message: 'Perfil cliente no vinculado' });
         }
-        const pedidos = await models.Pedidos.getByCliente(own);
+        const estado = req.query?.estado;
+        const pedidos = await models.Pedidos.getByCliente(own, estado);
         return res.json({ success: true, data: pedidos });
       }
-      const pedidos = await models.Pedidos.getAll();
+      const estado = req.query?.estado;
+      const pedidos = await models.Pedidos.getAll(estado);
       return res.json({ success: true, data: pedidos });
     } catch (error) {
       return res.status(error.statusCode || 500).json({ success: false, message: error.message });
@@ -87,8 +67,70 @@ module.exports = {
         }
         body.cliente_id = own;
       }
+      // Validate esquema_abono (only '50%' or '100%')
+      if (body.esquema_abono !== undefined && body.esquema_abono !== null) {
+        const esquema = String(body.esquema_abono).trim();
+        if (!['50%', '100%'].includes(esquema)) {
+          return res.status(400).json({ success: false, message: 'Esquema de abono inválido. Valores permitidos: 50%, 100%'});
+        }
+      }
+
+      // If productos provided in body, attempt to create pedido and its detalles atomically at controller level
+      const productos = Array.isArray(body.productos) ? body.productos : null;
+      if (productos && productos.length > 0) {
+        // compute total from productos to avoid mismatches
+        const totalCalc = productos.reduce((s, it) => s + (Number(it.precio || it.precioUnitario || 0) * Number(it.cantidad || 0)), 0);
+        body.total = totalCalc;
+      }
+
       const id = await models.Pedidos.create(body);
-      await ensureDomicilioForCompletedPedido(id);
+
+      if (productos && productos.length > 0) {
+        try {
+          for (const it of productos) {
+            const productoId = Number(it.productoId ?? it.producto_id);
+            const cantidad = Number(it.cantidad);
+            const precioUnitario = Number(it.precio ?? it.precioUnitario ?? 0);
+            await models.Pedidos.addDetalle(id, productoId, cantidad, precioUnitario);
+          }
+        } catch (err) {
+          // si falla cualquier detalle, eliminar pedido creado para mantener consistencia
+          try {
+            await models.Pedidos.delete(id);
+          } catch (_e) {
+            /* ignore */
+          }
+          return res.status(err.statusCode || 400).json({ success: false, message: err.message || 'Error al agregar productos al pedido' });
+        }
+      }
+
+      // Si esquema es 50% crear registro inicial en abonos y actualizar monto_abonado en pedido
+      try {
+        const esquema = String(body.esquema_abono || '').trim() || '100%';
+        if (esquema === '50%') {
+          const pedidoRow = await models.Pedidos.getById(id);
+          if (pedidoRow) {
+            const clienteId = Number(pedidoRow.cliente_id);
+            const total = Number(pedidoRow.total || 0);
+            const monto = Math.round(total * 0.5);
+            const numero_abono = `ABO-${Date.now()}`;
+            await models.Abonos.create({
+              numero_abono,
+              pedido_id: id,
+              cliente_id: clienteId,
+              monto,
+              fecha: new Date().toISOString().split('T')[0],
+              metodo_pago: pedidoRow.metodo_pago || 'Efectivo',
+              estado: 'Registrado',
+            });
+            // actualizar monto_abonado en pedido
+            await models.Pedidos.update(id, { monto_abonado: monto, esquema_abono: '50%' });
+          }
+        }
+      } catch (e) {
+        console.error('No se pudo crear abono inicial para pedido', id, e.message);
+      }
+
       return res.status(201).json({ success: true, id, message: 'Pedido creado exitosamente' });
     } catch (error) {
       return res.status(500).json({ success: false, message: error.message });
@@ -177,22 +219,11 @@ module.exports = {
           };
           await models.Pedidos.update(req.params.id, merged);
           
-          // Si el estado nuevo es Completado, crear domicilio automáticamente
-          if (estadoNuevo === 'Completado' && estadoActual !== 'Completado') {
-            await ensureDomicilioForCompletedPedido(req.params.id);
-          }
-          
           return res.json({ success: true, message: 'Pedido actualizado exitosamente' });
         }
 
         // ADMIN: Puede cambiar todo
         await models.Pedidos.update(req.params.id, req.body);
-        
-        // Si el estado nuevo es Completado, crear domicilio automáticamente
-        if (estadoNuevo === 'Completado' && estadoActual !== 'Completado') {
-          await ensureDomicilioForCompletedPedido(req.params.id);
-        }
-        
         return res.json({ success: true, message: 'Pedido actualizado exitosamente' });
       }
 
@@ -271,12 +302,6 @@ module.exports = {
       }
 
       await models.Pedidos.update(req.params.id, datosActualizar);
-      
-      // Si se completa, crear automáticamente domicilio
-      if (estado === 'Completado') {
-        await ensureDomicilioForCompletedPedido(req.params.id);
-      }
-
       return res.json({ success: true, message: 'Estado actualizado exitosamente' });
     } catch (error) {
       return res.status(500).json({ success: false, message: error.message });

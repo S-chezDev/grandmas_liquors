@@ -96,7 +96,8 @@ export function Ventas() {
 
       setClientes(clientesData.filter(c => c.estado === 'activo'));
       setProductos(productosData.filter(p => p.estado === 'activo'));
-      setPedidos(pedidosData.filter(p => p.estado === 'completado' || p.estado === 'en proceso'));
+      // Solo exponer pedidos completados para selección en ventas por pedido
+      setPedidos(pedidosData.filter(p => p.estado === 'completado'));
 
       const ventasConInfo = ventasData.map(venta => {
         const cliente = clientesData.find(c => c.id === venta.clienteId);
