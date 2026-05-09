@@ -1,4 +1,13 @@
-const models = require('../models/entities.models');
+// Rewire: el modelo Abonos, Clientes, Domicilios, Pedidos, Usuarios, Ventas viene de archivos modulares.
+// entities.models.js queda como archivo intacto pero desconectado (sin importadores).
+const models = {
+  Abonos: require('../models/ventas/abonos'),
+  Clientes: require('../models/ventas/clientes'),
+  Domicilios: require('../models/ventas/domicilios'),
+  Pedidos: require('../models/ventas/pedidos'),
+  Usuarios: require('../models/usuarios/usuarios'),
+  Ventas: require('../models/ventas/ventas'),
+};
 const {
   isClienteUser,
   assertOwnClienteParam,

@@ -1,4 +1,8 @@
-const models = require('../models/entities.models');
+// Rewire: el modelo Roles viene de archivos modulares.
+// entities.models.js queda como archivo intacto pero desconectado (sin importadores).
+const models = {
+  Roles: require('../models/usuarios/roles'),
+};
 
 module.exports = {
   getAll: async (req, res) => {

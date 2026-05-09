@@ -1,4 +1,8 @@
-const models = require('../models/entities.models');
+// Rewire: el modelo Produccion viene de archivos modulares.
+// entities.models.js queda como archivo intacto pero desconectado (sin importadores).
+const models = {
+  Produccion: require('../models/produccion/produccion'),
+};
 
 module.exports = {
   getAll: async (req, res) => {
@@ -46,6 +50,14 @@ module.exports = {
     try {
       await models.Produccion.delete(req.params.id);
       res.json({ success: true, message: 'Produccion eliminada exitosamente' });
+    } catch (error) {
+      res.status(error.statusCode || 500).json({ success: false, message: error.message });
+    }
+  },
+  getInsumosByProductor: async (req, res) => {
+    try {
+      const data = await models.Produccion.getInsumosEntregadosByProductor(req.params.productorId);
+      res.json({ success: true, data });
     } catch (error) {
       res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }

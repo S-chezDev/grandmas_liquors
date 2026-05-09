@@ -1,4 +1,8 @@
-const models = require('../models/entities.models');
+// Rewire: el modelo Insumos viene de archivos modulares.
+// entities.models.js queda como archivo intacto pero desconectado (sin importadores).
+const models = {
+  Insumos: require('../models/produccion/insumos'),
+};
 
 module.exports = {
   getAll: async (req, res) => {

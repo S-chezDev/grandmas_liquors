@@ -853,7 +853,7 @@ export const api = {
       const rows = await apiFetchData<any[]>('/api/produccion');
       return rows.map(mapProduccion);
     },
-    create: async (data: Partial<OrdenProduccion>) => {
+    create: async (data: Partial<OrdenProduccion> & { insumos?: number[] }) => {
       const u = await apiFetchData<any>(`/api/usuarios/${data.productorId}`);
       const responsable = `${u.nombre || ''} ${u.apellido || ''}`.trim();
       const env = await apiFetch<{ id: number }>('/api/produccion', {
@@ -863,8 +863,10 @@ export const api = {
           cantidad: data.cantidad,
           fecha: data.fechaInicio,
           responsable,
+          productor_id: data.productorId,
           tiempo_preparacion_minutos: data.tiempoPreparacion,
           estado: 'pendiente',
+          insumos: Array.isArray(data.insumos) ? data.insumos : [],
         },
       });
       return { id: env.id, idOrden: env.id } as OrdenProduccion;
@@ -874,6 +876,9 @@ export const api = {
         method: 'PATCH',
         json: { estado, motivo_cancelacion: motivo },
       });
+    },
+    getInsumosByProductor: async (productorId: number) => {
+      return apiFetchData<any[]>(`/api/produccion/insumos-disponibles/${productorId}`);
     },
   },
 

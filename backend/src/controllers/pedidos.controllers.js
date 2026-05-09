@@ -1,4 +1,9 @@
-const models = require('../models/entities.models');
+// Rewire: el modelo Abonos, Pedidos viene de archivos modulares.
+// entities.models.js queda como archivo intacto pero desconectado (sin importadores).
+const models = {
+  Abonos: require('../models/ventas/abonos'),
+  Pedidos: require('../models/ventas/pedidos'),
+};
 const {
   isClienteUser,
   getOwnClienteId,
@@ -203,7 +208,7 @@ module.exports = {
         if (!transiciones[estadoActual]?.includes(estadoNuevo)) {
           return res.status(400).json({
             success: false,
-            message: `TransiciÃ³n no permitida: ${estadoActual} âÿÿ ${estadoNuevo}`,
+            message: `TransiciÃ³n no permitida: ${estadoActual} ï¿½ï¿½ï¿½ ${estadoNuevo}`,
             permitidas: transiciones[estadoActual] || []
           });
         }

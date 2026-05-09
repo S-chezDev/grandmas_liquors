@@ -1,4 +1,8 @@
-const models = require('../models/entities.models');
+// Rewire: el modelo Ventas viene de archivos modulares.
+// entities.models.js queda como archivo intacto pero desconectado (sin importadores).
+const models = {
+  Ventas: require('../models/ventas/ventas'),
+};
 const { normalizeVentaPayload } = require('./normalizador-http');
 const { isClienteUser, assertOwnClienteParam, assertOwnVentaId } = require('../utils/selfServiceAccess');
 

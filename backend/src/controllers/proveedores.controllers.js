@@ -1,4 +1,8 @@
-const models = require('../models/entities.models');
+// Rewire: el modelo Proveedores viene de archivos modulares.
+// entities.models.js queda como archivo intacto pero desconectado (sin importadores).
+const models = {
+  Proveedores: require('../models/compras/proveedores'),
+};
 const { normalizeProveedorPayload } = require('./normalizador-http');
 
 module.exports = {

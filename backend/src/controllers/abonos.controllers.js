@@ -1,4 +1,9 @@
-const models = require('../models/entities.models');
+// Rewire: el modelo Abonos, Pedidos viene de archivos modulares.
+// entities.models.js queda como archivo intacto pero desconectado (sin importadores).
+const models = {
+  Abonos: require('../models/ventas/abonos'),
+  Pedidos: require('../models/ventas/pedidos'),
+};
 const { normalizeAbonoPayload, parseMoneyCO, normalizeMetodoPago } = require('./normalizador-http');
 
 module.exports = {

@@ -1,4 +1,9 @@
-const models = require('../models/entities.models');
+// Rewire: el modelo Roles, Usuarios viene de archivos modulares.
+// entities.models.js queda como archivo intacto pero desconectado (sin importadores).
+const models = {
+  Roles: require('../models/usuarios/roles'),
+  Usuarios: require('../models/usuarios/usuarios'),
+};
 const bcrypt = require('bcryptjs');
 const pool = require('../../db');
 const { normalizeUsuarioPayload } = require('./normalizador-http');

@@ -1,4 +1,8 @@
-const models = require('../models/entities.models');
+// Rewire: el modelo Productos viene de archivos modulares.
+// entities.models.js queda como archivo intacto pero desconectado (sin importadores).
+const models = {
+  Productos: require('../models/compras/productos'),
+};
 const { isClienteUser } = require('../utils/selfServiceAccess');
 
 module.exports = {

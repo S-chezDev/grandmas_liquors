@@ -3,7 +3,7 @@ import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions, FieldError, FieldSuccess } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, FileText, Calendar, Search, Package, ShoppingCart } from 'lucide-react';
+import { Plus, FileText, Calendar, Search, Package, ShoppingCart, Beaker } from 'lucide-react';
 import { api } from '../../../services/api';
 import { toast } from '../../AlertDialog';
 import type { OrdenProduccion, Producto, Usuario, ProductoInsumoRecetaLine } from '../../../services/types';
@@ -54,8 +54,20 @@ export function Produccion() {
   const [filtroFecha, setFiltroFecha] = useState<string>('');
   const [busquedaProducto, setBusquedaProducto] = useState('');
   const [busquedaProductor, setBusquedaProductor] = useState('');
+  const [busquedaInsumo, setBusquedaInsumo] = useState('');
   const [mostrarListaProductos, setMostrarListaProductos] = useState(false);
   const [mostrarListaProductores, setMostrarListaProductores] = useState(false);
+  const [mostrarListaInsumos, setMostrarListaInsumos] = useState(false);
+  const [insumosDisponibles, setInsumosDisponibles] = useState<Array<{
+    id: number;
+    insumo_id: number;
+    insumo_nombre: string;
+    cantidad: number;
+    unidad: string;
+    numero_entrega: string;
+    fecha: string;
+  }>>([]);
+  const [insumosSeleccionados, setInsumosSeleccionados] = useState<number[]>([]);
   const [formData, setFormData] = useState({
     productoId: 0,
     cantidad: 1,
@@ -117,12 +129,42 @@ export function Produccion() {
       if (!target.closest('.relative')) {
         setMostrarListaProductos(false);
         setMostrarListaProductores(false);
+        setMostrarListaInsumos(false);
       }
     };
 
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Al seleccionar/cambiar productor, cargar las entregas de insumos
+  // disponibles para ese productor (solo las que aun no estan asignadas a otra
+  // orden de produccion activa).
+  useEffect(() => {
+    if (!formData.productorId) {
+      setInsumosDisponibles([]);
+      setInsumosSeleccionados([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await api.produccion.getInsumosByProductor(formData.productorId);
+        if (!cancelled) {
+          setInsumosDisponibles(rows as any[]);
+          setInsumosSeleccionados([]);
+        }
+      } catch {
+        if (!cancelled) {
+          setInsumosDisponibles([]);
+          setInsumosSeleccionados([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [formData.productorId]);
 
   const cargarDatos = async () => {
     try {
@@ -182,6 +224,23 @@ export function Produccion() {
     setFormData({ ...formData, productorId: productor.id });
     setBusquedaProductor(`${productor.nombre} ${productor.apellido}`);
     setMostrarListaProductores(false);
+  };
+
+  // Filtrar entregas de insumos disponibles por busqueda
+  const insumosDisponiblesFiltrados = insumosDisponibles.filter((e) => {
+    const term = busquedaInsumo.toLowerCase();
+    if (!term) return true;
+    return (
+      String(e.insumo_nombre || '').toLowerCase().includes(term) ||
+      String(e.numero_entrega || '').toLowerCase().includes(term) ||
+      String(e.id).includes(term)
+    );
+  });
+
+  const toggleInsumoSeleccionado = (entregaId: number) => {
+    setInsumosSeleccionados((prev) =>
+      prev.includes(entregaId) ? prev.filter((x) => x !== entregaId) : [...prev, entregaId]
+    );
   };
 
   const columns: Column[] = [
@@ -285,8 +344,12 @@ export function Produccion() {
     });
     setBusquedaProducto('');
     setBusquedaProductor('');
+    setBusquedaInsumo('');
     setMostrarListaProductos(false);
     setMostrarListaProductores(false);
+    setMostrarListaInsumos(false);
+    setInsumosDisponibles([]);
+    setInsumosSeleccionados([]);
     // Resetear validaciones
     setFechaValida(true); // Fecha de hoy es válida
     setTiempoValido(true); // 60 minutos es válido
@@ -404,6 +467,11 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
       return;
     }
 
+    if (insumosSeleccionados.length === 0) {
+      toast.error('Seleccione al menos un insumo entregado al productor');
+      return;
+    }
+
     if (formData.tiempoPreparacion < 15) {
       toast.error('El tiempo de preparación debe ser al menos 15 minutos');
       return;
@@ -423,7 +491,8 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         productorId: formData.productorId,
         fechaInicio: formData.fechaInicio,
         tiempoPreparacion: formData.tiempoPreparacion,
-        estado: 'pendiente'
+        estado: 'pendiente',
+        insumos: insumosSeleccionados,
       });
 
       const productor = productores.find(p => p.id === formData.productorId);
@@ -678,6 +747,112 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                     <div className="px-3 py-2 text-muted-foreground text-sm">No se encontraron productores</div>
                   )}
                 </div>
+              )}
+            </div>
+
+            {/* Campo Insumos: solo entregas hechas al productor seleccionado
+                que aun no estan asignadas a otra orden activa. Mismo diseno
+                que "Agregar Productos" en Nueva Venta. */}
+            <div className="relative col-span-2">
+              <label className="block text-sm font-medium mb-2 flex items-center gap-2">
+                <Beaker className="w-4 h-4" />
+                Insumos *
+              </label>
+              {!formData.productorId ? (
+                <div className="px-4 py-3 border border-dashed border-border rounded-lg text-sm text-muted-foreground">
+                  Seleccione un productor para ver los insumos entregados.
+                </div>
+              ) : (
+                <>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <input
+                      type="text"
+                      value={busquedaInsumo}
+                      onChange={(e) => {
+                        setBusquedaInsumo(e.target.value);
+                        setMostrarListaInsumos(true);
+                      }}
+                      onFocus={() => setMostrarListaInsumos(true)}
+                      placeholder="Busca por insumo, # entrega o ID, o haz clic para ver todos los insumos entregados..."
+                      className="w-full pl-10 pr-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-base"
+                    />
+                  </div>
+                  {mostrarListaInsumos && (
+                    <div className="absolute z-10 w-full mt-1 bg-white border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
+                      {insumosDisponiblesFiltrados.length > 0 ? (
+                        <>
+                          <div className="sticky top-0 bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
+                            {busquedaInsumo.trim() === ''
+                              ? `Todos los insumos entregados (${insumosDisponiblesFiltrados.length})`
+                              : `${insumosDisponiblesFiltrados.length} insumo(s) encontrado(s)`}
+                          </div>
+                          {insumosDisponiblesFiltrados.map((e) => {
+                            const seleccionado = insumosSeleccionados.includes(e.id);
+                            return (
+                              <div
+                                key={e.id}
+                                onClick={() => toggleInsumoSeleccionado(e.id)}
+                                className={`px-4 py-3 border-b border-border last:border-b-0 hover:bg-accent cursor-pointer ${
+                                  seleccionado ? 'bg-primary/5' : ''
+                                }`}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <Beaker className="w-4 h-4 text-primary" />
+                                      <span className="font-medium">{e.insumo_nombre}</span>
+                                    </div>
+                                    <div className="text-sm text-muted-foreground mt-1">
+                                      Entrega #{e.numero_entrega} · {e.cantidad} {e.unidad} · {String(e.fecha || '').split('T')[0]}
+                                    </div>
+                                  </div>
+                                  {seleccionado ? (
+                                    <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary">
+                                      Seleccionado
+                                    </span>
+                                  ) : (
+                                    <Plus className="w-5 h-5 text-primary" />
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </>
+                      ) : (
+                        <div className="px-4 py-3 text-muted-foreground text-sm text-center">
+                          {insumosDisponibles.length === 0
+                            ? 'Este productor no tiene insumos entregados disponibles.'
+                            : 'No se encontraron insumos con ese criterio.'}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {insumosSeleccionados.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {insumosSeleccionados.map((id) => {
+                        const e = insumosDisponibles.find((x) => x.id === id);
+                        if (!e) return null;
+                        return (
+                          <span
+                            key={id}
+                            className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs"
+                          >
+                            {e.insumo_nombre} · {e.cantidad} {e.unidad}
+                            <button
+                              type="button"
+                              onClick={() => toggleInsumoSeleccionado(id)}
+                              className="hover:text-destructive"
+                              aria-label="Quitar"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
               )}
             </div>
 

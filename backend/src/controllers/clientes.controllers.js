@@ -1,4 +1,9 @@
-const models = require('../models/entities.models');
+// Rewire: el modelo Clientes, Auditoria viene de archivos modulares.
+// entities.models.js queda como archivo intacto pero desconectado (sin importadores).
+const models = {
+  Clientes: require('../models/ventas/clientes'),
+  Auditoria: require('../models/shared').Auditoria,
+};
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');

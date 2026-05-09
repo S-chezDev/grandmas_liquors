@@ -3,7 +3,7 @@ import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, Calendar } from 'lucide-react';
+import { Plus, Calendar, Search, Package, User } from 'lucide-react';
 import { api } from '../../../services/api';
 import { toast } from '../../AlertDialog';
 import type { EntregaInsumo, Usuario } from '../../../services/types';
@@ -41,9 +41,30 @@ export function EntregaInsumos() {
     fecha: new Date().toISOString().split('T')[0],
     hora: new Date().toTimeString().slice(0, 5),
   });
+  // Buscadores y dropdowns con el patron del select "Producto *" de Nueva
+  // Compra para los campos "Insumo (catalogo)" y "Productor".
+  const [busquedaInsumo, setBusquedaInsumo] = useState('');
+  const [busquedaProductor, setBusquedaProductor] = useState('');
+  const [mostrarListaInsumos, setMostrarListaInsumos] = useState(false);
+  const [mostrarListaProductores, setMostrarListaProductores] = useState(false);
 
   useEffect(() => {
     cargarDatos();
+  }, []);
+
+  // Cerrar las listas desplegables al hacer clic fuera
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest('.entrega-insumo-picker')) {
+        setMostrarListaInsumos(false);
+      }
+      if (!target.closest('.entrega-productor-picker')) {
+        setMostrarListaProductores(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   const cargarDatos = async () => {
@@ -120,7 +141,43 @@ export function EntregaInsumos() {
       fecha: new Date().toISOString().split('T')[0],
       hora: new Date().toTimeString().slice(0, 5),
     });
+    setBusquedaInsumo('');
+    setBusquedaProductor('');
+    setMostrarListaInsumos(false);
+    setMostrarListaProductores(false);
     setIsModalOpen(true);
+  };
+
+  // Filtrado y seleccion para los buscadores tipo "Producto *" de Nueva Compra
+  const insumosFiltradosForm = catalogoInsumos.filter((i) => {
+    const term = busquedaInsumo.trim().toLowerCase();
+    if (!term) return true;
+    return (
+      i.nombre.toLowerCase().includes(term) ||
+      String(i.id).includes(term) ||
+      i.unidad.toLowerCase().includes(term)
+    );
+  });
+
+  const productoresFiltradosForm = productores.filter((p) => {
+    const term = busquedaProductor.trim().toLowerCase();
+    if (!term) return true;
+    const full = `${p.nombre} ${p.apellido}`.toLowerCase();
+    return full.includes(term) || String(p.id).includes(term);
+  });
+
+  const seleccionarInsumoForm = (
+    insumo: { id: number; nombre: string; unidad: string }
+  ) => {
+    setFormData({ ...formData, insumoId: insumo.id });
+    setBusquedaInsumo(`${insumo.nombre} (${insumo.unidad})`);
+    setMostrarListaInsumos(false);
+  };
+
+  const seleccionarProductorForm = (productor: Usuario) => {
+    setFormData({ ...formData, productorId: productor.id });
+    setBusquedaProductor(etiquetaProductorEnLista(productor));
+    setMostrarListaProductores(false);
   };
 
   const handleDelete = (entrega: EntregaInsumoView) => {
@@ -289,25 +346,68 @@ export function EntregaInsumos() {
       >
         <Form onSubmit={handleSubmit}>
           <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
-              <FormField
-                label="Insumo (catálogo)"
-                name="insumoId"
-                type="select"
-                selectPlaceholder={false}
-                value={formData.insumoId}
-                onChange={(value) =>
-                  setFormData({ ...formData, insumoId: Number(value) || 0 })
-                }
-                options={[
-                  { value: 0, label: 'Seleccione un insumo activo' },
-                  ...catalogoInsumos.map((i) => ({
-                    value: i.id,
-                    label: `${i.nombre} (${i.unidad})`,
-                  })),
-                ]}
-                required
-              />
+            {/* Insumo (catalogo): mismo diseno que el select "Producto *" de
+                Nueva Compra (buscador con dropdown de tarjetas). */}
+            <div className="relative col-span-2 entrega-insumo-picker">
+              <label className="block text-sm font-medium mb-2 flex items-center gap-2">
+                <Package className="w-4 h-4" />
+                Insumo (catálogo) *
+              </label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <input
+                  type="text"
+                  value={busquedaInsumo}
+                  onChange={(e) => {
+                    setBusquedaInsumo(e.target.value);
+                    setMostrarListaInsumos(true);
+                    if (formData.insumoId !== 0) {
+                      setFormData({ ...formData, insumoId: 0 });
+                    }
+                  }}
+                  onFocus={() => setMostrarListaInsumos(true)}
+                  placeholder="Busca por nombre, ID o unidad, o haz clic para ver todos los insumos..."
+                  className="w-full pl-10 pr-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-base bg-white"
+                  required
+                />
+              </div>
+              {mostrarListaInsumos && (
+                <div className="absolute z-10 w-full mt-1 bg-white border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
+                  {insumosFiltradosForm.length > 0 ? (
+                    <>
+                      <div className="sticky top-0 bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
+                        {busquedaInsumo.trim() === ''
+                          ? `Todos los insumos (${insumosFiltradosForm.length})`
+                          : `${insumosFiltradosForm.length} insumo(s) encontrado(s)`}
+                      </div>
+                      {insumosFiltradosForm.map((i) => (
+                        <div
+                          key={i.id}
+                          onClick={() => seleccionarInsumoForm(i)}
+                          className="px-4 py-3 border-b border-border last:border-b-0 hover:bg-accent cursor-pointer"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <Package className="w-4 h-4 text-primary" />
+                                <span className="font-medium">{i.nombre}</span>
+                              </div>
+                              <div className="text-sm text-muted-foreground mt-1">
+                                ID: {i.id} | Unidad: {i.unidad}
+                              </div>
+                            </div>
+                            <Plus className="w-5 h-5 text-primary" />
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  ) : (
+                    <div className="px-4 py-3 text-muted-foreground text-sm text-center">
+                      No se encontraron insumos
+                    </div>
+                  )}
+                </div>
+              )}
               {catalogoInsumos.length === 0 && (
                 <p className="text-sm text-muted-foreground mt-1">
                   No hay insumos activos. Cree uno en el módulo Insumos primero.
@@ -325,24 +425,71 @@ export function EntregaInsumos() {
               required
             />
 
-            <FormField
-              label="Productor"
-              name="productorId"
-              type="select"
-              selectPlaceholder={false}
-              value={formData.productorId}
-              onChange={(value) =>
-                setFormData({ ...formData, productorId: Number(value) || 0 })
-              }
-              options={[
-                { value: 0, label: 'Seleccione un productor' },
-                ...productores.map((p) => ({
-                  value: p.id,
-                  label: etiquetaProductorEnLista(p),
-                })),
-              ]}
-              required
-            />
+            {/* Productor: mismo diseno que el select "Producto *" de Nueva
+                Compra (buscador con dropdown de tarjetas). */}
+            <div className="relative entrega-productor-picker">
+              <label className="block text-sm font-medium mb-2 flex items-center gap-2">
+                <User className="w-4 h-4" />
+                Productor *
+              </label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <input
+                  type="text"
+                  value={busquedaProductor}
+                  onChange={(e) => {
+                    setBusquedaProductor(e.target.value);
+                    setMostrarListaProductores(true);
+                    if (formData.productorId !== 0) {
+                      setFormData({ ...formData, productorId: 0 });
+                    }
+                  }}
+                  onFocus={() => setMostrarListaProductores(true)}
+                  placeholder="Busca por nombre o ID, o haz clic para ver todos los productores..."
+                  className="w-full pl-10 pr-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-base bg-white"
+                  required
+                />
+              </div>
+              {mostrarListaProductores && (
+                <div className="absolute z-10 w-full mt-1 bg-white border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
+                  {productoresFiltradosForm.length > 0 ? (
+                    <>
+                      <div className="sticky top-0 bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
+                        {busquedaProductor.trim() === ''
+                          ? `Todos los productores (${productoresFiltradosForm.length})`
+                          : `${productoresFiltradosForm.length} productor(es) encontrado(s)`}
+                      </div>
+                      {productoresFiltradosForm.map((p) => (
+                        <div
+                          key={p.id}
+                          onClick={() => seleccionarProductorForm(p)}
+                          className="px-4 py-3 border-b border-border last:border-b-0 hover:bg-accent cursor-pointer"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <User className="w-4 h-4 text-primary" />
+                                <span className="font-medium">
+                                  {etiquetaProductorEnLista(p)}
+                                </span>
+                              </div>
+                              <div className="text-sm text-muted-foreground mt-1">
+                                ID: {p.id}
+                              </div>
+                            </div>
+                            <Plus className="w-5 h-5 text-primary" />
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  ) : (
+                    <div className="px-4 py-3 text-muted-foreground text-sm text-center">
+                      No se encontraron productores
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             {productores.length === 0 && (
               <p className="col-span-2 text-sm text-muted-foreground">
                 No hay usuarios con rol Productor. Asigne el rol en Gestión de usuarios o Gestión de roles.

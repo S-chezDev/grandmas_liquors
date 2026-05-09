@@ -3,10 +3,10 @@ import { DataTable, Column } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, Package } from 'lucide-react';
+import { Plus, Package, Search } from 'lucide-react';
 import { api } from '../../../services/api';
 import { toast } from '../../AlertDialog';
-import type { Insumo } from '../../../services/types';
+import type { Insumo, Producto } from '../../../services/types';
 import { INSUMO_UNIDADES_API } from '../../../services/types';
 
 interface InsumoView extends Insumo {
@@ -15,12 +15,18 @@ interface InsumoView extends Insumo {
 
 export function Insumos() {
   const [insumos, setInsumos] = useState<InsumoView[]>([]);
+  const [productos, setProductos] = useState<Producto[]>([]);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [selectedInsumo, setSelectedInsumo] = useState<InsumoView | null>(null);
   const [busqueda, setBusqueda] = useState('');
   const [filtroFecha, setFiltroFecha] = useState<string>('');
   const [filtroOperario, setFiltroOperario] = useState<string>('');
+
+  // Estado del buscador del campo "Nombre" (mismo patron que el select
+  // "Producto *" de Nueva Compra). El usuario puede escribir un nombre nuevo
+  // (ej. "Anis") o seleccionar un producto existente del catalogo.
+  const [mostrarListaProductos, setMostrarListaProductos] = useState(false);
 
   const [formNuevo, setFormNuevo] = useState({
     nombre: '',
@@ -35,9 +41,24 @@ export function Insumos() {
     cargarDatos();
   }, []);
 
+  // Cerrar dropdown al clic fuera
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest('.insumo-nombre-picker')) {
+        setMostrarListaProductos(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const cargarDatos = async () => {
     try {
-      const insumosData = await api.insumos.getAll();
+      const [insumosData, productosData] = await Promise.all([
+        api.insumos.getAll(),
+        api.productos.getAll(),
+      ]);
 
       const insumosConInfo: InsumoView[] = insumosData.map((insumo) => ({
         ...insumo,
@@ -45,9 +66,26 @@ export function Insumos() {
       }));
 
       setInsumos(insumosConInfo);
+      // Solo productos activos para el selector del campo Nombre
+      setProductos(productosData.filter((p) => p.estado === 'activo'));
     } catch {
       toast.error('Error al cargar datos');
     }
+  };
+
+  // Lista filtrada de productos que coincidan con lo que el usuario escribe
+  // en el campo Nombre. Si no escribe nada, se muestra el catalogo completo.
+  const productosFiltradosNombre = productos.filter((p) => {
+    const term = formNuevo.nombre.trim().toLowerCase();
+    if (!term) return true;
+    return (
+      p.nombre.toLowerCase().includes(term) || String(p.id).includes(term)
+    );
+  });
+
+  const seleccionarProductoComoNombre = (producto: Producto) => {
+    setFormNuevo({ ...formNuevo, nombre: producto.nombre });
+    setMostrarListaProductos(false);
   };
 
   const handleNuevoInsumo = async (e: React.FormEvent) => {
@@ -81,6 +119,7 @@ export function Insumos() {
       });
       toast.success('Insumo registrado en catálogo');
       setIsCreateModalOpen(false);
+      setMostrarListaProductos(false);
       setFormNuevo({
         nombre: '',
         descripcion: '',
@@ -243,14 +282,73 @@ export function Insumos() {
         size="lg"
       >
         <Form onSubmit={handleNuevoInsumo}>
-          <FormField
-            label="Nombre"
-            name="nombre"
-            value={formNuevo.nombre}
-            onChange={(v) => setFormNuevo({ ...formNuevo, nombre: v as string })}
-            placeholder="Ej. Alcohol etílico 96°"
-            required
-          />
+          {/* Campo "Nombre" hibrido: permite escribir un nombre nuevo (insumo
+              que no existe, ej. "Anis") o seleccionar un producto existente
+              del catalogo (ej. "Tequila Patron 750ml"). Mismo diseno que el
+              selector "Producto *" de Nueva Compra. */}
+          <div className="relative insumo-nombre-picker">
+            <label className="block text-sm font-medium mb-2 flex items-center gap-2">
+              <Package className="w-4 h-4" />
+              Nombre *
+            </label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <input
+                type="text"
+                value={formNuevo.nombre}
+                onChange={(e) => {
+                  setFormNuevo({ ...formNuevo, nombre: e.target.value });
+                  setMostrarListaProductos(true);
+                }}
+                onFocus={() => setMostrarListaProductos(true)}
+                placeholder="Escribe un nombre nuevo (ej. Anís) o selecciona un producto del catálogo..."
+                className="w-full pl-10 pr-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-base bg-white"
+                required
+                minLength={2}
+                maxLength={150}
+              />
+            </div>
+            {mostrarListaProductos && (
+              <div className="absolute z-10 w-full mt-1 bg-white border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
+                {productosFiltradosNombre.length > 0 ? (
+                  <>
+                    <div className="sticky top-0 bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
+                      {formNuevo.nombre.trim() === ''
+                        ? `Todos los productos (${productosFiltradosNombre.length})`
+                        : `${productosFiltradosNombre.length} producto(s) encontrado(s)`}
+                    </div>
+                    {productosFiltradosNombre.map((p) => (
+                      <div
+                        key={p.id}
+                        onClick={() => seleccionarProductoComoNombre(p)}
+                        className="px-4 py-3 border-b border-border last:border-b-0 hover:bg-accent cursor-pointer"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <Package className="w-4 h-4 text-primary" />
+                              <span className="font-medium">{p.nombre}</span>
+                            </div>
+                            <div className="text-sm text-muted-foreground mt-1">
+                              ID: {p.id} | Stock actual: {p.stock}
+                            </div>
+                          </div>
+                          <Plus className="w-5 h-5 text-primary" />
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                ) : (
+                  <div className="px-4 py-3 text-muted-foreground text-sm text-center">
+                    Sin coincidencias. Continúa escribiendo para crear un insumo nuevo con este nombre.
+                  </div>
+                )}
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground mt-1">
+              Puedes crear un insumo nuevo escribiendo su nombre, o seleccionar un producto existente.
+            </p>
+          </div>
           <FormField
             label="Descripción"
             name="descripcion"
