@@ -103,7 +103,9 @@ CREATE TABLE productos (
     estado VARCHAR(20) DEFAULT 'Activo',
     tipo_producto VARCHAR(30) NOT NULL DEFAULT 'terminado'
         CHECK (tipo_producto IN ('terminado','preparacion','insumo')),
+    -- Unidad de presentacion: Unidades o Mililitros (una "porcion" de uso en produccion).
     insumo_unidad_medida VARCHAR(30),
+    -- Volumen/unidad: entero N>=1 = cuantas veces se puede usar esa porcion por cada 1 unidad de stock del producto.
     insumo_cantidad_medida NUMERIC(12,4),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -284,7 +286,7 @@ CREATE TABLE compras (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- TABLA: detalle_compras
+-- TABLA: detalle_compras (lineas: no incluir productos tipo preparacion; validado en API)
 CREATE TABLE detalle_compras (
     id SERIAL PRIMARY KEY,
     compra_id INTEGER NOT NULL REFERENCES compras(id) ON DELETE CASCADE,
@@ -335,6 +337,8 @@ CREATE TABLE entregas_insumos (
     fecha DATE NOT NULL,
     hora TIME,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    anulada BOOLEAN NOT NULL DEFAULT false,
     CONSTRAINT entregas_insumos_catalogo_xor_chk CHECK (
         (insumo_id IS NOT NULL AND producto_catalogo_id IS NULL)
         OR (insumo_id IS NULL AND producto_catalogo_id IS NOT NULL)
@@ -362,7 +366,7 @@ CREATE TABLE produccion (
     id SERIAL PRIMARY KEY,
     numero_produccion VARCHAR(50) UNIQUE NOT NULL,
     producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
-    pedido_id INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
+    pedido_id INTEGER REFERENCES pedidos(id) ON DELETE SET NULL, -- regla negocio: un pedido solo una produccion (API)
     cantidad INTEGER NOT NULL CHECK (cantidad > 0),
     fecha DATE NOT NULL,
     responsable VARCHAR(150),
@@ -371,6 +375,7 @@ CREATE TABLE produccion (
         CHECK (estado IN ('Orden Recibida','Orden en preparacion','Orden Lista','Cancelada')),
     notes TEXT,
     insumos_gastados JSONB DEFAULT '[]'::jsonb,
+    detalle_preparacion JSONB DEFAULT '[]'::jsonb,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

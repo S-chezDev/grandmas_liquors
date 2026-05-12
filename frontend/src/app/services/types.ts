@@ -98,6 +98,12 @@ export interface Compra {
   updatedAt: string;
 }
 
+export interface ProduccionDetallePreparacionLine {
+  productoId: number;
+  cantidad: number;
+  productoNombre?: string;
+}
+
 export interface OrdenProduccion {
   id: number;
   idOrden: number;
@@ -112,6 +118,7 @@ export interface OrdenProduccion {
   motivoCancelacion?: string;
   createdAt: string;
   updatedAt: string;
+  detallePreparacion?: ProduccionDetallePreparacionLine[];
 }
 
 export interface EntregaInsumo {
@@ -127,11 +134,7 @@ export interface EntregaInsumo {
 }
 
 /** Unidades válidas en POST/PUT de insumos (backend). */
-export const INSUMO_UNIDADES_API = [
-  'Litros',
-  'Unidades',
-  'Mililitros',
-] as const;
+export const INSUMO_UNIDADES_API = ['Unidades', 'Mililitros'] as const;
 
 export type InsumoUnidadApi = (typeof INSUMO_UNIDADES_API)[number];
 

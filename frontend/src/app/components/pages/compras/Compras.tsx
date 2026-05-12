@@ -92,7 +92,7 @@ export function Compras() {
         api.proveedores.getAll()
       ]);
       setCompras(comprasData);
-      setProductos(productosData.filter(p => p.estado === 'activo'));
+      setProductos(productosData.filter((p) => p.estado === 'activo' && p.typo !== 'de preparacion'));
       setProveedores(proveedoresData.filter(p => p.estado === 'activo'));
     } catch (error: any) {
       toast.error('Error al cargar datos', { description: error.message });
@@ -379,6 +379,10 @@ export function Compras() {
     }
 
     const prodSel = productos.find((p) => p.id === productoActual.productoId);
+    if (prodSel?.typo === 'de preparacion') {
+      toast.error('Error', { description: 'No se pueden comprar productos tipo preparación' });
+      return;
+    }
     const esInsumo = prodSel?.typo === 'insumo';
 
     if (!esInsumo) {

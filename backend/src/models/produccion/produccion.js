@@ -10,7 +10,22 @@ const {
   ensureMotivoEstado,
   ensureProductoTipoColumn,
   ensureProductoInsumosTable,
+  ensureEntregasInsumoProductoCatalogo,
 } = require('../shared/auditoria');
+
+let detallePreparacionColReady = null;
+const ensureProduccionDetallePreparacion = async () => {
+  if (!detallePreparacionColReady) {
+    detallePreparacionColReady = pool.query(
+      `ALTER TABLE produccion ADD COLUMN IF NOT EXISTS detalle_preparacion JSONB DEFAULT '[]'::jsonb`
+    );
+  }
+  try {
+    await detallePreparacionColReady;
+  } catch (_e) {
+    detallePreparacionColReady = null;
+  }
+};
 
 const normalizeProduccionStatus = (value) => {
   const normalized = String(value || '').trim().toLowerCase();
@@ -56,14 +71,30 @@ const validateProduccionPayload = (data = {}) => {
   }
 };
 
+const validateProduccionCreateFromPedido = (data = {}) => {
+  const pedidoId = Number(data.pedido_id);
+  if (!Number.isInteger(pedidoId) || pedidoId <= 0) {
+    const error = new Error('pedido_id es obligatorio para crear la orden');
+    error.statusCode = 400;
+    throw error;
+  }
+  const tiempoPreparacion = Number(data.tiempo_preparacion_minutos ?? 0);
+  if (!Number.isFinite(tiempoPreparacion) || tiempoPreparacion <= 0) {
+    const error = new Error('tiempo_preparacion_minutos debe ser mayor a 0');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!data.fecha) {
+    const error = new Error('fecha es obligatoria');
+    error.statusCode = 400;
+    throw error;
+  }
+};
+
 
 /**
  * Lista las entregas de insumos hechas a un productor (operario_id) que aun
- * tienen saldo disponible para asignarse a una nueva orden de produccion.
- *
- * Una entrega "esta disponible" cuando su id no aparece todavia en
- * `produccion.insumos_gastados[].entrega_id` de ninguna orden activa
- * (estados distintos a 'Cancelada').
+ * tienen saldo (cantidad mayor que cero) en la fila de entrega.
  */
 const getInsumosEntregadosByProductor = async (productorId) => {
   const id = Number(productorId);
@@ -84,13 +115,8 @@ const getInsumosEntregadosByProductor = async (productorId) => {
      LEFT JOIN insumos i ON i.id = ei.insumo_id
      LEFT JOIN productos pr ON pr.id = ei.producto_catalogo_id
      WHERE ei.operario_id = $1
-       AND NOT EXISTS (
-         SELECT 1
-         FROM produccion p,
-              jsonb_array_elements(COALESCE(p.insumos_gastados, '[]'::jsonb)) AS g
-         WHERE LOWER(TRIM(COALESCE(p.estado, ''))) <> 'cancelada'
-           AND (g ->> 'entrega_id')::int = ei.id
-       )
+       AND COALESCE(ei.anulada, false) = false
+       AND COALESCE(ei.cantidad, 0) > 0
      ORDER BY ei.fecha DESC, ei.hora DESC NULLS LAST, ei.id DESC`,
     [id]
   );
@@ -100,6 +126,7 @@ const getInsumosEntregadosByProductor = async (productorId) => {
 const Produccion = {
   getInsumosEntregadosByProductor,
   getAll: async () => {
+    await ensureProduccionDetallePreparacion();
     const result = await pool.query(`
       SELECT p.*, pr.nombre as producto_nombre, p.responsable as productor_nombre,
              pe.numero_pedido as pedido_numero
@@ -112,6 +139,7 @@ const Produccion = {
   },
   getById: async (id) => {
     await ensureProductoInsumosTable();
+    await ensureProduccionDetallePreparacion();
     const result = await pool.query(
       `SELECT p.*, pr.nombre as producto_nombre
        FROM produccion p
@@ -151,28 +179,14 @@ const Produccion = {
       }
     }
 
-    const insumosResult = await pool.query(
-      `SELECT ei.*, COALESCE(i.nombre, pr.nombre) AS insumo_nombre
-       FROM entregas_insumos ei
-       LEFT JOIN insumos i ON i.id = ei.insumo_id
-       LEFT JOIN productos pr ON pr.id = ei.producto_catalogo_id
-       WHERE ei.insumo_id IN (
-         SELECT insumo_id FROM producto_insumos WHERE producto_id = $1
-       )
-       ORDER BY ei.fecha DESC, ei.hora DESC NULLS LAST, ei.id DESC
-       LIMIT 10`,
-      [produccion.producto_id]
-    );
-
-    produccion.insumos_gastados = insumosResult.rows;
-    produccion.entregas_insumos_relacionadas = insumosResult.rows;
-
     return produccion;
   },
   create: async (data) => {
-    validateProduccionPayload(data);
+    validateProduccionCreateFromPedido(data);
     await ensureProductoTipoColumn();
     await ensureProductoInsumosTable();
+    await ensureProduccionDetallePreparacion();
+    await ensureEntregasInsumoProductoCatalogo();
 
     const estadoInicial = normalizeProduccionStatus(data.estado) || 'Orden Recibida';
     const numeroProduccion =
@@ -180,64 +194,89 @@ const Produccion = {
         ? String(data.numero_produccion).trim()
         : `ORD-${Date.now()}`;
 
+    const pedidoId = Number(data.pedido_id);
+
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
-      const prodRow = await client.query(
-        `SELECT id, nombre, estado, COALESCE(tipo_producto, 'terminado') AS tipo_producto
-         FROM productos WHERE id = $1 FOR UPDATE`,
-        [data.producto_id]
-      );
-      const prod = prodRow.rows[0];
-      if (!prod) {
-        const err = new Error('Producto no encontrado');
-        err.statusCode = 404;
-        throw err;
-      }
-      if (String(prod.estado) !== 'Activo') {
-        const err = new Error('El producto debe estar activo');
+      const dupPedido = await client.query('SELECT id FROM produccion WHERE pedido_id = $1 LIMIT 1', [pedidoId]);
+      if (dupPedido.rows[0]) {
+        const err = new Error('Este pedido ya tiene una orden de producción registrada');
         err.statusCode = 409;
         throw err;
       }
-      if (String(prod.tipo_producto) !== 'preparacion') {
-        const err = new Error('Solo se programan órdenes para productos de tipo preparación');
-        err.statusCode = 400;
+
+      const prepLinesRes = await client.query(
+        `SELECT dp.producto_id,
+                dp.cantidad,
+                pr.nombre AS producto_nombre,
+                COALESCE(pr.tipo_producto, 'terminado') AS tipo_producto,
+                pr.estado
+         FROM detalle_pedidos dp
+         INNER JOIN productos pr ON pr.id = dp.producto_id
+         WHERE dp.pedido_id = $1
+           AND COALESCE(pr.tipo_producto, 'terminado') = 'preparacion'
+         ORDER BY dp.id ASC`,
+        [pedidoId]
+      );
+      if (!prepLinesRes.rows.length) {
+        const err = new Error('El pedido no tiene productos de tipo preparación en el detalle');
+        err.statusCode = 409;
         throw err;
       }
 
-      if (data.pedido_id != null && data.pedido_id !== '') {
-        const pedidoId = Number(data.pedido_id);
-        if (!Number.isInteger(pedidoId) || pedidoId <= 0) {
-          const err = new Error('pedido_id debe ser un entero positivo');
-          err.statusCode = 400;
+      const mergedByProducto = new Map();
+      for (const r of prepLinesRes.rows) {
+        const pid = Number(r.producto_id);
+        const qtyRaw = Number(r.cantidad);
+        const qty = Number.isFinite(qtyRaw) && qtyRaw > 0 ? Math.floor(qtyRaw) : 1;
+        const prev = mergedByProducto.get(pid);
+        if (prev) {
+          prev.cantidad += qty;
+        } else {
+          mergedByProducto.set(pid, {
+            producto_id: pid,
+            cantidad: qty,
+            producto_nombre: r.producto_nombre,
+          });
+        }
+      }
+
+      const detallePreparacion = [...mergedByProducto.values()];
+
+      const productoIds = [...new Set(detallePreparacion.map((d) => d.producto_id))];
+      const prodsRes = await client.query(
+        `SELECT id, nombre, estado, COALESCE(tipo_producto, 'terminado') AS tipo_producto
+         FROM productos WHERE id = ANY($1::int[]) FOR UPDATE`,
+        [productoIds]
+      );
+      const byId = new Map(prodsRes.rows.map((row) => [Number(row.id), row]));
+      for (const pid of productoIds) {
+        const prod = byId.get(pid);
+        if (!prod) {
+          const err = new Error(`Producto no encontrado (id ${pid})`);
+          err.statusCode = 404;
           throw err;
         }
-        const pedidoDet = await client.query(
-          `SELECT dp.producto_id, pr.nombre
-           FROM detalle_pedidos dp
-           INNER JOIN productos pr ON pr.id = dp.producto_id
-           WHERE dp.pedido_id = $1
-             AND COALESCE(pr.tipo_producto, 'terminado') = 'preparacion'
-             AND dp.producto_id = $2
-           LIMIT 1`,
-          [pedidoId, data.producto_id]
-        );
-        if (!pedidoDet.rows[0]) {
-          const err = new Error('El producto seleccionado no pertenece al pedido en preparación');
+        if (String(prod.estado) !== 'Activo') {
+          const err = new Error(`El producto «${prod.nombre}» debe estar activo`);
           err.statusCode = 409;
+          throw err;
+        }
+        if (String(prod.tipo_producto) !== 'preparacion') {
+          const err = new Error('Solo se programan órdenes para productos de tipo preparación');
+          err.statusCode = 400;
           throw err;
         }
       }
 
-      // Validar insumos entregados (nuevo flujo): array opcional de ids de
-      // entregas_insumos. Si viene, deben pertenecer al productor (operario_id =
-      // data.productor_id) y no haberse usado previamente en otra orden activa.
+      const productoIdPrincipal = detallePreparacion[0].producto_id;
+      const cantidadTotal = detallePreparacion.reduce((sum, line) => sum + line.cantidad, 0);
+
       let insumosEntregadosUsados = [];
       const insumosInput = Array.isArray(data.insumos) ? data.insumos : [];
-      const idsEntregas = insumosInput
-        .map((v) => Number(v))
-        .filter((v) => Number.isInteger(v) && v > 0);
+      const idsEntregas = [...new Set(insumosInput.map((v) => Number(v)).filter((v) => Number.isInteger(v) && v > 0))];
 
       if (idsEntregas.length > 0) {
         const productorIdNum = Number(data.productor_id);
@@ -253,6 +292,7 @@ const Produccion = {
            LEFT JOIN insumos i ON i.id = ei.insumo_id
            LEFT JOIN productos pr ON pr.id = ei.producto_catalogo_id
            WHERE ei.id = ANY($1::int[])
+             AND COALESCE(ei.anulada, false) = false
            FOR UPDATE OF ei`,
           [idsEntregas]
         );
@@ -269,87 +309,62 @@ const Produccion = {
             err.statusCode = 403;
             throw err;
           }
-        }
-        const usadasRes = await client.query(
-          `SELECT (g ->> 'entrega_id')::int AS entrega_id
-           FROM produccion p,
-                jsonb_array_elements(COALESCE(p.insumos_gastados, '[]'::jsonb)) AS g
-           WHERE LOWER(TRIM(COALESCE(p.estado, ''))) <> 'cancelada'
-             AND (g ->> 'entrega_id')::int = ANY($1::int[])`,
-          [idsEntregas]
-        );
-        if (usadasRes.rows.length > 0) {
-          const yaUsadas = usadasRes.rows.map((r) => r.entrega_id).join(', ');
-          const err = new Error(
-            `Las siguientes entregas ya fueron asignadas a otra orden activa: ${yaUsadas}`
+          const disponible = Number(e.cantidad ?? 0);
+          if (!Number.isFinite(disponible) || disponible <= 0) {
+            const err = new Error(
+              `La entrega #${e.numero_entrega || e.id} no tiene saldo disponible en inventario del productor`
+            );
+            err.statusCode = 409;
+            throw err;
+          }
+          await client.query(
+            `UPDATE entregas_insumos
+             SET cantidad = GREATEST(0, COALESCE(cantidad, 0) - $1),
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = $2`,
+            [disponible, e.id]
           );
-          err.statusCode = 409;
-          throw err;
+          insumosEntregadosUsados.push({
+            entrega_id: Number(e.id),
+            insumo_id: Number(
+              e.insumo_id != null && e.insumo_id !== ''
+                ? e.insumo_id
+                : e.producto_catalogo_id != null && e.producto_catalogo_id !== ''
+                  ? e.producto_catalogo_id
+                  : 0
+            ),
+            insumo_nombre: e.insumo_nombre,
+            cantidad: disponible,
+            cantidad_descontada: disponible,
+            unidad: e.unidad,
+            numero_entrega: e.numero_entrega,
+          });
         }
-        insumosEntregadosUsados = entregasRes.rows.map((e) => ({
-          entrega_id: Number(e.id),
-          insumo_id: Number(
-            e.insumo_id != null && e.insumo_id !== ''
-              ? e.insumo_id
-              : e.producto_catalogo_id != null && e.producto_catalogo_id !== ''
-                ? e.producto_catalogo_id
-                : 0
-          ),
-          insumo_nombre: e.insumo_nombre,
-          cantidad: Number(e.cantidad),
-          unidad: e.unidad,
-          numero_entrega: e.numero_entrega,
-        }));
       }
 
-      const recetas = await client.query(
-        `SELECT insumo_id, cantidad_requerida FROM producto_insumos WHERE producto_id = $1`,
-        [data.producto_id]
-      );
-      const ordenQty = Number(data.cantidad);
-
-      for (const r of recetas.rows) {
-        const need = Number(r.cantidad_requerida) * ordenQty;
-        if (!Number.isFinite(need) || need <= 0) continue;
-        const insRes = await client.query(
-          `SELECT id, nombre, cantidad FROM insumos WHERE id = $1 FOR UPDATE`,
-          [r.insumo_id]
-        );
-        const ins = insRes.rows[0];
-        if (!ins) {
-          const err = new Error(`Insumo de receta no encontrado (id ${r.insumo_id})`);
-          err.statusCode = 400;
-          throw err;
-        }
-        const have = Number(ins.cantidad ?? 0);
-        if (have < need) {
-          const err = new Error(`Stock insuficiente de «${ins.nombre}»: disponible ${have}, requerido ${need}`);
-          err.statusCode = 409;
-          throw err;
-        }
-        await client.query(
-          `UPDATE insumos SET cantidad = cantidad - $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
-          [need, r.insumo_id]
-        );
-      }
+      const detalleJson = JSON.stringify(detallePreparacion);
 
       const insResult = await client.query(
-        'INSERT INTO produccion (numero_produccion, producto_id, pedido_id, cantidad, fecha, responsable, tiempo_preparacion_minutos, estado, notes, insumos_gastados) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
+        `INSERT INTO produccion (
+          numero_produccion, producto_id, pedido_id, cantidad, fecha, responsable,
+          tiempo_preparacion_minutos, estado, notes, insumos_gastados, detalle_preparacion
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb) RETURNING id`,
         [
           numeroProduccion,
-          data.producto_id,
-          data.pedido_id ?? null,
-          data.cantidad,
+          productoIdPrincipal,
+          pedidoId,
+          cantidadTotal,
           data.fecha,
           data.responsable,
           data.tiempo_preparacion_minutos ?? 0,
           estadoInicial,
-          data.notes,
+          data.notes ?? null,
           insumosEntregadosUsados.length > 0
             ? JSON.stringify(insumosEntregadosUsados)
             : Array.isArray(data.insumos_gastados)
               ? JSON.stringify(data.insumos_gastados)
               : '[]',
+          detalleJson,
         ]
       );
 
@@ -391,6 +406,7 @@ const Produccion = {
 
     try {
       await client.query('BEGIN');
+      await ensureEntregasInsumoProductoCatalogo();
 
       const currentResult = await client.query('SELECT * FROM produccion WHERE id = $1 FOR UPDATE', [id]);
       const current = currentResult.rows[0];
@@ -456,33 +472,48 @@ const Produccion = {
       })();
 
       if (nextStatus === 'Orden Lista') {
-        const addStock = await client.query(
-          `UPDATE productos
-           SET stock = COALESCE(stock, 0) + $1, updated_at = CURRENT_TIMESTAMP
-           WHERE id = $2
-           RETURNING id`,
-          [Number(current.cantidad), current.producto_id]
+        const tipoRes = await client.query(
+          `SELECT COALESCE(tipo_producto, 'terminado') AS tipo_producto FROM productos WHERE id = $1`,
+          [current.producto_id]
         );
-        if (addStock.rowCount === 0) {
-          const error = new Error('Producto de la orden de producción no encontrado');
-          error.statusCode = 404;
-          throw error;
+        const tipoProd = String(tipoRes.rows[0]?.tipo_producto || 'terminado');
+        if (tipoProd !== 'preparacion') {
+          const addStock = await client.query(
+            `UPDATE productos
+             SET stock = COALESCE(stock, 0) + $1, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $2
+             RETURNING id`,
+            [Number(current.cantidad), current.producto_id]
+          );
+          if (addStock.rowCount === 0) {
+            const error = new Error('Producto de la orden de producción no encontrado');
+            error.statusCode = 404;
+            throw error;
+          }
         }
       }
 
       if (nextStatus === 'Cancelada') {
-        await ensureProductoInsumosTable();
-        const recetas = await client.query(
-          `SELECT insumo_id, cantidad_requerida FROM producto_insumos WHERE producto_id = $1`,
-          [current.producto_id]
-        );
-        const ordenQty = Number(current.cantidad);
-        for (const r of recetas.rows) {
-          const need = Number(r.cantidad_requerida) * ordenQty;
-          if (!Number.isFinite(need) || need <= 0) continue;
+        let gastados = [];
+        try {
+          const raw = current.insumos_gastados;
+          if (Array.isArray(raw)) gastados = raw;
+          else if (typeof raw === 'string' && raw.trim()) gastados = JSON.parse(raw);
+          else if (raw && typeof raw === 'object') gastados = raw;
+        } catch (_e) {
+          gastados = [];
+        }
+        for (const g of gastados) {
+          const entregaId = Number(g.entrega_id);
+          const restore = Number(g.cantidad_descontada ?? 0);
+          if (!Number.isInteger(entregaId) || entregaId <= 0 || !Number.isFinite(restore) || restore <= 0) continue;
           await client.query(
-            `UPDATE insumos SET cantidad = COALESCE(cantidad, 0) + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
-            [need, r.insumo_id]
+            `UPDATE entregas_insumos
+             SET cantidad = COALESCE(cantidad, 0) + $1,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = $2
+               AND COALESCE(anulada, false) = false`,
+            [restore, entregaId]
           );
         }
       }

@@ -71,7 +71,7 @@ const EntregasInsumos = {
       LEFT JOIN insumos i ON ei.insumo_id = i.id
       LEFT JOIN productos pr ON pr.id = ei.producto_catalogo_id
       LEFT JOIN usuarios u ON ei.operario_id = u.id
-      ORDER BY ei.fecha DESC
+      ORDER BY ei.anulada ASC NULLS LAST, ei.fecha DESC
     `);
     return result.rows;
   },
@@ -212,6 +212,11 @@ const EntregasInsumos = {
     if (!current) {
       const error = new Error('Entrega no encontrada');
       error.statusCode = 404;
+      throw error;
+    }
+    if (current.anulada === true || current.anulada === 't') {
+      const error = new Error('No se puede editar una entrega anulada');
+      error.statusCode = 409;
       throw error;
     }
     const cantidad = data.cantidad !== undefined ? Number(data.cantidad) : current.cantidad;
@@ -378,6 +383,12 @@ const EntregasInsumos = {
         throw error;
       }
       const e = row.rows[0];
+      if (e.anulada === true || e.anulada === 't') {
+        await client.query('ROLLBACK');
+        const err = new Error('La entrega ya está anulada');
+        err.statusCode = 409;
+        throw err;
+      }
       const qty = cantidadStockDelta(e.cantidad);
       const target = resolveEntregaTargetFromPayload({}, e);
 
@@ -389,7 +400,7 @@ const EntregasInsumos = {
         );
         if (sub.rowCount === 0) {
           await client.query('ROLLBACK');
-          const err = new Error('No se puede eliminar la entrega: producto insumo no encontrado');
+          const err = new Error('No se puede anular la entrega: producto insumo no encontrado');
           err.statusCode = 404;
           throw err;
         }
@@ -401,12 +412,22 @@ const EntregasInsumos = {
         );
         if (sub.rowCount === 0) {
           await client.query('ROLLBACK');
-          const err = new Error('No se puede eliminar la entrega: insumo no encontrado');
+          const err = new Error('No se puede anular la entrega: insumo no encontrado');
           err.statusCode = 404;
           throw err;
         }
       }
-      await client.query('DELETE FROM entregas_insumos WHERE id = $1', [id]);
+      const baseNum = String(e.numero_entrega || '').trim();
+      const nuevoNum = `${baseNum}_anul_${e.id}`.slice(0, 50);
+      await client.query(
+        `UPDATE entregas_insumos
+         SET anulada = true,
+             cantidad = 0,
+             numero_entrega = $1,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2`,
+        [nuevoNum, id]
+      );
       await client.query('COMMIT');
       return true;
     } catch (err) {

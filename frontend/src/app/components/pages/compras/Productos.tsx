@@ -37,7 +37,7 @@ export function Productos() {
     precioVenta: 0,
     stockMinimo: 0,
     estado: 'activo' as 'activo' | 'inactivo',
-    insumoUnidadMedida: 'Gramos' as string,
+    insumoUnidadMedida: 'Unidades' as string,
     insumoCantidadMedida: 1,
   });
   const [precioVentaInput, setPrecioVentaInput] = useState('');
@@ -50,6 +50,13 @@ export function Productos() {
   useEffect(() => {
     cargarDatos();
   }, []);
+
+  const normalizeInsumoUnidadMedida = (u: string | null | undefined): string => {
+    const s = String(u || '').trim();
+    if (INSUMO_UNIDADES_API.includes(s as (typeof INSUMO_UNIDADES_API)[number])) return s;
+    if (s === 'Litros') return 'Mililitros';
+    return 'Unidades';
+  };
 
   const cargarDatos = async () => {
     try {
@@ -228,7 +235,7 @@ export function Productos() {
       precioVenta: 0,
       stockMinimo: 0,
       estado: 'activo',
-      insumoUnidadMedida: 'Gramos',
+      insumoUnidadMedida: 'Unidades',
       insumoCantidadMedida: 1,
     });
     setPrecioVentaInput('');
@@ -250,9 +257,12 @@ export function Productos() {
       categoriaId: producto.categoriaId,
       typo: producto.typo,
       precioVenta: producto.precioVenta,
-      stockMinimo: producto.typo === 'insumo' ? 0 : producto.stockMinimo,
+      stockMinimo:
+        producto.typo === 'insumo'
+          ? Math.max(0, Math.floor(Number(producto.stockMinimo ?? 0)))
+          : producto.stockMinimo,
       estado: producto.estado,
-      insumoUnidadMedida: producto.insumoUnidadMedida || 'Gramos',
+      insumoUnidadMedida: normalizeInsumoUnidadMedida(producto.insumoUnidadMedida),
       insumoCantidadMedida:
         producto.typo === 'insumo'
           ? Math.max(1, Math.round(Number(producto.insumoCantidadMedida) || 1))
@@ -304,10 +314,16 @@ export function Productos() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    const precioDesdeInput = parseInt((precioVentaInput || '').replace(/\D/g, '') || '0', 10);
     const precioVentaNormalizado =
-      productoFormularioModo === 'editar'
-        ? parseInt(precioVentaInput || '0', 10)
+      productoFormularioModo === 'editar' ||
+      (productoFormularioModo === 'nuevo' && formData.typo === 'de preparacion')
+        ? precioDesdeInput
         : formData.precioVenta;
+
+    const requierePrecioEnFormulario =
+      productoFormularioModo === 'editar' ||
+      (productoFormularioModo === 'nuevo' && formData.typo === 'de preparacion');
 
     // Validaciones
     if (!validarNombreUnico(formData.nombre, productoFormularioModo === 'editar' ? selectedProducto?.id : undefined)) {
@@ -324,21 +340,28 @@ export function Productos() {
       return;
     }
 
-    if (productoFormularioModo === 'editar' && precioVentaInput.trim() === '') {
+    if (requierePrecioEnFormulario && precioVentaInput.trim() === '') {
       toast.error('Error de validación', {
         description: 'El precio de venta es obligatorio'
       });
       return;
     }
 
-    if (productoFormularioModo === 'editar' && precioVentaNormalizado < 0) {
+    if (requierePrecioEnFormulario && precioVentaNormalizado < 0) {
       toast.error('Error de validación', {
         description: 'El precio no puede ser negativo'
       });
       return;
     }
 
-    if (formData.typo === 'terminado' && formData.stockMinimo < 0) {
+    if (productoFormularioModo === 'nuevo' && formData.typo === 'de preparacion' && precioVentaNormalizado <= 0) {
+      toast.error('Error de validación', {
+        description: 'Indique un precio de venta mayor a 0 para producto de preparación',
+      });
+      return;
+    }
+
+    if ((formData.typo === 'terminado' || formData.typo === 'insumo') && formData.stockMinimo < 0) {
       toast.error('Error de validación', {
         description: 'El stock mínimo no puede ser negativo'
       });
@@ -353,7 +376,7 @@ export function Productos() {
       const med = Number(formData.insumoCantidadMedida);
       if (!Number.isInteger(med) || med < 1) {
         toast.error('Error de validación', {
-          description: 'La cantidad / volumen debe ser un número entero mayor o igual a 1',
+          description: 'El volumen / unidad debe ser un número entero mayor o igual a 1',
         });
         return;
       }
@@ -364,7 +387,7 @@ export function Productos() {
         await api.productos.update(selectedProducto.id, {
           ...formData,
           precioVenta: precioVentaNormalizado,
-          stockMinimo: formData.typo === 'terminado' ? formData.stockMinimo : 0,
+          stockMinimo: formData.typo === 'de preparacion' ? 0 : formData.stockMinimo,
         }, 'Actualización de datos');
 
         toast.success('Producto actualizado', {
@@ -374,8 +397,8 @@ export function Productos() {
         // Al crear, stock 0 y precio de venta 0 hasta registrar compra al proveedor
         await api.productos.create({
           ...formData,
-          stockMinimo: formData.typo === 'terminado' ? formData.stockMinimo : 0,
-          precioVenta: 0,
+          stockMinimo: formData.typo === 'de preparacion' ? 0 : formData.stockMinimo,
+          precioVenta: formData.typo === 'de preparacion' ? precioVentaNormalizado : 0,
           precioCompra: 0,
           ganancia: 0
         });
@@ -568,13 +591,14 @@ export function Productos() {
               name="typo"
               type="select"
               value={formData.typo}
+              disabled={productoFormularioModo === 'editar'}
               onChange={(value) => {
                 const next = value as 'terminado' | 'de preparacion' | 'insumo';
                 setFormData({
                   ...formData,
                   typo: next,
-                  stockMinimo: next === 'terminado' ? formData.stockMinimo : 0,
-                  insumoUnidadMedida: next === 'insumo' ? formData.insumoUnidadMedida || 'Gramos' : 'Gramos',
+                  stockMinimo: next === 'de preparacion' ? 0 : formData.stockMinimo,
+                  insumoUnidadMedida: next === 'insumo' ? formData.insumoUnidadMedida || 'Unidades' : 'Unidades',
                   insumoCantidadMedida: next === 'insumo' ? formData.insumoCantidadMedida || 1 : 1,
                 });
               }}
@@ -588,7 +612,7 @@ export function Productos() {
           </div>
 
           {formData.typo === 'insumo' && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-lg border border-amber-200 bg-amber-50/60">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 rounded-lg border border-amber-200 bg-amber-50/60">
               <FormField
                 label="Unidad de presentación *"
                 name="insumoUnidadMedida"
@@ -600,7 +624,7 @@ export function Productos() {
                 required
               />
               <FormField
-                label="Cantidad / volumen *"
+                label="Volumen / unidad *"
                 name="insumoCantidadMedida"
                 type="number"
                 value={formData.insumoCantidadMedida === 0 ? '' : formData.insumoCantidadMedida}
@@ -619,15 +643,36 @@ export function Productos() {
                 step={1}
                 required
               />
-              <p className="sm:col-span-2 text-xs text-muted-foreground">
-                Describe la presentación física del insumo (por ejemplo 500 gramos, 12 unidades, 1 caja). El stock en
-                almacén se gestiona por <strong>unidades</strong> al registrar compras.
-              </p>
+              <FormField
+                label="Stock mínimo *"
+                name="stockMinimo"
+                type="number"
+                value={formData.stockMinimo === 0 ? '' : formData.stockMinimo}
+                onChange={(value) => {
+                  const num = parseInt(value as string) || 0;
+                  if (num < 0) {
+                    toast.warning('No se permiten números negativos');
+                    return;
+                  }
+                  setFormData({ ...formData, stockMinimo: num });
+                }}
+                min={0}
+                required
+              />
             </div>
           )}
 
-          <div className={`grid gap-4 ${productoFormularioModo === 'editar' ? 'grid-cols-2' : 'grid-cols-1'}`}>
-            {productoFormularioModo === 'editar' && (
+          <div
+            className={`grid gap-4 ${
+              (productoFormularioModo === 'editar' ||
+                (productoFormularioModo === 'nuevo' && formData.typo === 'de preparacion')) &&
+              formData.typo === 'terminado'
+                ? 'sm:grid-cols-2'
+                : 'grid-cols-1'
+            }`}
+          >
+            {(productoFormularioModo === 'editar' ||
+              (productoFormularioModo === 'nuevo' && formData.typo === 'de preparacion')) && (
               <div className="space-y-2">
                 <label htmlFor="precioVenta" className="block">
                   Precio de Venta <span className="text-destructive">*</span>
@@ -674,12 +719,6 @@ export function Productos() {
             )}
           </div>
 
-          {productoFormularioModo === 'nuevo' && formData.typo === 'terminado' && (
-            <p className="text-xs text-muted-foreground bg-blue-50 p-3 rounded-lg">
-              ℹ️ El stock actual inicia en 0 y se incrementa al recibir compras. El precio de venta inicia en $0 y se
-              define al registrar la compra al proveedor (precio de compra y margen).
-            </p>
-          )}
           {productoFormularioModo === 'nuevo' && formData.typo === 'insumo' && (
             <p className="text-xs text-muted-foreground bg-amber-50/80 p-3 rounded-lg border border-amber-200">
               ℹ️ Producto insumo: el precio de venta no aplica (no se vende al cliente). El stock inicia en 0 y aumenta

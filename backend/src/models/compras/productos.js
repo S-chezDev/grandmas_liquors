@@ -19,7 +19,7 @@ const {
   registerProductoAudit,
 } = require('../shared/auditoria');
 
-const INSUMO_UNIDADES_VALIDAS = ['Litros', 'Unidades', 'Mililitros'];
+const INSUMO_UNIDADES_VALIDAS = ['Unidades', 'Mililitros'];
 
 const parseInsumoMedidasForProduct = (tipoProducto, data) => {
   if (tipoProducto !== 'insumo') return { u: null, q: null };
@@ -31,7 +31,9 @@ const parseInsumoMedidasForProduct = (tipoProducto, data) => {
   }
   const qRaw = Number(data?.insumo_cantidad_medida ?? data?.insumoCantidadMedida);
   if (!Number.isFinite(qRaw) || qRaw < 1 || !Number.isInteger(qRaw)) {
-    const error = new Error('La cantidad / volumen de presentación del insumo debe ser un entero mayor a 0');
+    const error = new Error(
+      'Volumen / unidad (insumo): entero N >= 1 = cuantas veces rinde una porcion de la unidad de presentacion (Unidades o Mililitros) por cada 1 unidad de stock del producto en produccion'
+    );
     error.statusCode = 400;
     throw error;
   }
@@ -90,7 +92,7 @@ const Productos = {
       throw error;
     }
 
-    const precioInicial = Number(data?.precio);
+    const precioInicial = Number(data?.precio ?? data?.precioVenta);
     const precioSeguro = Number.isFinite(precioInicial) && precioInicial >= 0 ? precioInicial : 0;
 
     // Validar que stock sea 0 (stock se gestiona solo desde Compras)
@@ -101,13 +103,23 @@ const Productos = {
     }
 
     const tipoProducto = normalizeProductoTipoValue(data?.tipo_producto ?? data?.tipo);
+    if (tipoProducto === 'preparacion' && (!Number.isFinite(precioSeguro) || precioSeguro <= 0)) {
+      const error = new Error('El precio de venta es obligatorio y debe ser mayor a 0 para productos de preparación');
+      error.statusCode = 400;
+      throw error;
+    }
     const { u: insumoUnidad, q: insumoCantidad } = parseInsumoMedidasForProduct(tipoProducto, data);
+    const smRawCreate = Number(data.stock_minimo ?? data.stockMinimo);
     const stockMinimoInsert =
-      tipoProducto === 'insumo' || tipoProducto === 'preparacion'
+      tipoProducto === 'preparacion'
         ? 0
-        : Number(data.stock_minimo) >= 0
-          ? Number(data.stock_minimo)
-          : 10;
+        : tipoProducto === 'insumo'
+          ? Number.isFinite(smRawCreate) && smRawCreate >= 0
+            ? Math.floor(smRawCreate)
+            : 0
+          : Number(data.stock_minimo ?? data.stockMinimo) >= 0
+            ? Number(data.stock_minimo ?? data.stockMinimo)
+            : 10;
 
     const result = await pool.query(
       `INSERT INTO productos (
@@ -180,18 +192,22 @@ const Productos = {
     const currentTipo = normalizeProductoTipoValue(previous.rows[0]?.tipo_producto);
     const prevStockMinimo = Number(previous.rows[0]?.stock_minimo ?? 10);
 
-    const tipoProductoInput =
-      data.tipo_producto !== undefined || data.tipo !== undefined
-        ? normalizeProductoTipoValue(data?.tipo_producto ?? data?.tipo)
-        : undefined;
-    const newTipo = tipoProductoInput !== undefined ? tipoProductoInput : currentTipo;
+    const newTipo = currentTipo;
     const { u: insumoUnidad, q: insumoCantidad } = parseInsumoMedidasForProduct(newTipo, data);
     const stockMinimoVal =
-      newTipo === 'insumo' || newTipo === 'preparacion'
+      newTipo === 'preparacion'
         ? 0
-        : data.stock_minimo !== undefined && data.stock_minimo !== null && Number.isFinite(Number(data.stock_minimo))
-          ? Number(data.stock_minimo)
-          : prevStockMinimo;
+        : newTipo === 'insumo'
+          ? data.stock_minimo !== undefined && data.stock_minimo !== null && Number.isFinite(Number(data.stock_minimo))
+            ? Math.max(0, Math.floor(Number(data.stock_minimo)))
+            : data.stockMinimo !== undefined && data.stockMinimo !== null && Number.isFinite(Number(data.stockMinimo))
+              ? Math.max(0, Math.floor(Number(data.stockMinimo)))
+              : prevStockMinimo
+          : data.stock_minimo !== undefined && data.stock_minimo !== null && Number.isFinite(Number(data.stock_minimo))
+            ? Number(data.stock_minimo)
+            : data.stockMinimo !== undefined && data.stockMinimo !== null && Number.isFinite(Number(data.stockMinimo))
+              ? Number(data.stockMinimo)
+              : prevStockMinimo;
 
     await pool.query(
       `UPDATE productos
@@ -213,7 +229,7 @@ const Productos = {
         data.descripcion,
         data.precio,
         newTipo === 'preparacion' ? 0 : stockActual,
-        newTipo === 'insumo' || newTipo === 'preparacion' ? 0 : stockMinimoVal,
+        stockMinimoVal,
         data.imagen_url,
         newTipo,
         insumoUnidad,

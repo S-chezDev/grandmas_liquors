@@ -165,6 +165,14 @@ const ensureEntregasInsumoProductoCatalogo = async () => {
             )
         `);
       }
+      await pool.query(`
+        ALTER TABLE entregas_insumos
+          ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      `);
+      await pool.query(`
+        ALTER TABLE entregas_insumos
+          ADD COLUMN IF NOT EXISTS anulada BOOLEAN NOT NULL DEFAULT false
+      `);
     })();
   }
   try {

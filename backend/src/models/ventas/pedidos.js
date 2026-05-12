@@ -135,16 +135,20 @@ const Pedidos = {
       error.statusCode = 400;
       throw error;
     }
-    const available = Number(p.stock || 0);
-    if (!Number.isFinite(available) || available <= 0) {
-      const error = new Error('No hay stock disponible para este producto');
-      error.statusCode = 409;
-      throw error;
-    }
-    if (available < Number(cantidad || 0)) {
-      const error = new Error(`Stock insuficiente para el producto. Disponible: ${available}`);
-      error.statusCode = 409;
-      throw error;
+    const tipoLower = String(p.tipo_producto || '').toLowerCase();
+    const esPreparacion = tipoLower === 'preparacion' || tipoLower.includes('prepar');
+    if (!esPreparacion) {
+      const available = Number(p.stock || 0);
+      if (!Number.isFinite(available) || available <= 0) {
+        const error = new Error('No hay stock disponible para este producto');
+        error.statusCode = 409;
+        throw error;
+      }
+      if (available < Number(cantidad || 0)) {
+        const error = new Error(`Stock insuficiente para el producto. Disponible: ${available}`);
+        error.statusCode = 409;
+        throw error;
+      }
     }
 
     await pool.query(

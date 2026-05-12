@@ -240,6 +240,13 @@ const Compras = {
       throw error;
     }
 
+    const tipoProd = String(producto.tipo_producto || '').toLowerCase();
+    if (tipoProd === 'preparacion' || tipoProd.includes('prepar')) {
+      const error = new Error('No se pueden registrar compras de productos tipo preparación');
+      error.statusCode = 400;
+      throw error;
+    }
+
     const pctRaw = options?.porcentajeGanancia;
     let parsedPct = pctRaw === undefined || pctRaw === null || pctRaw === '' ? 0 : Number(pctRaw);
     if (String(producto.tipo_producto || '').toLowerCase() === 'insumo') {
@@ -312,7 +319,7 @@ const Compras = {
          FROM detalle_compras dc
          JOIN productos p ON p.id = dc.producto_id
          WHERE dc.compra_id = $1
-         ORDER BY id ASC`,
+         ORDER BY dc.id ASC`,
         [compraId]
       );
 

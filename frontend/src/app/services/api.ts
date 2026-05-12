@@ -442,6 +442,25 @@ function mapProduccion(r: any): OrdenProduccion {
   else if (/cancelada/i.test(st)) estado = 'cancelada';
   else estado = 'pendiente';
 
+  let detallePreparacion: OrdenProduccion['detallePreparacion'];
+  const rawDet = r.detalle_preparacion;
+  let arr: any[] | null = null;
+  if (Array.isArray(rawDet)) arr = rawDet;
+  else if (typeof rawDet === 'string' && rawDet.trim()) {
+    try {
+      arr = JSON.parse(rawDet);
+    } catch {
+      arr = null;
+    }
+  }
+  if (Array.isArray(arr)) {
+    detallePreparacion = arr.map((x) => ({
+      productoId: Number(x.producto_id ?? x.productoId),
+      cantidad: Number(x.cantidad),
+      productoNombre: x.producto_nombre != null ? String(x.producto_nombre) : x.productoNombre,
+    }));
+  }
+
   return {
     id: Number(r.id),
     idOrden: Number(r.id),
@@ -456,6 +475,7 @@ function mapProduccion(r: any): OrdenProduccion {
     motivoCancelacion: r.motivo_cancelacion,
     createdAt: r.created_at || '',
     updatedAt: r.updated_at || '',
+    ...(detallePreparacion ? { detallePreparacion } : {}),
     ...(r.producto_nombre ? { productoNombre: r.producto_nombre } : {}),
     ...(r.productor_nombre ? { productorNombre: r.productor_nombre } : r.responsable ? { productorNombre: r.responsable } : {}),
   } as OrdenProduccion;
@@ -773,15 +793,6 @@ export const api = {
           descripcion: updates.descripcion,
           ...(precio !== undefined ? { precio } : {}),
           stock_minimo: updates.stockMinimo,
-          typo: updates.typo,
-          tipo_producto:
-            updates.typo === 'de preparacion'
-              ? 'preparacion'
-              : updates.typo === 'insumo'
-                ? 'insumo'
-                : updates.typo === 'terminado'
-                  ? 'terminado'
-                  : undefined,
           estado: updates.estado ? dbAct(updates.estado as 'activo' | 'inactivo') : undefined,
           ...(updates.typo === 'insumo'
             ? {
@@ -893,9 +904,7 @@ export const api = {
       const env = await apiFetch<{ id: number }>('/api/produccion', {
         method: 'POST',
         json: {
-          producto_id: data.productoId,
           pedido_id: data.pedidoId,
-          cantidad: data.cantidad,
           fecha: data.fechaInicio,
           responsable,
           productor_id: data.productorId,

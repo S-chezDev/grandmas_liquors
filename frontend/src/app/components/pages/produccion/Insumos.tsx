@@ -51,6 +51,16 @@ export function Insumos() {
       render: (v: string) => <span className="font-medium text-foreground">{v}</span>,
     },
     {
+      key: 'presentacionUnidad',
+      label: 'Unidad presentación',
+      render: (_: unknown, row: InsumoView) => {
+        const u = row.presentacionUnidad?.trim();
+        const q = row.presentacionCantidad;
+        if (u && q != null && Number.isFinite(Number(q))) return `${q} ${u}`;
+        return u || '—';
+      },
+    },
+    {
       key: 'cantidad',
       label: 'Stock',
       render: (_: number, row: InsumoView) => (
