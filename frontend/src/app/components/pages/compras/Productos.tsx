@@ -40,6 +40,7 @@ export function Productos() {
     insumoUnidadMedida: 'Gramos' as string,
     insumoCantidadMedida: 1,
   });
+  const [precioVentaInput, setPrecioVentaInput] = useState('');
 
   const [searchQuery, setSearchQuery] = useState('');
   const [filtroCategoria, setFiltroCategoria] = useState<string>('Todos');
@@ -230,6 +231,7 @@ export function Productos() {
       insumoUnidadMedida: 'Gramos',
       insumoCantidadMedida: 1,
     });
+    setPrecioVentaInput('');
     setIsModalOpen(true);
   };
 
@@ -248,14 +250,17 @@ export function Productos() {
       categoriaId: producto.categoriaId,
       typo: producto.typo,
       precioVenta: producto.precioVenta,
-      stockMinimo: producto.stockMinimo,
+      stockMinimo: producto.typo === 'insumo' ? 0 : producto.stockMinimo,
       estado: producto.estado,
       insumoUnidadMedida: producto.insumoUnidadMedida || 'Gramos',
       insumoCantidadMedida:
-        producto.insumoCantidadMedida != null && Number.isFinite(producto.insumoCantidadMedida)
-          ? producto.insumoCantidadMedida
-          : 1,
+        producto.typo === 'insumo'
+          ? Math.max(1, Math.round(Number(producto.insumoCantidadMedida) || 1))
+          : producto.insumoCantidadMedida != null && Number.isFinite(producto.insumoCantidadMedida)
+            ? producto.insumoCantidadMedida
+            : 1,
     });
+    setPrecioVentaInput(String(producto.precioVenta ?? 0));
     setIsModalOpen(true);
   };
 
@@ -299,6 +304,11 @@ export function Productos() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    const precioVentaNormalizado =
+      productoFormularioModo === 'editar'
+        ? parseInt(precioVentaInput || '0', 10)
+        : formData.precioVenta;
+
     // Validaciones
     if (!validarNombreUnico(formData.nombre, productoFormularioModo === 'editar' ? selectedProducto?.id : undefined)) {
       toast.error('Error de validación', {
@@ -314,14 +324,21 @@ export function Productos() {
       return;
     }
 
-    if (productoFormularioModo === 'editar' && formData.precioVenta < 0) {
+    if (productoFormularioModo === 'editar' && precioVentaInput.trim() === '') {
+      toast.error('Error de validación', {
+        description: 'El precio de venta es obligatorio'
+      });
+      return;
+    }
+
+    if (productoFormularioModo === 'editar' && precioVentaNormalizado < 0) {
       toast.error('Error de validación', {
         description: 'El precio no puede ser negativo'
       });
       return;
     }
 
-    if (formData.stockMinimo < 0) {
+    if (formData.typo === 'terminado' && formData.stockMinimo < 0) {
       toast.error('Error de validación', {
         description: 'El stock mínimo no puede ser negativo'
       });
@@ -334,9 +351,9 @@ export function Productos() {
         return;
       }
       const med = Number(formData.insumoCantidadMedida);
-      if (!Number.isFinite(med) || med <= 0) {
+      if (!Number.isInteger(med) || med < 1) {
         toast.error('Error de validación', {
-          description: 'Indique cantidad o volumen de presentación mayor a 0',
+          description: 'La cantidad / volumen debe ser un número entero mayor o igual a 1',
         });
         return;
       }
@@ -344,7 +361,11 @@ export function Productos() {
 
     try {
       if (productoFormularioModo === 'editar' && selectedProducto) {
-        await api.productos.update(selectedProducto.id, formData, 'Actualización de datos');
+        await api.productos.update(selectedProducto.id, {
+          ...formData,
+          precioVenta: precioVentaNormalizado,
+          stockMinimo: formData.typo === 'terminado' ? formData.stockMinimo : 0,
+        }, 'Actualización de datos');
 
         toast.success('Producto actualizado', {
           description: 'Los datos del producto han sido actualizados exitosamente'
@@ -353,6 +374,7 @@ export function Productos() {
         // Al crear, stock 0 y precio de venta 0 hasta registrar compra al proveedor
         await api.productos.create({
           ...formData,
+          stockMinimo: formData.typo === 'terminado' ? formData.stockMinimo : 0,
           precioVenta: 0,
           precioCompra: 0,
           ganancia: 0
@@ -551,6 +573,7 @@ export function Productos() {
                 setFormData({
                   ...formData,
                   typo: next,
+                  stockMinimo: next === 'terminado' ? formData.stockMinimo : 0,
                   insumoUnidadMedida: next === 'insumo' ? formData.insumoUnidadMedida || 'Gramos' : 'Gramos',
                   insumoCantidadMedida: next === 'insumo' ? formData.insumoCantidadMedida || 1 : 1,
                 });
@@ -582,12 +605,18 @@ export function Productos() {
                 type="number"
                 value={formData.insumoCantidadMedida === 0 ? '' : formData.insumoCantidadMedida}
                 onChange={(value) => {
-                  const num = Number(value);
-                  if (Number.isFinite(num) && num >= 0) {
-                    setFormData({ ...formData, insumoCantidadMedida: num });
+                  const raw = String(value ?? '').trim();
+                  if (raw === '') {
+                    setFormData({ ...formData, insumoCantidadMedida: 0 });
+                    return;
+                  }
+                  const n = parseInt(raw, 10);
+                  if (Number.isFinite(n) && n >= 0) {
+                    setFormData({ ...formData, insumoCantidadMedida: n });
                   }
                 }}
-                min={0.0001}
+                min={1}
+                step={1}
                 required
               />
               <p className="sm:col-span-2 text-xs text-muted-foreground">
@@ -599,36 +628,53 @@ export function Productos() {
 
           <div className={`grid gap-4 ${productoFormularioModo === 'editar' ? 'grid-cols-2' : 'grid-cols-1'}`}>
             {productoFormularioModo === 'editar' && (
+              <div className="space-y-2">
+                <label htmlFor="precioVenta" className="block">
+                  Precio de Venta <span className="text-destructive">*</span>
+                </label>
+                <input
+                  id="precioVenta"
+                  name="precioVenta"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={precioVentaInput}
+                  onChange={(e) => {
+                    const soloNumeros = e.target.value.replace(/\D/g, '');
+                    setPrecioVentaInput(soloNumeros);
+                    setFormData({
+                      ...formData,
+                      precioVenta: soloNumeros === '' ? 0 : parseInt(soloNumeros, 10),
+                    });
+                  }}
+                  placeholder="Ingrese el precio de venta"
+                  className="w-full px-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring transition-all"
+                  required
+                />
+              </div>
+            )}
+
+            {formData.typo === 'terminado' && (
               <FormField
-                label="Precio de Venta"
-                name="precioVenta"
+                label="Stock Mínimo"
+                name="stockMinimo"
                 type="number"
-                value={formData.precioVenta}
-                onChange={(value) => setFormData({ ...formData, precioVenta: parseInt(value as string) || 0 })}
+                value={formData.stockMinimo === 0 ? '' : formData.stockMinimo}
+                onChange={(value) => {
+                  const num = parseInt(value as string) || 0;
+                  if (num < 0) {
+                    toast.warning('No se permiten números negativos');
+                    return;
+                  }
+                  setFormData({ ...formData, stockMinimo: num });
+                }}
                 min={0}
                 required
               />
             )}
-
-            <FormField
-              label="Stock Mínimo"
-              name="stockMinimo"
-              type="number"
-              value={formData.stockMinimo === 0 ? '' : formData.stockMinimo}
-              onChange={(value) => {
-                const num = parseInt(value as string) || 0;
-                if (num < 0) {
-                  toast.warning('No se permiten números negativos');
-                  return;
-                }
-                setFormData({ ...formData, stockMinimo: num });
-              }}
-              min={0}
-              required
-            />
           </div>
 
-          {productoFormularioModo === 'nuevo' && formData.typo !== 'insumo' && (
+          {productoFormularioModo === 'nuevo' && formData.typo === 'terminado' && (
             <p className="text-xs text-muted-foreground bg-blue-50 p-3 rounded-lg">
               ℹ️ El stock actual inicia en 0 y se incrementa al recibir compras. El precio de venta inicia en $0 y se
               define al registrar la compra al proveedor (precio de compra y margen).

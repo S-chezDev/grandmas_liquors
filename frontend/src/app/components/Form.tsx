@@ -150,6 +150,7 @@ export function FormField({
       ? 'border-destructive ring-1 ring-destructive/20 focus:ring-destructive'
       : 'border-border focus:ring-ring'
   } ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`;
+  const baseSelectClasses = `${baseInputClasses} bg-white text-sm pr-10 appearance-none cursor-pointer`;
 
   const validateField = (val: string | number) => {
     const strVal = val === undefined || val === null ? '' : String(val);
@@ -317,7 +318,7 @@ export function FormField({
           onBlur={handleBlur}
           required={required}
           disabled={disabled}
-          className={baseInputClasses}
+          className={baseSelectClasses}
         >
           {selectPlaceholder ? <option value="">Seleccionar...</option> : null}
           {options.map((option) => (

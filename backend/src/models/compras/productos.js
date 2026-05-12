@@ -19,7 +19,7 @@ const {
   registerProductoAudit,
 } = require('../shared/auditoria');
 
-const INSUMO_UNIDADES_VALIDAS = ['Litros', 'Kilogramos', 'Gramos', 'Unidades', 'Cajas', 'Botellas', 'Mililitros'];
+const INSUMO_UNIDADES_VALIDAS = ['Litros', 'Unidades', 'Mililitros'];
 
 const parseInsumoMedidasForProduct = (tipoProducto, data) => {
   if (tipoProducto !== 'insumo') return { u: null, q: null };
@@ -29,13 +29,13 @@ const parseInsumoMedidasForProduct = (tipoProducto, data) => {
     error.statusCode = 400;
     throw error;
   }
-  const q = Number(data?.insumo_cantidad_medida ?? data?.insumoCantidadMedida);
-  if (!Number.isFinite(q) || q <= 0) {
-    const error = new Error('La cantidad / volumen de presentación del insumo debe ser mayor a 0');
+  const qRaw = Number(data?.insumo_cantidad_medida ?? data?.insumoCantidadMedida);
+  if (!Number.isFinite(qRaw) || qRaw < 1 || !Number.isInteger(qRaw)) {
+    const error = new Error('La cantidad / volumen de presentación del insumo debe ser un entero mayor a 0');
     error.statusCode = 400;
     throw error;
   }
-  return { u, q };
+  return { u, q: qRaw };
 };
 
 const Productos = {
@@ -102,6 +102,12 @@ const Productos = {
 
     const tipoProducto = normalizeProductoTipoValue(data?.tipo_producto ?? data?.tipo);
     const { u: insumoUnidad, q: insumoCantidad } = parseInsumoMedidasForProduct(tipoProducto, data);
+    const stockMinimoInsert =
+      tipoProducto === 'insumo' || tipoProducto === 'preparacion'
+        ? 0
+        : Number(data.stock_minimo) >= 0
+          ? Number(data.stock_minimo)
+          : 10;
 
     const result = await pool.query(
       `INSERT INTO productos (
@@ -114,7 +120,7 @@ const Productos = {
         data.descripcion,
         precioSeguro,
         0, // ✅ Stock siempre inicia en 0
-        data.stock_minimo || 10,
+        stockMinimoInsert,
         data.imagen_url,
         'Activo',
         tipoProducto,
@@ -134,7 +140,7 @@ const Productos = {
           nombre,
           categoria_id: data.categoria_id,
           precio: precioSeguro,
-          stock_minimo: data.stock_minimo || 10,
+          stock_minimo: stockMinimoInsert,
           tipo_producto: tipoProducto,
           insumo_unidad_medida: insumoUnidad,
           insumo_cantidad_medida: insumoCantidad,
@@ -166,12 +172,13 @@ const Productos = {
     }
 
     const previous = await pool.query(
-      'SELECT categoria_id, stock, tipo_producto FROM productos WHERE id = $1',
+      'SELECT categoria_id, stock, tipo_producto, stock_minimo FROM productos WHERE id = $1',
       [id]
     );
     const previousCategoriaId = previous.rows[0]?.categoria_id ?? null;
     const stockActual = previous.rows[0]?.stock ?? 0;
     const currentTipo = normalizeProductoTipoValue(previous.rows[0]?.tipo_producto);
+    const prevStockMinimo = Number(previous.rows[0]?.stock_minimo ?? 10);
 
     const tipoProductoInput =
       data.tipo_producto !== undefined || data.tipo !== undefined
@@ -179,6 +186,12 @@ const Productos = {
         : undefined;
     const newTipo = tipoProductoInput !== undefined ? tipoProductoInput : currentTipo;
     const { u: insumoUnidad, q: insumoCantidad } = parseInsumoMedidasForProduct(newTipo, data);
+    const stockMinimoVal =
+      newTipo === 'insumo' || newTipo === 'preparacion'
+        ? 0
+        : data.stock_minimo !== undefined && data.stock_minimo !== null && Number.isFinite(Number(data.stock_minimo))
+          ? Number(data.stock_minimo)
+          : prevStockMinimo;
 
     await pool.query(
       `UPDATE productos
@@ -199,8 +212,8 @@ const Productos = {
         data.categoria_id,
         data.descripcion,
         data.precio,
-        stockActual,
-        data.stock_minimo,
+        newTipo === 'preparacion' ? 0 : stockActual,
+        newTipo === 'insumo' || newTipo === 'preparacion' ? 0 : stockMinimoVal,
         data.imagen_url,
         newTipo,
         insumoUnidad,
@@ -222,7 +235,7 @@ const Productos = {
           nombre,
           categoria_id: data.categoria_id,
           precio: data.precio,
-          stock_minimo: data.stock_minimo,
+          stock_minimo: stockMinimoVal,
           tipo_producto: newTipo,
           insumo_unidad_medida: insumoUnidad,
           insumo_cantidad_medida: insumoCantidad,

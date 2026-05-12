@@ -1,4 +1,4 @@
-﻿export interface HistorialCambio {
+export interface HistorialCambio {
   fecha: string;
   usuario: string;
   accion: string;
@@ -102,6 +102,8 @@ export interface OrdenProduccion {
   id: number;
   idOrden: number;
   productoId: number;
+  pedidoId?: number;
+  pedidoNumero?: string;
   cantidad: number;
   productorId: number;
   fechaInicio: string;
@@ -127,11 +129,7 @@ export interface EntregaInsumo {
 /** Unidades válidas en POST/PUT de insumos (backend). */
 export const INSUMO_UNIDADES_API = [
   'Litros',
-  'Kilogramos',
-  'Gramos',
   'Unidades',
-  'Cajas',
-  'Botellas',
   'Mililitros',
 ] as const;
 
@@ -255,6 +253,10 @@ export interface Domicilio {
   repartidorId: number;
   productos: PedidoProducto[];
   total: number;
+  /** Total del pedido (siempre monto completo); el listado puede mostrar monto distinto al repartidor según esquema. */
+  totalPedidoBase?: number;
+  /** Ej. 50% o 100% — viene del pedido asociado. */
+  esquemaAbonoPedido?: string;
   fechaPedido: string;
   fechaEntrega: string;
   estado: 'pendiente' | 'en ruta' | 'completado' | 'cancelado';

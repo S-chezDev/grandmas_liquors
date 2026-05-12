@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DataTable, Column, commonActions, openPrintablePdf } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
@@ -52,8 +52,8 @@ export function Abonos() {
       }
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('mousedown', handleClickOutside, true);
+    return () => document.removeEventListener('mousedown', handleClickOutside, true);
   }, []);
 
   const cargarDatos = async () => {

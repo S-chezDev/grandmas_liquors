@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DataTable, Column, commonActions, openPrintablePdf } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
@@ -50,14 +50,16 @@ export function Compras() {
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
-      if (!target.closest('.relative')) {
+      if (!target.closest('.compra-proveedor-picker')) {
         setMostrarListaProveedores(false);
+      }
+      if (!target.closest('.compra-producto-picker')) {
         setMostrarListaProductos(false);
       }
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('mousedown', handleClickOutside, true);
+    return () => document.removeEventListener('mousedown', handleClickOutside, true);
   }, []);
 
   const productosFiltrados = (() => {
@@ -590,7 +592,7 @@ export function Compras() {
         <Form onSubmit={handleSubmit} noValidate>
           <div className="grid grid-cols-2 gap-4">
             {/* Campo de búsqueda de Proveedor */}
-            <div className="relative">
+            <div className="relative compra-proveedor-picker">
               <label className="block text-sm font-medium mb-2">Proveedor *</label>
               <input
                 type="text"
@@ -644,7 +646,7 @@ export function Compras() {
             </h3>
 
             {/* Buscador de productos (mismo diseno que "Agregar Productos" en Nueva Venta) */}
-            <div className="relative">
+            <div className="relative compra-producto-picker">
               <label className="block text-sm font-medium mb-2 flex items-center gap-2">
                 <ShoppingCart className="w-4 h-4" />
                 Producto *
@@ -670,7 +672,7 @@ export function Compras() {
                 <div className="absolute z-10 w-full mt-1 bg-white border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
                   {productosFiltrados.length > 0 ? (
                     <>
-                      <div className="sticky top-0 bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
+                      <div className="bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
                         {busquedaProducto.trim() === ''
                           ? `Todos los productos (${productosFiltrados.length})`
                           : `${productosFiltrados.length} producto(s) encontrado(s)`}

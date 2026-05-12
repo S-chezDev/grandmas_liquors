@@ -154,6 +154,22 @@ async function runMigrations() {
           )
         `);
       }
+
+      await client.query(`
+        UPDATE productos
+           SET stock = 0
+         WHERE COALESCE(tipo_producto, 'terminado') = 'preparacion'
+           AND COALESCE(stock, 0) <> 0
+      `);
+      await client.query(`
+        ALTER TABLE productos
+        DROP CONSTRAINT IF EXISTS productos_preparacion_stock_cero_chk
+      `);
+      await client.query(`
+        ALTER TABLE productos
+        ADD CONSTRAINT productos_preparacion_stock_cero_chk
+        CHECK (tipo_producto <> 'preparacion' OR COALESCE(stock, 0) = 0)
+      `);
       console.log('   OK alteraciones aplicadas\n');
     } catch (err) {
       console.warn('   (aviso) error al aplicar alteraciones de sincronizacion:', err.message);

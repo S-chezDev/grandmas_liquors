@@ -1,4 +1,4 @@
-﻿import { apiFetch, apiFetchData } from './http';
+import { apiFetch, apiFetchData } from './http';
 import type {
   Usuario,
   Categoria,
@@ -411,13 +411,18 @@ function mapDomicilio(r: any): Domicilio {
   const telefono = String(r.telefono_pedido || r.cliente_telefono || '').trim();
   const fechaEntregaRaw = r.fecha_entrega_pedido || r.fecha_entrega || r.fecha || '';
 
+  const totalBase = Number(r.total_pedido ?? r.total ?? 0);
+  const esquemaAbonoPedido = String(r.esquema_abono_pedido ?? r.esquema_abono ?? '').trim();
+
   return {
     id: Number(r.id),
     pedidoId: Number(r.pedido_id),
     clienteId: Number(r.cliente_id),
     repartidorId: Number(r.repartidor_id || 0),
     productos,
-    total: Number(r.total_pedido ?? r.total ?? 0),
+    total: Math.round(totalBase),
+    totalPedidoBase: Math.round(totalBase),
+    esquemaAbonoPedido,
     fechaPedido: String(r.fecha_pedido || r.fecha || '').split('T')[0],
     fechaEntrega: String(fechaEntregaRaw || '').split('T')[0],
     motivoCancelacion: r.motivo_cancelacion ? String(r.motivo_cancelacion) : undefined,
@@ -441,8 +446,10 @@ function mapProduccion(r: any): OrdenProduccion {
     id: Number(r.id),
     idOrden: Number(r.id),
     productoId: Number(r.producto_id),
+    pedidoId: r.pedido_id != null ? Number(r.pedido_id) : undefined,
+    pedidoNumero: r.pedido_numero ? String(r.pedido_numero) : undefined,
     cantidad: Number(r.cantidad),
-    productorId: 0,
+    productorId: Number(r.productor_id ?? 0),
     fechaInicio: String(r.fecha || '').split('T')[0],
     tiempoPreparacion: Number(r.tiempo_preparacion_minutos ?? 0),
     estado,
@@ -450,7 +457,7 @@ function mapProduccion(r: any): OrdenProduccion {
     createdAt: r.created_at || '',
     updatedAt: r.updated_at || '',
     ...(r.producto_nombre ? { productoNombre: r.producto_nombre } : {}),
-    ...(r.responsable ? { productorNombre: r.responsable } : {}),
+    ...(r.productor_nombre ? { productorNombre: r.productor_nombre } : r.responsable ? { productorNombre: r.responsable } : {}),
   } as OrdenProduccion;
 }
 
@@ -887,6 +894,7 @@ export const api = {
         method: 'POST',
         json: {
           producto_id: data.productoId,
+          pedido_id: data.pedidoId,
           cantidad: data.cantidad,
           fecha: data.fechaInicio,
           responsable,

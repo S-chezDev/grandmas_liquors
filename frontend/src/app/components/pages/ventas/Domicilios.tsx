@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
@@ -9,6 +9,7 @@ import { toast } from '../../AlertDialog';
 import type { Domicilio, Pedido, Cliente, Usuario } from '../../../services/types';
 import { MotivoModal } from '../../MotivoModal';
 import { AlertDialog } from '../../AlertDialog';
+import { useAuth } from '../../AuthContext';
 
 interface DomicilioView extends Domicilio {
   clienteNombre?: string;
@@ -17,6 +18,9 @@ interface DomicilioView extends Domicilio {
 }
 
 export function Domicilios() {
+  const { user } = useAuth();
+  const esRepartidor = String(user?.rol || '').trim().toLowerCase() === 'repartidor';
+
   const [domicilios, setDomicilios] = useState<DomicilioView[]>([]);
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
@@ -92,6 +96,20 @@ export function Domicilios() {
       currency: 'COP',
       minimumFractionDigits: 0
     }).format(value);
+  };
+
+  const totalDomicilioVista = (d: DomicilioView) => {
+    const base = d.totalPedidoBase ?? d.total;
+    const esq = d.esquemaAbonoPedido ?? '';
+    if (esRepartidor && String(esq).includes('50')) return Math.round(Number(base) * 0.5);
+    return Math.round(Number(base));
+  };
+
+  const valorRestanteDomicilio = (d: DomicilioView) => {
+    const base = Math.round(Number(d.totalPedidoBase ?? d.total));
+    const esq = String(d.esquemaAbonoPedido || '');
+    if (esq.includes('50')) return Math.round(base * 0.5);
+    return 0;
   };
 
   const domicilioEstadoOpciones = (
@@ -199,7 +217,7 @@ export function Domicilios() {
     {
       key: 'total',
       label: 'Total',
-      render: (total: number) => formatCurrency(total)
+      render: (_total: number, row: DomicilioView) => formatCurrency(totalDomicilioVista(row)),
     },
     {
       key: 'fechaPedido',
@@ -411,9 +429,11 @@ export function Domicilios() {
           <h2>Gestión de Domicilios</h2>
           <p className="text-muted-foreground">Administra las entregas a domicilio</p>
         </div>
-        <Button icon={<Plus className="w-5 h-5" />} onClick={handleAdd}>
-          Nuevo Domicilio
-        </Button>
+        {!esRepartidor ? (
+          <Button icon={<Plus className="w-5 h-5" />} onClick={handleAdd}>
+            Nuevo Domicilio
+          </Button>
+        ) : null}
       </div>
 
       <div className="bg-white rounded-lg border border-border p-4">
@@ -440,18 +460,20 @@ export function Domicilios() {
               <option value="completado">Completado</option>
               <option value="cancelado">Cancelado</option>
             </select>
-            <select
-              value={filtroRepartidor}
-              onChange={(e) => setFiltroRepartidor(e.target.value)}
-              className="px-3 py-2.5 border border-border rounded-lg bg-white text-gray-500 focus:outline-none focus:ring-2 focus:ring-primary min-w-[180px]"
-            >
-              <option value="">Filtrar por repartidor</option>
-              {repartidores.map(r => (
-                <option key={r.id} value={String(r.id)}>
-                  {r.nombre} {r.apellido}
-                </option>
-              ))}
-            </select>
+            {!esRepartidor ? (
+              <select
+                value={filtroRepartidor}
+                onChange={(e) => setFiltroRepartidor(e.target.value)}
+                className="px-3 py-2.5 border border-border rounded-lg bg-white text-gray-500 focus:outline-none focus:ring-2 focus:ring-primary min-w-[180px]"
+              >
+                <option value="">Filtrar por repartidor</option>
+                {repartidores.map((r) => (
+                  <option key={r.id} value={String(r.id)}>
+                    {r.nombre} {r.apellido}
+                  </option>
+                ))}
+              </select>
+            ) : null}
             <Button
               variant="outline"
               onClick={() => {
@@ -495,7 +517,7 @@ export function Domicilios() {
             }
             setIsDetailModalOpen(true);
           }),
-          commonActions.edit(handleEdit),
+          ...(esRepartidor ? [] : [commonActions.edit(handleEdit)]),
         ]}
       />
 
@@ -717,7 +739,15 @@ export function Domicilios() {
               </div>
               <div>
                 <label className="text-sm text-muted-foreground">Total</label>
-                <p className="mt-1 font-semibold text-lg">{formatCurrency(selectedDomicilio.total)}</p>
+                <p className="mt-1 font-semibold text-lg">
+                  {formatCurrency(totalDomicilioVista(selectedDomicilio))}
+                </p>
+              </div>
+              <div>
+                <label className="text-sm text-muted-foreground">Valor restante por cobrar</label>
+                <p className="mt-1 font-semibold">
+                  {formatCurrency(valorRestanteDomicilio(selectedDomicilio))}
+                </p>
               </div>
               <div>
                 <label className="text-sm text-muted-foreground">Dirección de Entrega</label>

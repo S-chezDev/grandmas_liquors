@@ -38,12 +38,18 @@ const ensureDomiciliosSchema = async () => {
 };
 
 const Domicilios = {
-  getAll: async () => {
+  getAll: async (options = {}) => {
     await ensureDomiciliosSchema();
-    const result = await pool.query(`
+    const repId = Number(options.repartidorUserId);
+    const filterRepartidor = Number.isFinite(repId) && repId > 0;
+    const params = filterRepartidor ? [repId] : [];
+    const whereRep = filterRepartidor ? ' WHERE d.repartidor_id = $1 ' : '';
+    const result = await pool.query(
+      `
       SELECT d.*,
              p.numero_pedido as pedido,
              p.total as total_pedido,
+             p.esquema_abono as esquema_abono_pedido,
              p.fecha as fecha_pedido,
              p.fecha_entrega as fecha_entrega_pedido,
              p.direccion as direccion_pedido,
@@ -69,8 +75,11 @@ const Domicilios = {
       FROM domicilios d
       JOIN pedidos p ON d.pedido_id = p.id
       JOIN clientes c ON d.cliente_id = c.id
+      ${whereRep}
       ORDER BY d.fecha DESC, d.hora DESC
-    `);
+    `,
+      params
+    );
     return result.rows;
   },
   getById: async (id) => {
@@ -78,6 +87,7 @@ const Domicilios = {
       SELECT d.*,
              p.numero_pedido as pedido,
              p.total as total_pedido,
+             p.esquema_abono as esquema_abono_pedido,
              p.fecha as fecha_pedido,
              p.fecha_entrega as fecha_entrega_pedido,
              p.direccion as direccion_pedido,

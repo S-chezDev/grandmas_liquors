@@ -109,6 +109,10 @@ CREATE TABLE productos (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+ALTER TABLE productos
+    ADD CONSTRAINT productos_preparacion_stock_cero_chk
+    CHECK (tipo_producto <> 'preparacion' OR COALESCE(stock, 0) = 0);
+
 -- TABLA: usuarios
 CREATE TABLE usuarios (
     id SERIAL PRIMARY KEY,
@@ -319,7 +323,7 @@ CREATE TABLE producto_insumos (
     UNIQUE (producto_id, insumo_id)
 );
 
--- TABLA: entregas_insumos
+-- TABLA: entregas_insumos (al registrar una entrega se descuenta stock en productos tipo insumo o en insumos legacy)
 CREATE TABLE entregas_insumos (
     id SERIAL PRIMARY KEY,
     numero_entrega VARCHAR(50) UNIQUE NOT NULL,

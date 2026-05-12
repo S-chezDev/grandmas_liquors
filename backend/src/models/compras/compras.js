@@ -304,9 +304,14 @@ const Compras = {
 
     const applyReceiptStock = async (compraId) => {
       const detalleResult = await client.query(
-        `SELECT producto_id, cantidad, precio_unitario, COALESCE(porcentaje_ganancia, 0)::numeric AS pct
-         FROM detalle_compras
-         WHERE compra_id = $1
+        `SELECT dc.producto_id,
+                dc.cantidad,
+                dc.precio_unitario,
+                COALESCE(dc.porcentaje_ganancia, 0)::numeric AS pct,
+                COALESCE(p.tipo_producto, 'terminado') AS tipo_producto
+         FROM detalle_compras dc
+         JOIN productos p ON p.id = dc.producto_id
+         WHERE dc.compra_id = $1
          ORDER BY id ASC`,
         [compraId]
       );
@@ -321,9 +326,14 @@ const Compras = {
         const costo = Number(row.precio_unitario);
         const pct = Number(row.pct);
         const precioVenta = Math.round(costo * (1 + (Number.isFinite(pct) ? pct : 0) / 100));
+        const esPreparacion = String(row.tipo_producto || '').toLowerCase() === 'preparacion';
         await client.query(
-          'UPDATE productos SET stock = COALESCE(stock, 0) + $1, precio = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3',
-          [Number(row.cantidad || 0), precioVenta, row.producto_id]
+          `UPDATE productos
+             SET stock = CASE WHEN $4 THEN 0 ELSE COALESCE(stock, 0) + $1 END,
+                 precio = $2,
+                 updated_at = CURRENT_TIMESTAMP
+           WHERE id = $3`,
+          [Number(row.cantidad || 0), precioVenta, row.producto_id, esPreparacion]
         );
       }
     };

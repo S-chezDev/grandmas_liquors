@@ -101,9 +101,11 @@ const Produccion = {
   getInsumosEntregadosByProductor,
   getAll: async () => {
     const result = await pool.query(`
-      SELECT p.*, pr.nombre as producto_nombre
+      SELECT p.*, pr.nombre as producto_nombre, p.responsable as productor_nombre,
+             pe.numero_pedido as pedido_numero
       FROM produccion p
       JOIN productos pr ON p.producto_id = pr.id
+      LEFT JOIN pedidos pe ON pe.id = p.pedido_id
       ORDER BY p.fecha DESC
     `);
     return result.rows;
@@ -202,6 +204,30 @@ const Produccion = {
         const err = new Error('Solo se programan órdenes para productos de tipo preparación');
         err.statusCode = 400;
         throw err;
+      }
+
+      if (data.pedido_id != null && data.pedido_id !== '') {
+        const pedidoId = Number(data.pedido_id);
+        if (!Number.isInteger(pedidoId) || pedidoId <= 0) {
+          const err = new Error('pedido_id debe ser un entero positivo');
+          err.statusCode = 400;
+          throw err;
+        }
+        const pedidoDet = await client.query(
+          `SELECT dp.producto_id, pr.nombre
+           FROM detalle_pedidos dp
+           INNER JOIN productos pr ON pr.id = dp.producto_id
+           WHERE dp.pedido_id = $1
+             AND COALESCE(pr.tipo_producto, 'terminado') = 'preparacion'
+             AND dp.producto_id = $2
+           LIMIT 1`,
+          [pedidoId, data.producto_id]
+        );
+        if (!pedidoDet.rows[0]) {
+          const err = new Error('El producto seleccionado no pertenece al pedido en preparación');
+          err.statusCode = 409;
+          throw err;
+        }
       }
 
       // Validar insumos entregados (nuevo flujo): array opcional de ids de

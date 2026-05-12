@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DataTable, Column, commonActions, openPrintablePdf } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Button } from '../../Button';
@@ -61,14 +61,16 @@ export function Pedidos() {
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
-      if (!target.closest('.relative')) {
+      if (!target.closest('.pedido-cliente-picker')) {
         setMostrarListaClientes(false);
+      }
+      if (!target.closest('.pedido-producto-picker')) {
         setMostrarListaProductos(false);
       }
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('mousedown', handleClickOutside, true);
+    return () => document.removeEventListener('mousedown', handleClickOutside, true);
   }, []);
 
   const cargarDatos = async () => {
@@ -80,7 +82,7 @@ export function Pedidos() {
       ]);
 
       setClientes(clientesData.filter(c => c.estado === 'activo'));
-      setProductos(productosData.filter(p => p.estado === 'activo'));
+      setProductos(productosData.filter(p => p.estado === 'activo' && p.typo !== 'insumo'));
 
       const pedidosConInfo = pedidosData.map(pedido => {
         const cliente = clientesData.find(c => c.id === pedido.clienteId);
@@ -729,7 +731,7 @@ export function Pedidos() {
         <Form onSubmit={handleSubmit}>
           <div className="grid grid-cols-2 gap-4">
             {/* Campo de búsqueda de Cliente */}
-            <div className="relative">
+            <div className="relative pedido-cliente-picker">
               <label className="block text-sm font-medium mb-2">Cliente *</label>
               <input
                 type="text"
@@ -851,7 +853,7 @@ export function Pedidos() {
 
           <div className="space-y-4">
             {/* Buscador de productos (mismo diseno que "Agregar Productos" en Nueva Venta) */}
-            <div className="relative">
+            <div className="relative pedido-producto-picker">
               <label className="block text-sm font-medium mb-2 flex items-center gap-2">
                 <ShoppingCart className="w-4 h-4" />
                 Agregar Productos *
@@ -874,7 +876,7 @@ export function Pedidos() {
                 <div className="absolute z-10 w-full mt-1 bg-white border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
                   {productosFiltrados.length > 0 ? (
                     <>
-                      <div className="sticky top-0 bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
+                      <div className="bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
                         {busquedaProducto.trim() === ''
                           ? `Todos los productos (${productosFiltrados.length})`
                           : `${productosFiltrados.length} producto(s) encontrado(s)`}

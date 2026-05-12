@@ -34,10 +34,10 @@ export function EntregaInsumos() {
   const [busqueda, setBusqueda] = useState('');
   const [filtroProductor, setFiltroProductor] = useState<string>('');
   const [filtroFecha, setFiltroFecha] = useState<string>('');
+  const [cantidadEntrega, setCantidadEntrega] = useState('1');
   const [formData, setFormData] = useState({
     insumoId: 0,
     productoCatalogoId: 0,
-    cantidad: 1,
     productorId: 0,
     fecha: new Date().toISOString().split('T')[0],
     hora: new Date().toTimeString().slice(0, 5),
@@ -64,8 +64,8 @@ export function EntregaInsumos() {
         setMostrarListaProductores(false);
       }
     };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('mousedown', handleClickOutside, true);
+    return () => document.removeEventListener('mousedown', handleClickOutside, true);
   }, []);
 
   const cargarDatos = async () => {
@@ -142,11 +142,11 @@ export function EntregaInsumos() {
     setFormData({
       insumoId: 0,
       productoCatalogoId: 0,
-      cantidad: 1,
       productorId: 0,
       fecha: new Date().toISOString().split('T')[0],
       hora: new Date().toTimeString().slice(0, 5),
     });
+    setCantidadEntrega('1');
     setBusquedaInsumo('');
     setBusquedaProductor('');
     setMostrarListaInsumos(false);
@@ -231,8 +231,9 @@ export function EntregaInsumos() {
       return;
     }
 
-    if (formData.cantidad < 1) {
-      toast.error('La cantidad debe ser mayor a 0');
+    const cq = parseInt(cantidadEntrega, 10);
+    if (!Number.isFinite(cq) || cq < 1) {
+      toast.error('La cantidad debe ser un entero mayor a 0');
       return;
     }
 
@@ -252,7 +253,7 @@ export function EntregaInsumos() {
           ? { productoCatalogoId: formData.productoCatalogoId }
           : { insumoId: formData.insumoId }),
         unidad: insSel.unidad,
-        cantidad: formData.cantidad,
+        cantidad: cq,
         operarioId: formData.productorId,
         fecha: formData.fecha,
         hora: formData.hora,
@@ -390,7 +391,7 @@ export function EntregaInsumos() {
                 <div className="absolute z-10 w-full mt-1 bg-white border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
                   {insumosFiltradosForm.length > 0 ? (
                     <>
-                      <div className="sticky top-0 bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
+                      <div className="bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
                         {busquedaInsumo.trim() === ''
                           ? `Todos los insumos (${insumosFiltradosForm.length})`
                           : `${insumosFiltradosForm.length} insumo(s) encontrado(s)`}
@@ -430,15 +431,23 @@ export function EntregaInsumos() {
               )}
             </div>
 
-            <FormField
-              label="Cantidad"
-              name="cantidad"
-              type="number"
-              value={formData.cantidad}
-              onChange={(value) => setFormData({ ...formData, cantidad: value as number })}
-              placeholder="Unidades"
-              required
-            />
+            <div className="space-y-2">
+              <label htmlFor="entrega-cantidad" className="block text-sm font-medium">
+                Cantidad <span className="text-destructive">*</span>
+              </label>
+              <input
+                id="entrega-cantidad"
+                name="cantidad"
+                type="number"
+                min={1}
+                step={1}
+                value={cantidadEntrega}
+                onChange={(e) => setCantidadEntrega(e.target.value)}
+                placeholder="Unidades"
+                className="w-full px-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 transition-all focus:ring-primary"
+                required
+              />
+            </div>
 
             {/* Productor: mismo diseno que el select "Producto *" de Nueva
                 Compra (buscador con dropdown de tarjetas). */}
@@ -469,7 +478,7 @@ export function EntregaInsumos() {
                 <div className="absolute z-10 w-full mt-1 bg-white border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
                   {productoresFiltradosForm.length > 0 ? (
                     <>
-                      <div className="sticky top-0 bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
+                      <div className="bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
                         {busquedaProductor.trim() === ''
                           ? `Todos los productores (${productoresFiltradosForm.length})`
                           : `${productoresFiltradosForm.length} productor(es) encontrado(s)`}
@@ -532,7 +541,8 @@ export function EntregaInsumos() {
 
           <div className="p-4 bg-accent/50 rounded-lg">
             <p className="text-sm text-muted-foreground">
-              Al registrar esta entrega, se agregará automáticamente al inventario de insumos.
+              Al registrar esta entrega, la cantidad indicada se descuenta del stock en inventario de insumos
+              (productos tipo insumo) y queda asignada al productor seleccionado.
             </p>
           </div>
 

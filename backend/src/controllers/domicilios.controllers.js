@@ -15,6 +15,17 @@ const {
   assertOwnPedidoId,
 } = require('../utils/selfServiceAccess');
 
+const isRepartidorUser = (req) => String(req.user?.rol || '').trim().toLowerCase() === 'repartidor';
+
+/** Repartidor solo accede a domicilios donde es repartidor_id asignado. */
+const repartidorDomicilioForbidden = (req, domicilio) => {
+  if (!isRepartidorUser(req)) return null;
+  if (!domicilio || Number(domicilio.repartidor_id) !== Number(req.user.id)) {
+    return { code: 403, payload: { success: false, message: 'No autorizado' } };
+  }
+  return null;
+};
+
 const normalizeEstado = (value) => String(value || '').trim().toLowerCase();
 
 const buildVentaNumber = () => `VEN-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
@@ -166,7 +177,8 @@ module.exports = {
       if (isClienteUser(req)) {
         return res.status(403).json({ success: false, message: 'No autorizado' });
       }
-      const domicilios = await models.Domicilios.getAll();
+      const rid = isRepartidorUser(req) ? req.user.id : null;
+      const domicilios = await models.Domicilios.getAll(rid ? { repartidorUserId: rid } : {});
       return res.json({ success: true, data: domicilios });
     } catch (error) {
       return res.status(500).json({ success: false, message: error.message });
@@ -190,6 +202,8 @@ module.exports = {
 
       const domicilio = await models.Domicilios.getById(req.params.id);
       if (!domicilio) return res.status(404).json({ success: false, message: 'Domicilio no encontrado' });
+      const deniedRep = repartidorDomicilioForbidden(req, domicilio);
+      if (deniedRep) return res.status(deniedRep.code).json(deniedRep.payload);
       return res.json({ success: true, data: domicilio });
     } catch (error) {
       return res.status(500).json({ success: false, message: error.message });
@@ -209,7 +223,7 @@ module.exports = {
   },
   create: async (req, res) => {
     try {
-      if (isClienteUser(req)) {
+      if (isClienteUser(req) || isRepartidorUser(req)) {
         return res.status(403).json({ success: false, message: 'No autorizado' });
       }
       const b = req.body || {};
@@ -347,6 +361,9 @@ module.exports = {
       if (isClienteUser(req)) {
         return res.status(403).json({ success: false, message: 'No autorizado' });
       }
+      const dom = await models.Domicilios.getById(req.params.id);
+      const deniedRep = repartidorDomicilioForbidden(req, dom);
+      if (deniedRep) return res.status(deniedRep.code).json(deniedRep.payload);
       await models.Domicilios.update(req.params.id, req.body);
       await ensureVentaForDeliveredDomicilio(req.params.id);
       return res.json({ success: true, message: 'Domicilio actualizado exitosamente' });
@@ -359,6 +376,10 @@ module.exports = {
       if (isClienteUser(req)) {
         return res.status(403).json({ success: false, message: 'No autorizado' });
       }
+
+      const dom = await models.Domicilios.getById(req.params.id);
+      const deniedRep = repartidorDomicilioForbidden(req, dom);
+      if (deniedRep) return res.status(deniedRep.code).json(deniedRep.payload);
 
       const estado = typeof req.body?.estado === 'string' ? req.body.estado.trim() : '';
       const motivo = typeof req.body?.motivo_cancelacion === 'string' ? req.body.motivo_cancelacion.trim() : '';
@@ -391,6 +412,9 @@ module.exports = {
       if (isClienteUser(req)) {
         return res.status(403).json({ success: false, message: 'No autorizado' });
       }
+      const dom = await models.Domicilios.getById(req.params.id);
+      const deniedRep = repartidorDomicilioForbidden(req, dom);
+      if (deniedRep) return res.status(deniedRep.code).json(deniedRep.payload);
       await models.Domicilios.delete(req.params.id);
       return res.json({ success: true, message: 'Domicilio eliminado exitosamente' });
     } catch (error) {

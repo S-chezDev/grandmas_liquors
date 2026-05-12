@@ -74,7 +74,7 @@ export function Insumos() {
     },
     {
       key: 'operarioNombre',
-      label: 'Último operario',
+      label: 'Último productor',
       render: (v: string | undefined) => v || '—',
     },
     {
@@ -136,7 +136,7 @@ export function Insumos() {
               onChange={(e) => setFiltroOperario(e.target.value)}
               className="px-3 py-2.5 border border-border rounded-lg bg-white text-gray-500 focus:outline-none focus:ring-2 focus:ring-primary min-w-[200px]"
             >
-              <option value="">Filtrar por operario</option>
+              <option value="">Filtrar por productor</option>
               {operariosUnicos.map((o) => (
                 <option key={o} value={o}>
                   {o}
@@ -161,7 +161,7 @@ export function Insumos() {
       <div className="p-4 bg-accent/50 rounded-lg">
         <p className="text-sm text-muted-foreground">
           Solo se listan <strong>productos tipo insumo</strong> activos. El stock aumenta al marcar como recibidas las
-          compras a proveedor. Para entregas a productores use el módulo <strong>Entrega de insumos</strong>.
+          compras a proveedor y disminuye al registrar <strong>entregas a productores</strong>.
         </p>
       </div>
 
@@ -225,7 +225,7 @@ export function Insumos() {
                 </p>
               </div>
               <div>
-                <label className="text-muted-foreground">Último operario</label>
+                <label className="text-muted-foreground">Último productor</label>
                 <p className="mt-1">{selectedInsumo.operarioNombre || '—'}</p>
               </div>
               <div>

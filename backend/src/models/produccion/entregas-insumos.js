@@ -141,6 +141,18 @@ const EntregasInsumos = {
 
       if (target.kind === 'producto') {
         await assertProductoInsumoActivo(client, target.id);
+        const st = await client.query(
+          `SELECT stock FROM productos WHERE id = $1 FOR UPDATE`,
+          [target.id]
+        );
+        const have = Number(st.rows[0]?.stock ?? 0);
+        if (have < delta) {
+          const err = new Error(
+            `Stock insuficiente en almacén para esta entrega (disponible ${have}, solicitado ${delta})`
+          );
+          err.statusCode = 409;
+          throw err;
+        }
         const result = await client.query(
           `INSERT INTO entregas_insumos (numero_entrega, insumo_id, producto_catalogo_id, cantidad, unidad, operario_id, fecha, hora)
            VALUES ($1, NULL, $2, $3, $4, $5, $6, $7) RETURNING id`,
@@ -155,13 +167,13 @@ const EntregasInsumos = {
           ]
         );
         const up = await client.query(
-          `UPDATE productos SET stock = COALESCE(stock, 0) + $1, updated_at = CURRENT_TIMESTAMP
-           WHERE id = $2 RETURNING id`,
+          `UPDATE productos SET stock = COALESCE(stock, 0) - $1, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $2 AND COALESCE(stock, 0) >= $1 RETURNING id`,
           [delta, target.id]
         );
         if (up.rowCount === 0) {
-          const err = new Error('No se pudo actualizar el stock del producto insumo');
-          err.statusCode = 500;
+          const err = new Error('Stock insuficiente para registrar la entrega');
+          err.statusCode = 409;
           throw err;
         }
         await client.query('COMMIT');
@@ -169,12 +181,21 @@ const EntregasInsumos = {
       }
 
       const insumoId = target.id;
+      const sti = await client.query(`SELECT cantidad FROM insumos WHERE id = $1 FOR UPDATE`, [insumoId]);
+      const haveI = Number(sti.rows[0]?.cantidad ?? 0);
+      if (haveI < Number(cantidad)) {
+        const err = new Error(
+          `Stock insuficiente en almacén para esta entrega (disponible ${haveI}, solicitado ${cantidad})`
+        );
+        err.statusCode = 409;
+        throw err;
+      }
       const result = await client.query(
         'INSERT INTO entregas_insumos (numero_entrega, insumo_id, producto_catalogo_id, cantidad, unidad, operario_id, fecha, hora) VALUES ($1, $2, NULL, $3, $4, $5, $6, $7) RETURNING id',
         [data.numero_entrega, insumoId, cantidad, unidad, data.operario_id, data.fecha, data.hora || null]
       );
       await client.query(
-        'UPDATE insumos SET cantidad = COALESCE(cantidad, 0) + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+        'UPDATE insumos SET cantidad = COALESCE(cantidad, 0) - $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND COALESCE(cantidad, 0) >= $1',
         [cantidad, insumoId]
       );
       await client.query('COMMIT');
@@ -236,12 +257,12 @@ const EntregasInsumos = {
 
       if (targetsEqual(oldTarget, newTarget)) {
         if (oldTarget.kind === 'producto') {
-          const d = deltaNew - deltaOld;
-          if (d !== 0) {
+          const adj = deltaOld - deltaNew;
+          if (adj !== 0) {
             const up = await client.query(
               `UPDATE productos SET stock = COALESCE(stock, 0) + $1, updated_at = CURRENT_TIMESTAMP
                WHERE id = $2 AND COALESCE(stock, 0) + $1 >= 0 RETURNING id`,
-              [d, oldTarget.id]
+              [adj, oldTarget.id]
             );
             if (up.rowCount === 0) {
               const err = new Error(
@@ -252,7 +273,7 @@ const EntregasInsumos = {
             }
           }
         } else {
-          const d = Number(cantidad) - Number(current.cantidad);
+          const d = Number(current.cantidad) - Number(cantidad);
           if (d !== 0) {
             const up = await client.query(
               `UPDATE insumos SET cantidad = COALESCE(cantidad, 0) + $1, updated_at = CURRENT_TIMESTAMP
@@ -271,28 +292,24 @@ const EntregasInsumos = {
       } else {
         if (oldTarget.kind === 'producto') {
           const rev = await client.query(
-            `UPDATE productos SET stock = COALESCE(stock, 0) - $1, updated_at = CURRENT_TIMESTAMP
-             WHERE id = $2 AND COALESCE(stock, 0) >= $1 RETURNING id`,
+            `UPDATE productos SET stock = COALESCE(stock, 0) + $1, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $2 RETURNING id`,
             [deltaOld, oldTarget.id]
           );
           if (rev.rowCount === 0) {
-            const err = new Error(
-              'No se puede actualizar la entrega: el inventario del insumo original quedaría negativo'
-            );
-            err.statusCode = 409;
+            const err = new Error('No se puede actualizar la entrega: producto insumo no encontrado');
+            err.statusCode = 404;
             throw err;
           }
         } else {
           const rev = await client.query(
-            `UPDATE insumos SET cantidad = COALESCE(cantidad, 0) - $1, updated_at = CURRENT_TIMESTAMP
-             WHERE id = $2 AND COALESCE(cantidad, 0) >= $1 RETURNING id`,
-            [deltaOld, oldTarget.id]
+            `UPDATE insumos SET cantidad = COALESCE(cantidad, 0) + $1, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $2 RETURNING id`,
+            [Number(current.cantidad), oldTarget.id]
           );
           if (rev.rowCount === 0) {
-            const err = new Error(
-              'No se puede actualizar la entrega: el inventario del insumo original quedaría negativo'
-            );
-            err.statusCode = 409;
+            const err = new Error('No se puede actualizar la entrega: insumo original no encontrado');
+            err.statusCode = 404;
             throw err;
           }
         }
@@ -300,22 +317,24 @@ const EntregasInsumos = {
         if (newTarget.kind === 'producto') {
           await assertProductoInsumoActivo(client, newTarget.id);
           const add = await client.query(
-            `UPDATE productos SET stock = COALESCE(stock, 0) + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING id`,
+            `UPDATE productos SET stock = COALESCE(stock, 0) - $1, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $2 AND COALESCE(stock, 0) >= $1 RETURNING id`,
             [deltaNew, newTarget.id]
           );
           if (add.rowCount === 0) {
-            const err = new Error('Insumo destino no encontrado');
-            err.statusCode = 404;
+            const err = new Error('Stock insuficiente para el insumo destino');
+            err.statusCode = 409;
             throw err;
           }
         } else {
           const add = await client.query(
-            `UPDATE insumos SET cantidad = COALESCE(cantidad, 0) + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING id`,
-            [cantidad, newTarget.id]
+            `UPDATE insumos SET cantidad = COALESCE(cantidad, 0) - $1, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $2 AND COALESCE(cantidad, 0) >= $1 RETURNING id`,
+            [Number(cantidad), newTarget.id]
           );
           if (add.rowCount === 0) {
-            const err = new Error('Insumo destino no encontrado');
-            err.statusCode = 404;
+            const err = new Error('Stock insuficiente para el insumo destino');
+            err.statusCode = 409;
             throw err;
           }
         }
@@ -364,30 +383,26 @@ const EntregasInsumos = {
 
       if (target.kind === 'producto') {
         const sub = await client.query(
-          `UPDATE productos SET stock = COALESCE(stock, 0) - $1, updated_at = CURRENT_TIMESTAMP
-           WHERE id = $2 AND COALESCE(stock, 0) >= $1 RETURNING id`,
+          `UPDATE productos SET stock = COALESCE(stock, 0) + $1, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $2 RETURNING id`,
           [qty, target.id]
         );
         if (sub.rowCount === 0) {
           await client.query('ROLLBACK');
-          const err = new Error(
-            'No se puede eliminar la entrega: el inventario del insumo quedaría negativo'
-          );
-          err.statusCode = 409;
+          const err = new Error('No se puede eliminar la entrega: producto insumo no encontrado');
+          err.statusCode = 404;
           throw err;
         }
       } else {
         const sub = await client.query(
-          `UPDATE insumos SET cantidad = COALESCE(cantidad, 0) - $1, updated_at = CURRENT_TIMESTAMP
-           WHERE id = $2 AND COALESCE(cantidad, 0) >= $1 RETURNING id`,
+          `UPDATE insumos SET cantidad = COALESCE(cantidad, 0) + $1, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $2 RETURNING id`,
           [Number(e.cantidad), e.insumo_id]
         );
         if (sub.rowCount === 0) {
           await client.query('ROLLBACK');
-          const err = new Error(
-            'No se puede eliminar la entrega: el inventario del insumo quedaría negativo'
-          );
-          err.statusCode = 409;
+          const err = new Error('No se puede eliminar la entrega: insumo no encontrado');
+          err.statusCode = 404;
           throw err;
         }
       }

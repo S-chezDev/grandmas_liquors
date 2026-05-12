@@ -11,6 +11,7 @@ const {
   checkInactivacionDependencias,
   ensureProductoTipoColumn,
   ensureProductoInsumoMedidaColumns,
+  ensureEntregasInsumoProductoCatalogo,
 } = require('../shared/auditoria');
 
 /** Evita solaparse con ids reales de la tabla insumos al exponer filas de inventario desde productos tipo insumo. */
@@ -189,6 +190,7 @@ const Insumos = {
   getResumenGestion: async () => {
     await ensureProductoTipoColumn();
     await ensureProductoInsumoMedidaColumns();
+    await ensureEntregasInsumoProductoCatalogo();
     const result = await pool.query(
       `
         SELECT ($1 + p.id) AS id,
@@ -196,7 +198,14 @@ const Insumos = {
                p.stock::numeric AS cantidad,
                'Unidades'::varchar AS unidad,
                p.stock_minimo::numeric AS stock_minimo,
-               NULL::text AS operario,
+               (
+                 SELECT NULLIF(TRIM(CONCAT(COALESCE(u.nombre, ''), ' ', COALESCE(u.apellido, ''))), '')
+                 FROM entregas_insumos ei
+                 LEFT JOIN usuarios u ON u.id = ei.operario_id
+                 WHERE ei.producto_catalogo_id = p.id
+                 ORDER BY ei.fecha DESC, ei.hora DESC NULLS LAST, ei.id DESC
+                 LIMIT 1
+               ) AS operario,
                COALESCE(rc.fecha_ultima::date, p.updated_at::date, p.created_at::date) AS fecha,
                p.id AS producto_catalogo_id,
                c.nombre AS categoria_nombre,

@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DataTable, Column, commonActions, openPrintablePdf } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions, FieldError } from '../../Form';
@@ -74,15 +74,19 @@ export function Ventas() {
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
-      if (!target.closest('.relative')) {
+      if (!target.closest('.venta-cliente-picker')) {
         setMostrarListaClientes(false);
+      }
+      if (!target.closest('.venta-pedido-picker')) {
         setMostrarListaPedidos(false);
+      }
+      if (!target.closest('.venta-producto-picker')) {
         setMostrarListaProductos(false);
       }
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('mousedown', handleClickOutside, true);
+    return () => document.removeEventListener('mousedown', handleClickOutside, true);
   }, []);
 
   const cargarDatos = async () => {
@@ -95,7 +99,7 @@ export function Ventas() {
       ]);
 
       setClientes(clientesData.filter(c => c.estado === 'activo'));
-      setProductos(productosData.filter(p => p.estado === 'activo'));
+      setProductos(productosData.filter((p) => p.estado === 'activo' && p.typo !== 'insumo'));
       // Solo exponer pedidos completados que ademas no tengan ya una venta no-cancelada.
       // Asi, una vez el pedido se asigna a una "venta por pedido", deja de aparecer
       // en el listado del campo "Pedido *" del formulario de nueva venta.
@@ -321,7 +325,7 @@ export function Ventas() {
     setMostrarListaProductos(false);
     try {
       const productosData = await api.productos.getAll();
-      setProductos(productosData.filter((p) => p.estado === 'activo'));
+      setProductos(productosData.filter((p) => p.estado === 'activo' && p.typo !== 'insumo'));
     } catch {
       /* si falla el refetch, se siguen usando los productos ya cargados */
     }
@@ -709,7 +713,7 @@ export function Ventas() {
             {/* Campo Cliente: solo visible para venta directa.
                 En venta por pedido el cliente se infiere del pedido seleccionado. */}
             {formData.tipo === 'directa' && (
-              <div className="relative">
+              <div className="relative venta-cliente-picker">
                 <label className="block text-sm font-medium mb-2">Cliente *</label>
                 <input
                   type="text"
@@ -745,7 +749,7 @@ export function Ventas() {
             )}
 
             {formData.tipo === 'por pedido' && (
-              <div className="col-span-2 relative">
+              <div className="col-span-2 relative venta-pedido-picker">
                 <label className="block text-sm font-medium mb-2">Pedido *</label>
                 <input
                   type="text"
@@ -819,7 +823,7 @@ export function Ventas() {
           {formData.tipo === 'directa' && (
             <div className="space-y-4">
               {/* Buscador de productos */}
-              <div className="relative">
+              <div className="relative venta-producto-picker">
                 <label className="block text-sm font-medium mb-2 flex items-center gap-2">
                   <ShoppingCart className="w-4 h-4" />
                   Agregar Productos *
@@ -843,7 +847,7 @@ export function Ventas() {
                     {productosFiltrados.length > 0 ? (
                       <>
                         {/* Encabezado con contador */}
-                        <div className="sticky top-0 bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
+                        <div className="bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
                           {busquedaProducto.trim() === ''
                             ? `Todos los productos (${productosFiltrados.length})`
                             : `${productosFiltrados.length} producto(s) encontrado(s)`
