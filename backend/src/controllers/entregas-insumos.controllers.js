@@ -41,7 +41,7 @@ module.exports = {
   delete: async (req, res) => {
     try {
       await models.EntregasInsumos.delete(req.params.id);
-      res.json({ success: true, message: 'Entrega anulada correctamente (el registro se conserva)' });
+      res.json({ success: true, message: 'Entrega eliminada correctamente' });
     } catch (error) {
       res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }

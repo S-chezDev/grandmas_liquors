@@ -108,9 +108,6 @@ async function runMigrations() {
     console.log('-> Aplicando alteraciones de sincronizacion (idempotentes)...');
     try {
       await client.query(
-        `ALTER TABLE entregas_insumos ADD COLUMN IF NOT EXISTS anulada BOOLEAN NOT NULL DEFAULT false`
-      );
-      await client.query(
         `ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS monto_abonado DECIMAL(18,2) DEFAULT 0`
       );
       try {

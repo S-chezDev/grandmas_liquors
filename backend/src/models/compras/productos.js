@@ -32,7 +32,7 @@ const parseInsumoMedidasForProduct = (tipoProducto, data) => {
   const qRaw = Number(data?.insumo_cantidad_medida ?? data?.insumoCantidadMedida);
   if (!Number.isFinite(qRaw) || qRaw < 1 || !Number.isInteger(qRaw)) {
     const error = new Error(
-      'Volumen / unidad (insumo): entero N >= 1 = cuantas veces rinde una porcion de la unidad de presentacion (Unidades o Mililitros) por cada 1 unidad de stock del producto en produccion'
+      'El volumen / unidad debe ser un entero mayor o igual a 1: se usa en producción (recetas) para escalar el consumo; las entregas al productor descuentan el stock en la misma unidad que la cantidad entregada.'
     );
     error.statusCode = 400;
     throw error;

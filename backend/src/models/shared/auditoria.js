@@ -171,7 +171,7 @@ const ensureEntregasInsumoProductoCatalogo = async () => {
       `);
       await pool.query(`
         ALTER TABLE entregas_insumos
-          ADD COLUMN IF NOT EXISTS anulada BOOLEAN NOT NULL DEFAULT false
+          ADD COLUMN IF NOT EXISTS anulada BOOLEAN NOT NULL DEFAULT FALSE
       `);
     })();
   }

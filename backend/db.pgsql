@@ -103,10 +103,8 @@ CREATE TABLE productos (
     estado VARCHAR(20) DEFAULT 'Activo',
     tipo_producto VARCHAR(30) NOT NULL DEFAULT 'terminado'
         CHECK (tipo_producto IN ('terminado','preparacion','insumo')),
-    -- Unidad de presentacion: Unidades o Mililitros (una "porcion" de uso en produccion).
-    insumo_unidad_medida VARCHAR(30),
-    -- Volumen/unidad: entero N>=1 = cuantas veces se puede usar esa porcion por cada 1 unidad de stock del producto.
-    insumo_cantidad_medida NUMERIC(12,4),
+    insumo_unidad_medida VARCHAR(30), -- presentacion: texto libre; UI catalogo insumo usa Unidades/Mililitros
+    insumo_cantidad_medida NUMERIC(12,4), -- volumen/unidad: factor de receta en produccion (no afecta el descuento de stock al entregar al productor)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -313,7 +311,7 @@ CREATE TABLE insumos (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- TABLA: producto_insumos
+-- TABLA: producto_insumos (receta: insumo legacy por id; la produccion descuenta entregas al productor segun suma cantidad_requerida * cantidad preparacion del pedido)
 CREATE TABLE producto_insumos (
     id SERIAL PRIMARY KEY,
     producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
@@ -338,7 +336,7 @@ CREATE TABLE entregas_insumos (
     hora TIME,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    anulada BOOLEAN NOT NULL DEFAULT false,
+    anulada BOOLEAN NOT NULL DEFAULT FALSE,
     CONSTRAINT entregas_insumos_catalogo_xor_chk CHECK (
         (insumo_id IS NOT NULL AND producto_catalogo_id IS NULL)
         OR (insumo_id IS NULL AND producto_catalogo_id IS NOT NULL)

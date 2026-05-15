@@ -51,16 +51,6 @@ export function Insumos() {
       render: (v: string) => <span className="font-medium text-foreground">{v}</span>,
     },
     {
-      key: 'presentacionUnidad',
-      label: 'Unidad presentación',
-      render: (_: unknown, row: InsumoView) => {
-        const u = row.presentacionUnidad?.trim();
-        const q = row.presentacionCantidad;
-        if (u && q != null && Number.isFinite(Number(q))) return `${q} ${u}`;
-        return u || '—';
-      },
-    },
-    {
       key: 'cantidad',
       label: 'Stock',
       render: (_: number, row: InsumoView) => (
@@ -210,16 +200,6 @@ export function Insumos() {
             </div>
 
             <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <label className="text-muted-foreground">Presentación</label>
-                <p className="mt-1 font-medium">
-                  {selectedInsumo.presentacionCantidad != null &&
-                  selectedInsumo.presentacionUnidad != null &&
-                  String(selectedInsumo.presentacionUnidad).trim() !== ''
-                    ? `${selectedInsumo.presentacionCantidad} ${selectedInsumo.presentacionUnidad}`
-                    : '—'}
-                </p>
-              </div>
               <div>
                 <label className="text-muted-foreground">Stock mínimo</label>
                 <p className="mt-1 font-medium">{selectedInsumo.stockMinimo ?? '—'}</p>

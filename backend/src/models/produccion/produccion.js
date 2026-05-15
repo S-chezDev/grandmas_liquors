@@ -6,12 +6,70 @@
  * lo importa. La fuente activa es este archivo modular.
  */
 const pool = require('../../../db');
+const InsumosModel = require('./insumos');
 const {
   ensureMotivoEstado,
   ensureProductoTipoColumn,
   ensureProductoInsumosTable,
   ensureEntregasInsumoProductoCatalogo,
 } = require('../shared/auditoria');
+
+const INSUMO_ID_VIRTUAL_BASE = Number(InsumosModel.INSUMO_VISTA_DESDE_PRODUCTO_ID_BASE) || 900000000;
+
+/** Clave unificada receta / entrega: catálogo `c:{producto_id}` o legacy `l:{insumo_id}`. */
+const entregaRecetaKey = (row) => {
+  if (row.producto_catalogo_id != null && row.producto_catalogo_id !== '') {
+    const p = Number(row.producto_catalogo_id);
+    if (Number.isFinite(p) && p > 0) return `c:${p}`;
+  }
+  const ins = row.insumo_id != null && row.insumo_id !== '' ? Number(row.insumo_id) : NaN;
+  if (Number.isFinite(ins) && ins > 0) return `l:${ins}`;
+  return null;
+};
+
+/**
+ * Necesidad total por insumo según recetas (producto_insumos) y cantidades de preparación del pedido.
+ * Unifica catálogo (id virtual BASE + producto) y legacy; si hay producto catálogo con el mismo nombre que el insumo legacy, agrupa en `c:`.
+ */
+const buildPedidoInsumoNeedMap = async (client, detallePreparacion) => {
+  const need = new Map();
+  for (const line of detallePreparacion) {
+    const pid = Number(line.producto_id);
+    const prepQty = Number(line.cantidad);
+    if (!Number.isFinite(pid) || pid <= 0 || !Number.isFinite(prepQty) || prepQty <= 0) continue;
+    const rec = await client.query(
+      `SELECT insumo_id, cantidad_requerida FROM producto_insumos WHERE producto_id = $1`,
+      [pid]
+    );
+    for (const r of rec.rows) {
+      const rawId = Number(r.insumo_id);
+      const req = Number(r.cantidad_requerida);
+      if (!Number.isFinite(rawId) || rawId <= 0 || !Number.isFinite(req) || req <= 0) continue;
+      const key =
+        rawId >= INSUMO_ID_VIRTUAL_BASE ? `c:${rawId - INSUMO_ID_VIRTUAL_BASE}` : `l:${rawId}`;
+      const add = req * prepQty;
+      need.set(key, (need.get(key) || 0) + add);
+    }
+  }
+  for (const [k, v] of [...need.entries()]) {
+    if (!k.startsWith('l:') || v <= 0) continue;
+    const lid = Number(k.slice(2));
+    const cidRow = await client.query(
+      `SELECT p.id FROM productos p
+       INNER JOIN insumos i ON LOWER(TRIM(i.nombre)) = LOWER(TRIM(p.nombre))
+       WHERE i.id = $1 AND COALESCE(p.tipo_producto, 'terminado') = 'insumo'
+       LIMIT 1`,
+      [lid]
+    );
+    if (cidRow.rows[0]?.id != null) {
+      const cid = Number(cidRow.rows[0].id);
+      const ckey = `c:${cid}`;
+      need.set(ckey, (need.get(ckey) || 0) + v);
+      need.delete(k);
+    }
+  }
+  return need;
+};
 
 let detallePreparacionColReady = null;
 const ensureProduccionDetallePreparacion = async () => {
@@ -100,6 +158,7 @@ const getInsumosEntregadosByProductor = async (productorId) => {
   const id = Number(productorId);
   if (!Number.isFinite(id) || id <= 0) return [];
 
+  await ensureEntregasInsumoProductoCatalogo();
   const result = await pool.query(
     `SELECT ei.id,
             ei.numero_entrega,
@@ -115,8 +174,8 @@ const getInsumosEntregadosByProductor = async (productorId) => {
      LEFT JOIN insumos i ON i.id = ei.insumo_id
      LEFT JOIN productos pr ON pr.id = ei.producto_catalogo_id
      WHERE ei.operario_id = $1
-       AND COALESCE(ei.anulada, false) = false
        AND COALESCE(ei.cantidad, 0) > 0
+       AND COALESCE(ei.anulada, FALSE) = FALSE
      ORDER BY ei.fecha DESC, ei.hora DESC NULLS LAST, ei.id DESC`,
     [id]
   );
@@ -292,7 +351,7 @@ const Produccion = {
            LEFT JOIN insumos i ON i.id = ei.insumo_id
            LEFT JOIN productos pr ON pr.id = ei.producto_catalogo_id
            WHERE ei.id = ANY($1::int[])
-             AND COALESCE(ei.anulada, false) = false
+             AND COALESCE(ei.anulada, FALSE) = FALSE
            FOR UPDATE OF ei`,
           [idsEntregas]
         );
@@ -301,7 +360,16 @@ const Produccion = {
           err.statusCode = 400;
           throw err;
         }
-        for (const e of entregasRes.rows) {
+        const rowsById = new Map(entregasRes.rows.map((r) => [Number(r.id), r]));
+        const needWorking = await buildPedidoInsumoNeedMap(client, detallePreparacion);
+
+        for (const entId of idsEntregas) {
+          const e = rowsById.get(entId);
+          if (!e) {
+            const err = new Error('Una o mas entregas de insumos no existen');
+            err.statusCode = 400;
+            throw err;
+          }
           if (Number(e.operario_id) !== productorIdNum) {
             const err = new Error(
               `La entrega #${e.numero_entrega || e.id} no pertenece al productor seleccionado`
@@ -309,21 +377,38 @@ const Produccion = {
             err.statusCode = 403;
             throw err;
           }
-          const disponible = Number(e.cantidad ?? 0);
-          if (!Number.isFinite(disponible) || disponible <= 0) {
+          const kEnt = entregaRecetaKey(e);
+          if (!kEnt) {
             const err = new Error(
-              `La entrega #${e.numero_entrega || e.id} no tiene saldo disponible en inventario del productor`
+              `La entrega #${e.numero_entrega || e.id} no tiene un insumo de catálogo o legacy asociado`
+            );
+            err.statusCode = 400;
+            throw err;
+          }
+          const pendiente = needWorking.get(kEnt) || 0;
+          const disponible = Number(e.cantidad ?? 0);
+          if (pendiente > 0 && (!Number.isFinite(disponible) || disponible <= 0)) {
+            const err = new Error(
+              `La entrega #${e.numero_entrega || e.id} no tiene saldo suficiente para cubrir la receta (falta asignar ${pendiente} unidades de receta para ${kEnt})`
             );
             err.statusCode = 409;
             throw err;
           }
+          if (pendiente <= 0 || !Number.isFinite(disponible) || disponible <= 0) {
+            continue;
+          }
+
+          const take = Math.min(disponible, pendiente);
+          if (take <= 0) continue;
+
           await client.query(
             `UPDATE entregas_insumos
              SET cantidad = GREATEST(0, COALESCE(cantidad, 0) - $1),
                  updated_at = CURRENT_TIMESTAMP
              WHERE id = $2`,
-            [disponible, e.id]
+            [take, e.id]
           );
+          needWorking.set(kEnt, pendiente - take);
           insumosEntregadosUsados.push({
             entrega_id: Number(e.id),
             insumo_id: Number(
@@ -334,11 +419,23 @@ const Produccion = {
                   : 0
             ),
             insumo_nombre: e.insumo_nombre,
-            cantidad: disponible,
-            cantidad_descontada: disponible,
+            cantidad: take,
+            cantidad_descontada: take,
             unidad: e.unidad,
             numero_entrega: e.numero_entrega,
           });
+        }
+
+        const EPS = 1e-6;
+        const faltas = [...needWorking.entries()].filter(([, v]) => v > EPS);
+        if (faltas.length > 0) {
+          const err = new Error(
+            `Las entregas al productor no cubren la receta del pedido. Pendiente (cantidad × receta): ${faltas
+              .map(([k, v]) => `${k}=${Number(v.toFixed(4))}`)
+              .join(', ')}`
+          );
+          err.statusCode = 409;
+          throw err;
         }
       }
 
@@ -511,8 +608,7 @@ const Produccion = {
             `UPDATE entregas_insumos
              SET cantidad = COALESCE(cantidad, 0) + $1,
                  updated_at = CURRENT_TIMESTAMP
-             WHERE id = $2
-               AND COALESCE(anulada, false) = false`,
+             WHERE id = $2`,
             [restore, entregaId]
           );
         }
