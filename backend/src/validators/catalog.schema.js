@@ -73,6 +73,38 @@ const createInsumoBody = z
 
 const updateInsumoBody = createInsumoBody.partial().passthrough();
 
+const entregaInsumoBaseBody = z
+  .object({
+    numero_entrega: z.string().trim().min(1).optional(),
+    cantidad: z.coerce.number().positive().optional(),
+    unidad: z.enum(['Litros', 'Kilogramos', 'Gramos', 'Unidades', 'Cajas', 'Botellas', 'Mililitros']).optional(),
+    operario_id: z.coerce.number().int().positive().optional(),
+    fecha: z.string().trim().min(1).optional(),
+    hora: z.string().trim().optional(),
+    insumo_id: z.coerce.number().int().positive().optional(),
+    producto_catalogo_id: z.coerce.number().int().positive().optional(),
+  })
+  .passthrough();
+
+const createEntregaInsumoBody = z
+  .object({
+    numero_entrega: z.string().trim().min(1),
+    cantidad: z.coerce.number().positive(),
+    unidad: z.enum(['Litros', 'Kilogramos', 'Gramos', 'Unidades', 'Cajas', 'Botellas', 'Mililitros']),
+    operario_id: z.coerce.number().int().positive(),
+    fecha: z.string().trim().min(1),
+    hora: z.string().trim().optional(),
+    insumo_id: z.coerce.number().int().positive().optional(),
+    producto_catalogo_id: z.coerce.number().int().positive().optional(),
+  })
+  .refine(
+    (data) => data.insumo_id || data.producto_catalogo_id,
+    { message: 'Debe especificar insumo_id o producto_catalogo_id' }
+  )
+  .passthrough();
+
+const updateEntregaInsumoBody = entregaInsumoBaseBody;
+
 module.exports = {
   createCategoriaBody,
   updateCategoriaBody,
@@ -90,4 +122,6 @@ module.exports = {
   createInsumoBody,
   updateInsumoBody,
   updateInsumoEstadoBody: motivoEstadoBody,
+  createEntregaInsumoBody,
+  updateEntregaInsumoBody,
 };
