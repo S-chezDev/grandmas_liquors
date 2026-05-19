@@ -71,8 +71,10 @@ export function Produccion() {
     const existente = insumosSeleccionados.find(i => i.clave === insumo.clave);
     if (existente) {
       if (cantidad <= 0) {
+        // Eliminar si cantidad es 0 o menor
         setInsumosSeleccionados(insumosSeleccionados.filter(i => i.clave !== insumo.clave));
       } else {
+        // Actualizar cantidad
         setInsumosSeleccionados(
           insumosSeleccionados.map(i =>
             i.clave === insumo.clave ? { ...i, cantidad } : i
@@ -80,6 +82,7 @@ export function Produccion() {
         );
       }
     } else if (cantidad > 0) {
+      // Agregar nuevo
       setInsumosSeleccionados([
         ...insumosSeleccionados,
         {
@@ -89,6 +92,27 @@ export function Produccion() {
           unidad: insumo.unidad || ''
         }
       ]);
+    } else if (cantidad === 0) {
+      // Agregar con cantidad 0 para que aparezca el input
+      setInsumosSeleccionados([
+        ...insumosSeleccionados,
+        {
+          clave: insumo.clave,
+          insumo_nombre: insumo.insumo_nombre || 'Insumo',
+          cantidad: 0,
+          unidad: insumo.unidad || ''
+        }
+      ]);
+    }
+  };
+
+  const handleToggleCheckbox = (insumo: any, isChecked: boolean) => {
+    if (isChecked) {
+      // Marcar: agregar con cantidad 0
+      toggleInsumoSeleccionado(insumo, 0);
+    } else {
+      // Desmarcar: eliminar
+      setInsumosSeleccionados(insumosSeleccionados.filter(i => i.clave !== insumo.clave));
     }
   };
 
@@ -822,61 +846,83 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                   Este productor no tiene insumos con saldo. Registre una entrega de insumos antes de producir.
                 </p>
               ) : (
-                <div className="max-h-80 overflow-y-auto border border-border rounded-md p-3 bg-white space-y-2 text-sm">
+                <div className="max-h-80 overflow-y-auto border border-border rounded-md p-3 bg-white space-y-3 text-sm">
                   {insumosResumenProductor.map((row) => {
                     const seleccionado = insumosSeleccionados.find(i => i.clave === row.clave);
                     const cantidad = seleccionado?.cantidad || 0;
+                    const disponible = row.disponible || 0;
+                    const quedaría = Math.max(0, disponible - cantidad);
                     return (
                       <div
                         key={row.clave}
-                        className="flex items-center gap-3 py-2 px-2 border-b border-border/50 last:border-0 rounded hover:bg-muted/30"
+                        className="border border-border/40 rounded-lg p-3 space-y-2 hover:bg-muted/20 transition"
                       >
-                        <input
-                          type="checkbox"
-                          checked={!!seleccionado}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              toggleInsumoSeleccionado(row, 1);
-                            } else {
-                              toggleInsumoSeleccionado(row, 0);
-                            }
-                          }}
-                          className="w-4 h-4 accent-primary"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <span className="font-medium block">{row.insumo_nombre || 'Insumo'}</span>
-                          <span className="text-xs text-muted-foreground">
-                            Disponible: {row.disponible} {row.unidad}
-                          </span>
-                        </div>
-                        {seleccionado && (
+                        <div className="flex items-start gap-3">
                           <input
-                            type="number"
-                            min="0"
-                            max={row.disponible || 0}
-                            value={cantidad}
-                            onChange={(e) => {
-                              const newVal = Math.max(0, Math.min(Number(e.target.value) || 0, row.disponible || 0));
-                              toggleInsumoSeleccionado(row, newVal);
-                            }}
-                            placeholder="Cantidad"
-                            className="w-20 px-2 py-1 border border-border rounded text-xs text-center"
+                            type="checkbox"
+                            checked={!!seleccionado}
+                            onChange={(e) => handleToggleCheckbox(row, e.target.checked)}
+                            className="w-4 h-4 accent-primary mt-1 flex-shrink-0"
                           />
-                        )}
+                          <div className="flex-1 min-w-0">
+                            <span className="font-semibold block text-foreground">{row.insumo_nombre || 'Insumo'}</span>
+                            <div className="grid grid-cols-3 gap-2 mt-2 text-xs">
+                              <div className="bg-muted/30 p-2 rounded">
+                                <div className="text-muted-foreground">Disponible</div>
+                                <div className="font-mono font-semibold text-foreground">{disponible} {row.unidad}</div>
+                              </div>
+                              {seleccionado && (
+                                <>
+                                  <div className="bg-blue-50 dark:bg-blue-950 p-2 rounded border border-blue-200 dark:border-blue-800">
+                                    <div className="text-muted-foreground">A Consumir</div>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      min="0"
+                                      max={disponible}
+                                      value={cantidad}
+                                      onChange={(e) => {
+                                        const newVal = Number(e.target.value);
+                                        if (isNaN(newVal)) {
+                                          toggleInsumoSeleccionado(row, 0);
+                                        } else {
+                                          const clamped = Math.max(0, Math.min(newVal, disponible));
+                                          toggleInsumoSeleccionado(row, clamped);
+                                        }
+                                      }}
+                                      placeholder="0"
+                                      className="font-mono font-semibold w-full bg-transparent text-foreground outline-none"
+                                    />
+                                  </div>
+                                  <div className="bg-green-50 dark:bg-green-950 p-2 rounded border border-green-200 dark:border-green-800">
+                                    <div className="text-muted-foreground">Quedaría</div>
+                                    <div className="font-mono font-semibold text-foreground">{quedaría.toFixed(2)} {row.unidad}</div>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     );
                   })}
                 </div>
               )}
               {insumosSeleccionados.length > 0 && (
-                <div className="space-y-2 pt-2 border-t border-border">
-                  <p className="text-xs font-medium text-foreground">Insumos seleccionados para esta orden</p>
-                  <div className="max-h-36 overflow-y-auto border border-border rounded-md p-2 bg-muted/20 space-y-1 text-sm">
-                    {insumosSeleccionados.map((c) => (
-                      <div key={c.clave} className="flex justify-between gap-2">
-                        <span>{c.insumo_nombre}</span>
-                        <span className="tabular-nums shrink-0 font-medium">
-                          {c.cantidad} {c.unidad}
+                <div className="space-y-2 pt-3 border-t border-border">
+                  <div className="flex items-center gap-2">
+                    <ShoppingCart className="w-4 h-4" />
+                    <p className="text-sm font-semibold text-foreground">Insumos para esta orden</p>
+                  </div>
+                  <div className="max-h-48 overflow-y-auto border border-blue-200 dark:border-blue-800 rounded-md p-3 bg-blue-50/50 dark:bg-blue-950/30 space-y-2">
+                    {insumosSeleccionados.map((c, idx) => (
+                      <div key={c.clave} className="flex justify-between items-center text-sm">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex w-6 h-6 items-center justify-center rounded-full bg-primary/20 text-xs font-semibold">{idx + 1}</span>
+                          <span className="font-medium">{c.insumo_nombre}</span>
+                        </div>
+                        <span className="font-mono bg-white dark:bg-slate-900 px-3 py-1 rounded border border-border">
+                          {c.cantidad.toFixed(2)} {c.unidad}
                         </span>
                       </div>
                     ))}

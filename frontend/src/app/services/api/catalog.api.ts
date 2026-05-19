@@ -243,7 +243,7 @@ export const catalogApi = {
           productor_id: data.productorId,
           tiempo_preparacion_minutos: data.tiempoPreparacion,
           estado: 'pendiente',
-          insumos: Array.isArray(data.insumos) ? data.insumos : [],
+          consumo_insumos: Array.isArray(data.consumoInsumos) ? data.consumoInsumos : [],
         },
       });
       return { id: env.id, idOrden: env.id } as OrdenProduccion;
