@@ -16,20 +16,38 @@ const createProduccionBody = z
     pedidoId: z.coerce.number().int().positive().optional(),
     productor_id: z.coerce.number().int().positive().optional(),
     productorId: z.coerce.number().int().positive().optional(),
-    fecha: z.string().trim().min(1, 'fecha es obligatoria'),
-    tiempo_preparacion_minutos: z.coerce.number().positive('tiempo_preparacion_minutos debe ser mayor a 0'),
+    fecha: z.string().trim().min(1).optional(),
+    fechaInicio: z.string().trim().min(1).optional(),
+    tiempo_preparacion_minutos: z.coerce.number().positive().optional(),
+    tiempoPreparacion: z.coerce.number().positive().optional(),
     responsable: z.string().trim().optional(),
     estado: z.string().trim().optional(),
     notes: z.string().nullable().optional(),
-    consumo_insumos: z.array(consumoInsumoItem).min(1, 'consumo_insumos es obligatorio'),
+    consumo_insumos: z.array(consumoInsumoItem).min(1, 'consumo_insumos es obligatorio').optional(),
+    consumoInsumos: z.array(consumoInsumoItem).min(1, 'consumo_insumos es obligatorio').optional(),
   })
   .passthrough()
   .superRefine((data, ctx) => {
-    if (!(data.pedido_id ?? data.pedidoId)) {
-      ctx.addIssue({ code: 'custom', message: 'pedido_id es obligatorio', path: ['pedido_id'] });
+    const pedidoId = data.pedido_id ?? data.pedidoId;
+    const productorId = data.productor_id ?? data.productorId;
+    const fecha = data.fecha ?? data.fechaInicio;
+    const tiempoPrep = data.tiempo_preparacion_minutos ?? data.tiempoPreparacion;
+    const consumoInsumos = data.consumo_insumos ?? data.consumoInsumos;
+
+    if (!pedidoId) {
+      ctx.addIssue({ code: 'custom', message: 'pedido_id es obligatorio', path: ['pedidoId'] });
     }
-    if (!(data.productor_id ?? data.productorId)) {
-      ctx.addIssue({ code: 'custom', message: 'productor_id es obligatorio', path: ['productor_id'] });
+    if (!productorId) {
+      ctx.addIssue({ code: 'custom', message: 'productor_id es obligatorio', path: ['productorId'] });
+    }
+    if (!fecha || String(fecha).trim().length === 0) {
+      ctx.addIssue({ code: 'custom', message: 'fecha es obligatoria', path: ['fechaInicio'] });
+    }
+    if (!tiempoPrep || tiempoPrep <= 0) {
+      ctx.addIssue({ code: 'custom', message: 'tiempo_preparacion_minutos debe ser mayor a 0', path: ['tiempoPreparacion'] });
+    }
+    if (!Array.isArray(consumoInsumos) || consumoInsumos.length === 0) {
+      ctx.addIssue({ code: 'custom', message: 'consumo_insumos es obligatorio', path: ['consumoInsumos'] });
     }
   });
 

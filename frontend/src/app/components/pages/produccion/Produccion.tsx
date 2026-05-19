@@ -869,7 +869,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                             <div className="grid grid-cols-3 gap-2 mt-2 text-xs">
                               <div className="bg-muted/30 p-2 rounded">
                                 <div className="text-muted-foreground">Disponible</div>
-                                <div className="font-mono font-semibold text-foreground">{disponible} {row.unidad}</div>
+                                <div className="font-mono font-semibold text-foreground">{disponible} {row.unidad || 'unidades'}</div>
                               </div>
                               {seleccionado && (
                                 <>
@@ -880,14 +880,25 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                                       step="0.01"
                                       min="0"
                                       max={disponible}
-                                      value={cantidad}
+                                      value={cantidad === 0 ? '' : cantidad}
                                       onChange={(e) => {
-                                        const newVal = Number(e.target.value);
-                                        if (isNaN(newVal)) {
+                                        const inputVal = e.target.value;
+                                        if (inputVal === '' || inputVal === undefined) {
                                           toggleInsumoSeleccionado(row, 0);
                                         } else {
-                                          const clamped = Math.max(0, Math.min(newVal, disponible));
-                                          toggleInsumoSeleccionado(row, clamped);
+                                          const newVal = parseFloat(inputVal);
+                                          if (isNaN(newVal) || newVal < 0) {
+                                            toggleInsumoSeleccionado(row, 0);
+                                          } else {
+                                            const clamped = Math.min(newVal, disponible);
+                                            toggleInsumoSeleccionado(row, clamped);
+                                          }
+                                        }
+                                      }}
+                                      onBlur={(e) => {
+                                        const inputVal = e.target.value;
+                                        if (inputVal === '' || inputVal === undefined) {
+                                          toggleInsumoSeleccionado(row, 0);
                                         }
                                       }}
                                       placeholder="0"
@@ -896,7 +907,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                                   </div>
                                   <div className="bg-green-50 dark:bg-green-950 p-2 rounded border border-green-200 dark:border-green-800">
                                     <div className="text-muted-foreground">Quedaría</div>
-                                    <div className="font-mono font-semibold text-foreground">{quedaría.toFixed(2)} {row.unidad}</div>
+                                    <div className="font-mono font-semibold text-foreground">{quedaría.toFixed(2)} {row.unidad || 'unidades'}</div>
                                   </div>
                                 </>
                               )}
@@ -922,7 +933,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                           <span className="font-medium">{c.insumo_nombre}</span>
                         </div>
                         <span className="font-mono bg-white dark:bg-slate-900 px-3 py-1 rounded border border-border">
-                          {c.cantidad.toFixed(2)} {c.unidad}
+                          {c.cantidad.toFixed(2)} {c.unidad || 'unidades'}
                         </span>
                       </div>
                     ))}
