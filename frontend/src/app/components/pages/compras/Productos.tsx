@@ -599,7 +599,12 @@ export function Productos() {
                   typo: next,
                   stockMinimo: next === 'de preparacion' ? 0 : formData.stockMinimo,
                   insumoUnidadMedida: next === 'insumo' ? formData.insumoUnidadMedida || 'Unidades' : 'Unidades',
-                  insumoCantidadMedida: next === 'insumo' ? formData.insumoCantidadMedida || 1 : 1,
+                  insumoCantidadMedida:
+                    next === 'insumo'
+                      ? (formData.insumoUnidadMedida || 'Unidades') === 'Unidades'
+                        ? 1
+                        : formData.insumoCantidadMedida || 1
+                      : 1,
                 });
               }}
               options={[
@@ -612,23 +617,37 @@ export function Productos() {
           </div>
 
           {formData.typo === 'insumo' && (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 rounded-lg border border-amber-200 bg-amber-50/60">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <FormField
-                label="Unidad de presentación *"
+                label="Unidad de presentación"
                 name="insumoUnidadMedida"
                 type="select"
                 selectPlaceholder={false}
                 value={formData.insumoUnidadMedida}
-                onChange={(v) => setFormData({ ...formData, insumoUnidadMedida: v as string })}
+                onChange={(v) => {
+                  const unidad = v as string;
+                  setFormData({
+                    ...formData,
+                    insumoUnidadMedida: unidad,
+                    insumoCantidadMedida: unidad === 'Unidades' ? 1 : formData.insumoCantidadMedida,
+                  });
+                }}
                 options={INSUMO_UNIDADES_API.map((u) => ({ value: u, label: u }))}
                 required
               />
               <FormField
-                label="Volumen / unidad *"
+                label="Volumen / unidad"
                 name="insumoCantidadMedida"
                 type="number"
-                value={formData.insumoCantidadMedida === 0 ? '' : formData.insumoCantidadMedida}
+                value={
+                  formData.insumoUnidadMedida === 'Unidades'
+                    ? 1
+                    : formData.insumoCantidadMedida === 0
+                      ? ''
+                      : formData.insumoCantidadMedida
+                }
                 onChange={(value) => {
+                  if (formData.insumoUnidadMedida === 'Unidades') return;
                   const raw = String(value ?? '').trim();
                   if (raw === '') {
                     setFormData({ ...formData, insumoCantidadMedida: 0 });
@@ -641,10 +660,11 @@ export function Productos() {
                 }}
                 min={1}
                 step={1}
+                disabled={formData.insumoUnidadMedida === 'Unidades'}
                 required
               />
               <FormField
-                label="Stock mínimo *"
+                label="Stock mínimo"
                 name="stockMinimo"
                 type="number"
                 value={formData.stockMinimo === 0 ? '' : formData.stockMinimo}

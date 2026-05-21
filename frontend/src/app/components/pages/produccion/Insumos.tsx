@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { DataTable, Column } from '../../DataTable';
+import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Button } from '../../Button';
 import { api } from '../../../services/api';
@@ -168,13 +168,7 @@ export function Insumos() {
       <DataTable
         columns={columns}
         data={insumosFiltrados}
-        actions={[
-          {
-            label: 'Ver detalle',
-            onClick: handleViewDetail,
-            variant: 'secondary',
-          },
-        ]}
+        actions={[commonActions.view(handleViewDetail)]}
       />
 
       <Modal

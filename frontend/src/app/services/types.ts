@@ -133,6 +133,8 @@ export interface EntregaInsumo {
   fecha: string;
   hora: string;
   createdAt: string;
+  anulada?: boolean;
+  motivoAnulacion?: string | null;
 }
 
 /** Unidades válidas en POST/PUT de insumos (backend). */

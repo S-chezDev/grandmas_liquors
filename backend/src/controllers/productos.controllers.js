@@ -121,7 +121,7 @@ module.exports = {
       await models.Productos.delete(req.params.id, { actor_id: req.user?.id || null });
       res.json({ success: true, message: 'Producto eliminado exitosamente' });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
   }
 };

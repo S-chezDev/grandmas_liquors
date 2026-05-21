@@ -16,8 +16,56 @@ const {
   ensureCategoriaProductCountColumn,
   ensureMotivoEstado,
   checkInactivacionDependencias,
+  ensureEntregasInsumoProductoCatalogo,
   registerProductoAudit,
 } = require('../shared/auditoria');
+
+/** Mensaje legible cuando PostgreSQL bloquea DELETE por FK en entregas_insumos. */
+const productoDeleteBlockedByFk = (err, producto) => {
+  if (err?.code !== '23503') return null;
+  const constraint = String(err.constraint || '').toLowerCase();
+  const detail = String(err.detail || '').toLowerCase();
+  const esEntregasInsumo =
+    constraint.includes('entregas_insumos') ||
+    constraint.includes('producto_catalogo') ||
+    detail.includes('entregas_insumos');
+  if (!esEntregasInsumo) return null;
+
+  const nombre = producto?.nombre ? `«${producto.nombre}»` : 'este producto';
+  const esInsumo = String(producto?.tipo_producto || '').toLowerCase() === 'insumo';
+  const msg = esInsumo
+    ? `No se puede eliminar el insumo ${nombre} porque tiene entregas registradas a productores en «Entrega de Insumos». Anule esas entregas o cambie el estado del insumo a Inactivo en lugar de eliminarlo.`
+    : `No se puede eliminar ${nombre} porque tiene entregas de insumos vinculadas en «Entrega de Insumos». Revise ese módulo o inactiva el producto.`;
+
+  const error = new Error(msg);
+  error.statusCode = 409;
+  return error;
+};
+
+const assertProductoEliminable = async (id, producto) => {
+  await ensureEntregasInsumoProductoCatalogo();
+  const entregas = await pool.query(
+    `SELECT COUNT(*)::int AS total
+     FROM entregas_insumos
+     WHERE producto_catalogo_id = $1`,
+    [id]
+  );
+  const total = Number(entregas.rows[0]?.total ?? 0);
+  if (total <= 0) return;
+
+  const nombre = producto?.nombre ? `«${producto.nombre}»` : 'este producto';
+  const esInsumo = String(producto?.tipo_producto || '').toLowerCase() === 'insumo';
+  const detalleEntregas =
+    total === 1 ? '1 entrega registrada' : `${total} entregas registradas`;
+
+  const msg = esInsumo
+    ? `No se puede eliminar el insumo ${nombre} porque tiene ${detalleEntregas} a productores en «Entrega de Insumos». Anule esas entregas o cambie el estado del insumo a Inactivo.`
+    : `No se puede eliminar ${nombre} porque tiene ${detalleEntregas} vinculadas en «Entrega de Insumos». Revise ese módulo o inactiva el producto.`;
+
+  const error = new Error(msg);
+  error.statusCode = 409;
+  throw error;
+};
 
 const INSUMO_UNIDADES_VALIDAS = ['Unidades', 'Mililitros'];
 
@@ -306,8 +354,23 @@ const Productos = {
   delete: async (id, options = {}) => {
     await ensureCategoriaProductCountColumn();
     const previousFull = await Productos.getById(id);
+    if (!previousFull) {
+      const error = new Error('Producto no encontrado');
+      error.statusCode = 404;
+      throw error;
+    }
     const previousCategoriaId = previousFull?.categoria_id ?? null;
-    await pool.query('DELETE FROM productos WHERE id = $1', [id]);
+
+    await assertProductoEliminable(id, previousFull);
+
+    try {
+      await pool.query('DELETE FROM productos WHERE id = $1', [id]);
+    } catch (err) {
+      const mapped = productoDeleteBlockedByFk(err, previousFull);
+      if (mapped) throw mapped;
+      throw err;
+    }
+
     if (previousCategoriaId) {
       await syncCategoriaProductCount(previousCategoriaId);
     }
