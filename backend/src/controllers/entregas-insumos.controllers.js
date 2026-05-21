@@ -1,5 +1,6 @@
 // Rewire: el modelo EntregasInsumos viene de archivos modulares.
 // entities.models.js queda como archivo intacto pero desconectado (sin importadores).
+const { ensureMotivoEstado } = require('../models/shared/auditoria');
 const models = {
   EntregasInsumos: require('../models/produccion/entregas-insumos'),
 };
@@ -38,13 +39,23 @@ module.exports = {
       res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
   },
-  delete: async (req, res) => {
+  anular: async (req, res) => {
     try {
-      await models.EntregasInsumos.delete(req.params.id);
-      res.json({ success: true, message: 'Entrega eliminada correctamente' });
+      const motivo = ensureMotivoEstado(req.body?.motivo, 10, 50);
+      await models.EntregasInsumos.anular(req.params.id, motivo);
+      res.json({ success: true, message: 'Entrega anulada correctamente' });
     } catch (error) {
       res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
-  }
+  },
+  delete: async (req, res) => {
+    try {
+      const motivo = ensureMotivoEstado(req.body?.motivo, 10, 50);
+      await models.EntregasInsumos.anular(req.params.id, motivo);
+      res.json({ success: true, message: 'Entrega anulada correctamente' });
+    } catch (error) {
+      res.status(error.statusCode || 500).json({ success: false, message: error.message });
+    }
+  },
 };
 

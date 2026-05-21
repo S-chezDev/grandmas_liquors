@@ -346,6 +346,16 @@ export const catalogApi = {
             fecha: String(r.fecha || '').split('T')[0],
             hora: r.hora || '',
             createdAt: r.created_at || '',
+            anulada:
+              r.anulada === true ||
+              r.anulada === 't' ||
+              r.anulada === 1 ||
+              r.anulada === '1' ||
+              r.anulada === 'true',
+            motivoAnulacion:
+              r.motivo_anulacion != null && r.motivo_anulacion !== ''
+                ? String(r.motivo_anulacion)
+                : null,
           }) as EntregaInsumo
       );
     },
@@ -372,8 +382,8 @@ export const catalogApi = {
       }
       await apiFetch('/api/entregas-insumos', { method: 'POST', json });
     },
-    delete: async (id: number, _motivo?: string) => {
-      await apiFetch(`/api/entregas-insumos/${id}`, { method: 'DELETE' });
+    anular: async (id: number, motivo: string) => {
+      await apiFetch(`/api/entregas-insumos/${id}`, { method: 'DELETE', json: { motivo } });
     },
   },
 

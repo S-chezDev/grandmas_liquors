@@ -66,7 +66,7 @@ export function EntregaInsumos() {
   >([]);
   const [productores, setProductores] = useState<Usuario[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isAnularModalOpen, setIsAnularModalOpen] = useState(false);
   const [selectedEntrega, setSelectedEntrega] = useState<EntregaInsumoView | null>(null);
   const [motivo, setMotivo] = useState('');
   const [busqueda, setBusqueda] = useState('');
@@ -181,7 +181,17 @@ export function EntregaInsumos() {
     {
       key: 'hora',
       label: 'Hora'
-    }
+    },
+    {
+      key: 'anulada',
+      label: 'Estado',
+      render: (_: boolean, row: EntregaInsumoView) =>
+        row.anulada ? (
+          <span className="text-xs font-medium text-destructive">Anulada</span>
+        ) : (
+          <span className="text-xs font-medium text-green-700">Activa</span>
+        ),
+    },
   ];
 
   const handleAdd = () => {
@@ -239,13 +249,13 @@ export function EntregaInsumos() {
     setMostrarListaProductores(false);
   };
 
-  const handleDelete = (entrega: EntregaInsumoView) => {
+  const handleAnular = (entrega: EntregaInsumoView) => {
     setSelectedEntrega(entrega);
     setMotivo('');
-    setIsDeleteModalOpen(true);
+    setIsAnularModalOpen(true);
   };
 
-  const handleConfirmDelete = async () => {
+  const handleConfirmAnular = async () => {
     if (!selectedEntrega) return;
 
     if (motivo.length < 10 || motivo.length > 50) {
@@ -254,12 +264,18 @@ export function EntregaInsumos() {
     }
 
     try {
-      await api.entregasInsumos.delete(selectedEntrega.id, motivo);
-      toast.success('Entrega eliminada exitosamente');
-      setIsDeleteModalOpen(false);
-      cargarDatos();
+      await api.entregasInsumos.anular(selectedEntrega.id, motivo);
+      const idAnulada = selectedEntrega.id;
+      setEntregas((prev) =>
+        prev.map((e) =>
+          e.id === idAnulada ? { ...e, anulada: true, motivoAnulacion: motivo.trim() } : e
+        )
+      );
+      toast.success('Entrega anulada exitosamente');
+      setIsAnularModalOpen(false);
+      setSelectedEntrega(null);
     } catch (error: any) {
-      toast.error(error.message || 'Error al eliminar entrega');
+      toast.error(error.message || 'Error al anular entrega');
     }
   };
 
@@ -394,8 +410,12 @@ export function EntregaInsumos() {
       <DataTable
         columns={columns}
         data={entregasFiltradas}
+        rowClassName={(row: EntregaInsumoView) => (row.anulada ? 'opacity-60' : undefined)}
         actions={[
-          commonActions.delete(handleDelete)
+          commonActions.cancel(handleAnular, {
+            disabled: (row: EntregaInsumoView) => !!row.anulada,
+            disabledTitle: 'La entrega ya está anulada',
+          }),
         ]}
       />
 
@@ -603,17 +623,18 @@ export function EntregaInsumos() {
         </Form>
       </Modal>
 
-      {/* Modal de confirmación de eliminación */}
+      {/* Modal de confirmación de anulación */}
       <Modal
-        isOpen={isDeleteModalOpen}
-        onClose={() => setIsDeleteModalOpen(false)}
-        title="Eliminar Entrega de Insumo"
+        isOpen={isAnularModalOpen}
+        onClose={() => setIsAnularModalOpen(false)}
+        title="Anular Entrega de Insumo"
         size="md"
       >
         <div className="space-y-4">
           <div className="p-4 bg-red-50 rounded-lg border border-red-200">
             <p className="text-sm text-red-700">
-              ¿Está seguro de eliminar esta entrega?
+              ¿Está seguro de anular esta entrega? El registro permanecerá en la tabla y el stock en almacén se
+              restaurará.
             </p>
             <p className="text-sm text-red-600 mt-2">
               <strong>Insumo:</strong> {selectedEntrega?.insumo}
@@ -624,23 +645,23 @@ export function EntregaInsumos() {
           </div>
 
           <FormField
-            label="Motivo de Eliminación"
+            label="Motivo de anulación"
             name="motivo"
             type="textarea"
             value={motivo}
             onChange={(value) => setMotivo(value as string)}
-            placeholder="Ingrese el motivo de eliminación (10-50 caracteres)"
+            placeholder="Ingrese el motivo de anulación (10-50 caracteres)"
             required
             minLength={10}
             maxLength={50}
           />
 
           <FormActions>
-            <Button variant="outline" onClick={() => setIsDeleteModalOpen(false)}>
+            <Button variant="outline" onClick={() => setIsAnularModalOpen(false)}>
               Cancelar
             </Button>
-            <Button variant="danger" onClick={handleConfirmDelete}>
-              Eliminar
+            <Button variant="danger" onClick={handleConfirmAnular}>
+              Anular
             </Button>
           </FormActions>
         </div>

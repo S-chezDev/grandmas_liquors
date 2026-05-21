@@ -385,10 +385,15 @@ export const commonActions = {
     icon: <FileText className="w-4 h-4" />,
     onClick
   }),
-  cancel: (onClick: (row: any) => void): Action => ({
+  cancel: (
+    onClick: (row: any) => void,
+    options: { disabled?: (row: any) => boolean; disabledTitle?: string } = {}
+  ): Action => ({
     label: 'Anular',
     icon: <X className="w-4 h-4" />,
     onClick,
-    variant: 'destructive'
+    variant: 'destructive',
+    disabled: options.disabled,
+    disabledTitle: options.disabledTitle,
   })
 };

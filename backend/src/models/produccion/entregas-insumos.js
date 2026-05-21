@@ -6,7 +6,10 @@
  * lo importa. La fuente activa es este archivo modular.
  */
 const pool = require('../../../db');
-const { ensureMotivoEstado, ensureEntregasInsumoProductoCatalogo } = require('../shared/auditoria');
+const {
+  ensureMotivoEstado,
+  ensureEntregasInsumoProductoCatalogo,
+} = require('../shared/auditoria');
 const InsumosModel = require('./insumos');
 
 const BASE = Number(InsumosModel.INSUMO_VISTA_DESDE_PRODUCTO_ID_BASE) || 900000000;
@@ -376,7 +379,9 @@ const EntregasInsumos = {
       client.release();
     }
   },
-  delete: async (id) => {
+  /** Marca la entrega como anulada (no borra el registro) y restaura stock en almacén. */
+  anular: async (id, motivoRaw) => {
+    const motivo = ensureMotivoEstado(motivoRaw, 10, 50);
     await ensureEntregasInsumoProductoCatalogo();
     const client = await pool.connect();
     try {
@@ -390,37 +395,47 @@ const EntregasInsumos = {
       }
       const e = row.rows[0];
       const wasAnulada = e.anulada === true || e.anulada === 't';
+      if (wasAnulada) {
+        await client.query('ROLLBACK');
+        const error = new Error('La entrega ya está anulada');
+        error.statusCode = 409;
+        throw error;
+      }
       const deltaEntrega = cantidadStockDelta(e.cantidad);
       const target = resolveEntregaTargetFromPayload({}, e);
 
-      if (!wasAnulada) {
-        if (target.kind === 'producto') {
-          const sub = await client.query(
-            `UPDATE productos SET stock = COALESCE(stock, 0) + $1, updated_at = CURRENT_TIMESTAMP
-             WHERE id = $2 RETURNING id`,
-            [deltaEntrega, target.id]
-          );
-          if (sub.rowCount === 0) {
-            await client.query('ROLLBACK');
-            const err = new Error('No se puede eliminar la entrega: producto insumo no encontrado');
-            err.statusCode = 404;
-            throw err;
-          }
-        } else {
-          const sub = await client.query(
-            `UPDATE insumos SET cantidad = COALESCE(cantidad, 0) + $1, updated_at = CURRENT_TIMESTAMP
-             WHERE id = $2 RETURNING id`,
-            [deltaEntrega, e.insumo_id]
-          );
-          if (sub.rowCount === 0) {
-            await client.query('ROLLBACK');
-            const err = new Error('No se puede eliminar la entrega: insumo no encontrado');
-            err.statusCode = 404;
-            throw err;
-          }
+      if (target.kind === 'producto') {
+        const sub = await client.query(
+          `UPDATE productos SET stock = COALESCE(stock, 0) + $1, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $2 RETURNING id`,
+          [deltaEntrega, target.id]
+        );
+        if (sub.rowCount === 0) {
+          await client.query('ROLLBACK');
+          const err = new Error('No se puede anular la entrega: producto insumo no encontrado');
+          err.statusCode = 404;
+          throw err;
+        }
+      } else if (target.kind === 'insumo') {
+        const sub = await client.query(
+          `UPDATE insumos SET cantidad = COALESCE(cantidad, 0) + $1, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $2 RETURNING id`,
+          [deltaEntrega, target.id]
+        );
+        if (sub.rowCount === 0) {
+          await client.query('ROLLBACK');
+          const err = new Error('No se puede anular la entrega: insumo no encontrado');
+          err.statusCode = 404;
+          throw err;
         }
       }
-      await client.query('DELETE FROM entregas_insumos WHERE id = $1', [id]);
+
+      await client.query(
+        `UPDATE entregas_insumos
+         SET anulada = TRUE, motivo_anulacion = $1, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2`,
+        [motivo, id]
+      );
       await client.query('COMMIT');
       return true;
     } catch (err) {
@@ -430,6 +445,8 @@ const EntregasInsumos = {
       client.release();
     }
   },
+  /** @deprecated Usar anular; conservado por compatibilidad con DELETE antiguo. */
+  delete: async (id, motivoRaw) => EntregasInsumos.anular(id, motivoRaw),
 };
 
 module.exports = EntregasInsumos;
