@@ -99,20 +99,49 @@ const authenticateJWT = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Sesion invalida. Inicia sesion nuevamente.' });
     }
 
-    const { isUserSessionActive, touchUserSession } = require('../models/shared/auditoria');
+    const { isUserSessionActive, touchUserSession, revokeUserSession } = require('../models/shared/auditoria');
     const sessionActive = await isUserSessionActive(userId, sessionJti);
     if (!sessionActive) {
       return res.status(401).json({ success: false, message: 'Sesion invalida o cerrada' });
+    }
+
+    const userResult = await pool.query(
+      `SELECT u.id,
+              u.email,
+              u.rol_id,
+              u.estado,
+              r.nombre AS rol,
+              c.id AS cliente_id
+       FROM usuarios u
+       LEFT JOIN roles r ON r.id = u.rol_id
+       LEFT JOIN clientes c ON c.usuario_id = u.id
+       WHERE u.id = $1
+       ORDER BY c.id DESC NULLS LAST
+       LIMIT 1`,
+      [userId]
+    );
+    const currentUser = userResult.rows[0];
+    if (!currentUser) {
+      await revokeUserSession(sessionJti).catch(() => {});
+      return res.status(401).json({ success: false, message: 'Sesion invalida. Inicia sesion nuevamente.' });
+    }
+
+    if (String(currentUser.estado || '').trim() !== 'Activo') {
+      await revokeUserSession(sessionJti).catch(() => {});
+      return res.status(401).json({
+        success: false,
+        message: 'Tu cuenta fue desactivada y tu sesion se cerro.',
+      });
     }
 
     void touchUserSession(sessionJti);
 
     req.user = {
       id: userId,
-      rol: payload.rol,
-      rol_id: payload.rol_id,
-      cliente_id: payload.cliente_id || null,
-      email: payload.email,
+      rol: currentUser.rol || payload.rol,
+      rol_id: currentUser.rol_id || payload.rol_id,
+      cliente_id: currentUser.cliente_id || payload.cliente_id || null,
+      email: currentUser.email || payload.email,
       session_jti: sessionJti,
       session_expires_at_ms: typeof payload.exp === 'number' ? payload.exp * 1000 : null,
     };

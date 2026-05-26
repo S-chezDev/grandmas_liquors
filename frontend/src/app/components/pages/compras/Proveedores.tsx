@@ -44,6 +44,31 @@ export function Proveedores() {
   const [filtroTipo, setFiltroTipo] = useState<string>('Todos');
   const [filtroEstado, setFiltroEstado] = useState<string>('Todos');
   const [filtroPreferente, setFiltroPreferente] = useState<string>('Todos');
+  const [isSavingProveedor, setIsSavingProveedor] = useState(false);
+
+  const sanitizeNitInput = (value: string) => {
+    let digits = 0;
+    let formatted = '';
+    let lastWasSeparator = false;
+    const allowedSeparators = new Set([':', '-', '/', '*', ',']);
+
+    for (const char of String(value || '')) {
+      if (/\d/.test(char)) {
+        if (digits >= 12) continue;
+        formatted += char;
+        digits += 1;
+        lastWasSeparator = false;
+        continue;
+      }
+
+      if (allowedSeparators.has(char) && formatted && !lastWasSeparator) {
+        formatted += char;
+        lastWasSeparator = true;
+      }
+    }
+
+    return formatted.replace(/[:/*,-]+$/g, '');
+  };
 
   useEffect(() => {
     cargarProveedores();
@@ -307,6 +332,7 @@ export function Proveedores() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSavingProveedor) return;
 
     if (formData.tipo === 'Juridica') {
       if (!formData.nombreRazonSocial.trim()) {
@@ -362,6 +388,7 @@ export function Proveedores() {
     }
 
     try {
+      setIsSavingProveedor(true);
       if (selectedProveedor) {
         await api.proveedores.update(selectedProveedor.id, formData, 'Actualización de datos');
 
@@ -397,6 +424,8 @@ export function Proveedores() {
           description: msg || 'Intente de nuevo o contacte al administrador.',
         });
       }
+    } finally {
+      setIsSavingProveedor(false);
     }
   };
 
@@ -572,13 +601,13 @@ export function Proveedores() {
             value={formData.nit}
             onChange={(value) => {
               if (selectedProveedor) return;
-              setFormData({ ...formData, nit: value as string });
+              setFormData({ ...formData, nit: sanitizeNitInput(value as string) });
             }}
-            placeholder="Entre 6 y 12 dígitos"
+            placeholder="Ej: 900-123456-7 / 900:123456*7"
             required
             disabled={!!selectedProveedor}
-            inputDigitRule="documento6to12"
             error={nitDuplicadoEnLista || undefined}
+            helperText="Puede incluir :, -, /, * y coma. Se validan entre 6 y 12 dígitos."
           />
 
           {selectedProveedor && (
@@ -648,11 +677,13 @@ export function Proveedores() {
           </div>
 
           <FormActions>
-            <Button variant="outline" onClick={() => setIsModalOpen(false)}>
+            <Button variant="outline" disabled={isSavingProveedor} onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
-            <Button type="submit">
-              {selectedProveedor ? 'Actualizar' : 'Crear'} Proveedor
+            <Button type="submit" disabled={isSavingProveedor}>
+              {isSavingProveedor
+                ? 'Guardando...'
+                : `${selectedProveedor ? 'Actualizar' : 'Crear'} Proveedor`}
             </Button>
           </FormActions>
         </Form>

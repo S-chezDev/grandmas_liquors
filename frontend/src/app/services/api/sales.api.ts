@@ -64,6 +64,7 @@ export const salesApi = {
     getById: async (id: number) => mapPedidoDetail(await apiFetchData(`/api/pedidos/${id}`)),
     create: async (data: Partial<Pedido>) => {
       const numero = `PED-${Date.now()}`;
+      const observaciones = String((data as Partial<Pedido> & { observaciones?: string }).observaciones || '').trim();
       const productos = (data.productos || []).map((p) => ({
         productoId: p.productoId,
         cantidad: p.cantidad,
@@ -77,7 +78,7 @@ export const salesApi = {
           cliente_id: data.clienteId,
           fecha: data.fechaPedido,
           fecha_entrega: data.fechaEntrega,
-          detalles: '',
+          detalles: observaciones,
           direccion: data.direccion || null,
           telefono: data.telefono || null,
           total: data.total,
@@ -92,7 +93,12 @@ export const salesApi = {
     getAllWithDetails: async () => {
       const rows = await apiFetchData<any[]>('/api/pedidos');
       const list = Array.isArray(rows) ? rows : [];
-      return Promise.all(list.map((row) => mapPedidoDetail(apiFetchData(`/api/pedidos/${row.id}`))));
+      return Promise.all(
+        list.map(async (row) => {
+          const detail = await apiFetchData(`/api/pedidos/${row.id}`);
+          return mapPedidoDetail(detail);
+        })
+      );
     },
     update: async (id: number, updates: Partial<Pedido>) => {
       await apiFetch(`/api/pedidos/${id}`, {

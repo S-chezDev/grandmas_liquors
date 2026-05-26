@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const { wrapController } = require('../utils/wrapController');
 const controller = wrapController(require('../controllers/clientes.controllers'));
-const { authorizePermissions } = require('../middlewares/auth.middleware');
+const { authorizePermissions, simpleRateLimit } = require('../middlewares/auth.middleware');
 const { denyRoles } = require('../middlewares/scopeAccess');
 const { validate } = require('../middlewares/validate.middleware');
 const { OPERATIONAL_DENY_ROLES } = require('../middlewares/operationalRoles');
@@ -38,7 +38,14 @@ router.get('/email/:email', authorizePermissions('Ver Clientes'), denyRoles(...O
 router.get('/usuario/:usuarioId', authorizePermissions('Ver Clientes'), controller.getByUsuarioId);
 router.post('/perfil/foto', uploadProfilePhotoHandler, authorizePermissions('Editar Clientes'), controller.uploadProfilePhoto);
 router.get('/:id', authorizePermissions('Ver Clientes'), validate(idParam, 'params'), controller.getById);
-router.post('/', authorizePermissions('Crear Clientes'), denyRoles(...OPERATIONAL_DENY_ROLES), validate(createClienteBody), controller.create);
+router.post(
+  '/',
+  simpleRateLimit(1, 3000, 'create-cliente'),
+  authorizePermissions('Crear Clientes'),
+  denyRoles(...OPERATIONAL_DENY_ROLES),
+  validate(createClienteBody),
+  controller.create
+);
 router.put('/:id', authorizePermissions('Editar Clientes'), validate(idParam, 'params'), validate(updateClienteBody), controller.update);
 router.put('/:id/estado', authorizePermissions('Editar Clientes'), denyRoles(...OPERATIONAL_DENY_ROLES), validate(idParam, 'params'), validate(updateClienteEstadoBody), controller.updateStatus);
 router.patch('/:id/estado', authorizePermissions('Editar Clientes'), denyRoles(...OPERATIONAL_DENY_ROLES), validate(idParam, 'params'), validate(updateClienteEstadoBody), controller.updateStatus);

@@ -48,6 +48,7 @@ export function Usuarios() {
   const [searchDebounced, setSearchDebounced] = useState('');
   const [filtroRol, setFiltroRol] = useState<string>('Todos');
   const [filtroEstado, setFiltroEstado] = useState<string>('Todos');
+  const [isSavingUsuario, setIsSavingUsuario] = useState(false);
 
   // Estados para validaciones en tiempo real
   const [emailValido, setEmailValido] = useState<boolean | null>(null);
@@ -404,6 +405,7 @@ export function Usuarios() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSavingUsuario) return;
 
     if (!formData.rol?.trim()) {
       toast.error('Seleccione un rol', {
@@ -466,6 +468,7 @@ export function Usuarios() {
     }
 
     try {
+      setIsSavingUsuario(true);
       if (selectedUsuario) {
         // Actualizar
         const updates: any = { ...formData };
@@ -493,6 +496,8 @@ export function Usuarios() {
       toast.error(selectedUsuario ? 'Error al actualizar usuario' : 'Error al crear usuario', {
         description: error.message
       });
+    } finally {
+      setIsSavingUsuario(false);
     }
   };
 
@@ -857,11 +862,13 @@ export function Usuarios() {
           </div>
 
           <FormActions>
-            <Button variant="outline" onClick={() => setIsModalOpen(false)}>
+            <Button variant="outline" disabled={isSavingUsuario} onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
-            <Button type="submit">
-              {selectedUsuario ? 'Actualizar' : 'Crear'} Usuario
+            <Button type="submit" disabled={isSavingUsuario}>
+              {isSavingUsuario
+                ? 'Guardando...'
+                : `${selectedUsuario ? 'Actualizar' : 'Crear'} Usuario`}
             </Button>
           </FormActions>
         </Form>

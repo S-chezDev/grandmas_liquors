@@ -46,6 +46,7 @@ export function Ventas() {
   const [mostrarListaClientes, setMostrarListaClientes] = useState(false);
   const [mostrarListaPedidos, setMostrarListaPedidos] = useState(false);
   const [mostrarListaProductos, setMostrarListaProductos] = useState(false);
+  const [isSubmittingVenta, setIsSubmittingVenta] = useState(false);
   const [formData, setFormData] = useState({
     tipo: 'directa' as 'directa' | 'por pedido',
     clienteId: 0,
@@ -465,6 +466,7 @@ export function Ventas() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingVenta) return;
 
     // En venta directa el cliente es obligatorio. En venta por pedido el cliente
     // se hereda automaticamente del pedido seleccionado (no se pide en el form).
@@ -522,6 +524,7 @@ export function Ventas() {
     }));
 
     try {
+      setIsSubmittingVenta(true);
       const ventaCreada = await api.ventas.create({
         tipo: formData.tipo,
         clienteId: formData.clienteId,
@@ -541,6 +544,8 @@ export function Ventas() {
       cargarDatos();
     } catch (error: any) {
       toast.error(error.message || 'Error al crear venta');
+    } finally {
+      setIsSubmittingVenta(false);
     }
   };
 
@@ -1056,11 +1061,11 @@ export function Ventas() {
           )}
 
           <FormActions>
-            <Button variant="outline" onClick={() => setIsModalOpen(false)}>
+            <Button variant="outline" disabled={isSubmittingVenta} onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
-            <Button type="submit">
-              Crear Venta
+            <Button type="submit" disabled={isSubmittingVenta}>
+              {isSubmittingVenta ? 'Guardando...' : 'Crear Venta'}
             </Button>
           </FormActions>
         </Form>

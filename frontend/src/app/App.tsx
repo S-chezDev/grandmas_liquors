@@ -26,6 +26,7 @@ import { Abonos } from './components/pages/ventas/Abonos';
 import { Pedidos } from './components/pages/ventas/Pedidos';
 import { Domicilios } from './components/pages/ventas/Domicilios';
 import { SessionIdleWatcher } from './components/SessionIdleWatcher';
+import { toast } from 'sonner';
 
 const pageTitles: Record<string, string> = {
   '/dashboard': 'Dashboard',
@@ -143,6 +144,24 @@ function AppContent() {
       navigate(home, { replace: true });
     }
   }, [user, navigate, location.pathname]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const handleSessionInvalidated = (event: Event) => {
+      const customEvent = event as CustomEvent<{ message?: string }>;
+      setShowAuth('landing');
+      navigate('/', { replace: true });
+      toast.error(
+        customEvent.detail?.message || 'Tu sesión fue cerrada porque la cuenta ya no está activa.'
+      );
+    };
+
+    window.addEventListener('grandmas:session-invalidated', handleSessionInvalidated as EventListener);
+    return () => {
+      window.removeEventListener('grandmas:session-invalidated', handleSessionInvalidated as EventListener);
+    };
+  }, [navigate]);
 
   const handleLogin = async (email: string, password: string) => {
     await login(email, password);

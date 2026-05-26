@@ -1,7 +1,7 @@
 ﻿const express = require('express');
 const { wrapController } = require('../utils/wrapController');
 const controller = wrapController(require('../controllers/compras.controllers'));
-const { authorizePermissions } = require('../middlewares/auth.middleware');
+const { authorizePermissions, simpleRateLimit } = require('../middlewares/auth.middleware');
 const { denyRoles } = require('../middlewares/scopeAccess');
 const { validate } = require('../middlewares/validate.middleware');
 const { OPERATIONAL_DENY_ROLES } = require('../middlewares/operationalRoles');
@@ -18,7 +18,13 @@ router.use(denyRoles(...OPERATIONAL_DENY_ROLES));
 
 router.get('/', authorizePermissions('Ver Compras'), controller.getAll);
 router.get('/:id', authorizePermissions('Ver Compras'), validate(idParam, 'params'), controller.getById);
-router.post('/', authorizePermissions('Crear Compras'), validate(createCompraBody), controller.create);
+router.post(
+  '/',
+  simpleRateLimit(1, 3000, 'create-compra'),
+  authorizePermissions('Crear Compras'),
+  validate(createCompraBody),
+  controller.create
+);
 router.post('/producto', authorizePermissions('Editar Compras'), validate(addProductoCompraBody), controller.addProducto);
 router.put('/:id', authorizePermissions('Editar Compras'), validate(idParam, 'params'), validate(updateCompraBody), controller.update);
 router.put('/:id/estado', authorizePermissions('Editar Compras'), validate(idParam, 'params'), validate(updateCompraEstadoBody), controller.updateStatus);

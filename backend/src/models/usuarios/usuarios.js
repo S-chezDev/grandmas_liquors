@@ -373,16 +373,16 @@ const Usuarios = {
       throw error;
     }
 
-    const force = data.force === true || data.force === 'true';
+    const forceRequested = data.force === true || data.force === 'true';
     let activeSessions = 0;
 
     if (nextStatus === 'Inactivo') {
       ensureMotivoEstado(data?.motivo);
       activeSessions = await getActiveUserSessionCount(id);
-      if (activeSessions > 0 && !force) {
+      if (activeSessions > 0) {
         const error = new Error('No se puede desactivar un usuario con sesion activa');
         error.statusCode = 409;
-        error.details = { activeSessions };
+        error.details = { activeSessions, forceRequested };
         throw error;
       }
       await checkInactivacionDependencias('usuario', id);
@@ -407,7 +407,7 @@ const Usuarios = {
         changedFields,
         reason: typeof data.motivo === 'string' && data.motivo.trim() ? data.motivo.trim() : null,
         statusChange: true,
-        force,
+        forceRequested,
         activeSessions,
       },
     });
@@ -490,6 +490,7 @@ const Usuarios = {
     const tempPassword = generateTempPassword();
     const passwordHash = await bcrypt.hash(tempPassword, 10);
     await Usuarios.updatePasswordHash(id, passwordHash);
+    await Usuarios.storePasswordHistory(id, passwordHash);
 
     await registerUserAudit({
       usuarioId: Number(id),

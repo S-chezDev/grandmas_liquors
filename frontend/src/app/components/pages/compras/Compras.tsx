@@ -41,6 +41,7 @@ export function Compras() {
   const [mostrarListaProveedores, setMostrarListaProveedores] = useState(false);
   const [busquedaProducto, setBusquedaProducto] = useState('');
   const [mostrarListaProductos, setMostrarListaProductos] = useState(false);
+  const [isSubmittingCompra, setIsSubmittingCompra] = useState(false);
 
   useEffect(() => {
     cargarDatos();
@@ -440,6 +441,7 @@ export function Compras() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingCompra) return;
 
     // Validaciones
     if (formData.proveedorId === 0) {
@@ -468,6 +470,7 @@ export function Compras() {
     }
 
     try {
+      setIsSubmittingCompra(true);
       const subtotal = formData.productos.reduce((sum, p) => sum + p.subtotal, 0);
       const iva = subtotal * 0.19;
       const total = subtotal + iva;
@@ -494,6 +497,8 @@ export function Compras() {
       const msg =
         error instanceof Error ? error.message : typeof error === 'string' ? error : 'Error desconocido al guardar';
       toast.error('No se pudo crear la compra', { description: msg });
+    } finally {
+      setIsSubmittingCompra(false);
     }
   };
 
@@ -827,11 +832,11 @@ export function Compras() {
           )}
 
           <FormActions>
-            <Button variant="outline" onClick={() => setIsModalOpen(false)}>
+            <Button variant="outline" disabled={isSubmittingCompra} onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={formData.productos.length === 0}>
-              Crear Compra
+            <Button type="submit" disabled={formData.productos.length === 0 || isSubmittingCompra}>
+              {isSubmittingCompra ? 'Guardando...' : 'Crear Compra'}
             </Button>
           </FormActions>
         </Form>

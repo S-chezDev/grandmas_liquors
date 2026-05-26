@@ -6,6 +6,16 @@ export type ApiEnvelope<T = unknown> = {
   details?: unknown;
 };
 
+const AUTH_EVENT_NAME = 'grandmas:session-invalidated';
+const AUTH_EVENT_EXCLUDED_PATHS = new Set([
+  '/api/auth/login',
+  '/api/auth/me',
+  '/api/auth/logout',
+  '/api/auth/logout-all',
+  '/api/auth/register-cliente',
+  '/api/auth/password-reset-request',
+]);
+
 export async function apiFetch<T = unknown>(
   path: string,
   init?: RequestInit & { json?: unknown }
@@ -34,6 +44,19 @@ export async function apiFetch<T = unknown>(
 
   if (!res.ok) {
     const msg = typeof json.message === 'string' ? json.message : res.statusText;
+    if (
+      res.status === 401 &&
+      typeof window !== 'undefined' &&
+      !AUTH_EVENT_EXCLUDED_PATHS.has(path)
+    ) {
+      window.dispatchEvent(
+        new CustomEvent(AUTH_EVENT_NAME, {
+          detail: {
+            message: msg || 'Tu sesión fue cerrada porque la cuenta ya no está activa.',
+          },
+        })
+      );
+    }
     throw Object.assign(new Error(msg), { status: res.status, details: json.details });
   }
   if (json.success === false) {

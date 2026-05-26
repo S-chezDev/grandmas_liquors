@@ -5,7 +5,9 @@
  *   1. Verifica conectividad con PostgreSQL y avisa de forma clara si la base
  *      de datos no existe o las credenciales son erroneas (evita el "exit 1"
  *      sin contexto que confundia a quien clona por primera vez).
- *   2. Ejecuta el schema base `db.pgsql` (drop + create + seeds).
+ *   2. Si la base está vacía, ejecuta el schema base `db.pgsql` para bootstrap.
+ *      Si la base ya tiene tablas del sistema, NO ejecuta `db.pgsql` para evitar
+ *      el comportamiento destructivo de drop + create.
  *   3. Ejecuta cualquier archivo .sql adicional en `historias-migraciones/`
  *      en orden alfabetico, si la carpeta existe (es opcional). Asi se evita
  *      que el script falle/avise por archivos que no estan versionados.
@@ -75,13 +77,27 @@ async function runMigrations() {
   try {
     console.log('Iniciando migraciones de base de datos...\n');
 
-    // 1) Schema inicial (drop + create + seeds).
+    // 1) Schema inicial (solo bootstrap sobre BD vacía).
     const schemaPath = path.join(__dirname, 'db.pgsql');
     if (fs.existsSync(schemaPath)) {
-      console.log('-> Ejecutando schema inicial (db.pgsql)...');
-      const schema = fs.readFileSync(schemaPath, 'utf8');
-      await client.query(schema);
-      console.log('   OK schema inicial completado\n');
+      const schemaState = await client.query(`
+        SELECT COUNT(*)::int AS total
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_type = 'BASE TABLE'
+      `);
+      const existingTables = Number(schemaState.rows[0]?.total || 0);
+
+      if (existingTables === 0) {
+        console.log('-> Base vacía detectada. Ejecutando bootstrap inicial (db.pgsql)...');
+        const schema = fs.readFileSync(schemaPath, 'utf8');
+        await client.query(schema);
+        console.log('   OK bootstrap inicial completado\n');
+      } else {
+        console.log(
+          '-> Base existente detectada. Se omite db.pgsql para evitar recrear tablas y se aplican solo migraciones/ALTERs.\n'
+        );
+      }
     } else {
       throw new Error('No se encontro backend/db.pgsql. Verifica que clonaste el repositorio completo.');
     }

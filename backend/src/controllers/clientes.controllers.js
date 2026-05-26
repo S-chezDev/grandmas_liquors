@@ -3,6 +3,7 @@
 const models = {
   Clientes: require('../models/ventas/clientes'),
   Auditoria: require('../models/shared').Auditoria,
+  Usuarios: require('../models/usuarios/usuarios'),
 };
 const fs = require('fs');
 const path = require('path');
@@ -16,6 +17,8 @@ const {
   sendTemporaryPasswordEmail,
   sendWelcomeEmail,
   sendEmailChangeNotification,
+  sendUserStatusChangeNotification,
+  sendAccountDeletedNotification,
 } = require('../services/email.service');
 module.exports = {
   getAll: async (req, res) => {
@@ -148,6 +151,7 @@ module.exports = {
         });
         clienteId = created.clienteId;
         usuarioId = created.usuarioId;
+        await models.Usuarios.storePasswordHistory(usuarioId, passwordHash);
       } catch (error) {
         const mapped = ClienteCuenta.mapPgUniqueError(error);
         if (mapped) {
@@ -359,6 +363,19 @@ module.exports = {
         motivo,
         actor_id: req.user?.id || null,
       });
+
+      if (updated?.email) {
+        void sendUserStatusChangeNotification({
+          to: updated.email,
+          name: `${updated.nombre || ''} ${updated.apellido || ''}`.trim(),
+          estado,
+          motivo,
+          changedBy: req.user?.email || null,
+        }).catch((notifyError) => {
+          console.error('No se pudo enviar la notificación de cambio de estado del cliente:', notifyError.message);
+        });
+      }
+
       return res.json({
         success: true,
         message: 'Estado del cliente actualizado correctamente.',
@@ -441,6 +458,26 @@ module.exports = {
     }
 
     try {
+      const recentTransactions = await models.Clientes.getRecentTransactions(clienteId, 30);
+      if (recentTransactions.total > 0) {
+        return res.status(409).json({
+          success: false,
+          message:
+            'No se puede eliminar el cliente porque registra transacciones en los ultimos 30 dias.',
+          details: { recentTransactions },
+        });
+      }
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message:
+          'No se pudieron verificar las transacciones recientes del cliente: ' +
+          (error?.message || 'Error desconocido'),
+      });
+    }
+
+    try {
+      const cliente = await models.Clientes.getById(clienteId);
       const deleted = await ClienteCuenta.deleteWithCascade(clienteId);
 
       void models.Auditoria.registerClienteAudit({
@@ -453,6 +490,18 @@ module.exports = {
           usuario_eliminado: deleted.usuarioId || null,
         },
       });
+
+      if (cliente?.email) {
+        void sendAccountDeletedNotification({
+          to: cliente.email,
+          name: `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim(),
+          motivo,
+          changedBy: req.user?.email || null,
+          accountType: 'cuenta de cliente',
+        }).catch((notifyError) => {
+          console.error('No se pudo enviar la notificación de eliminación del cliente:', notifyError.message);
+        });
+      }
 
       return res.json({
         success: true,

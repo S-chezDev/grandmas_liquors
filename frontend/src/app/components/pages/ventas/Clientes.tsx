@@ -34,6 +34,7 @@ export function Clientes() {
     email: '',
     direccion: ''
   });
+  const [isSavingCliente, setIsSavingCliente] = useState(false);
 
   useEffect(() => {
     cargarClientes();
@@ -241,6 +242,7 @@ export function Clientes() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSavingCliente) return;
 
     if (!formData.nombre.trim() || !formData.apellido.trim()) {
       toast.error('Nombre y apellido son requeridos');
@@ -280,6 +282,7 @@ export function Clientes() {
     }
 
     try {
+      setIsSavingCliente(true);
       if (selectedCliente) {
         await api.clientes.update(selectedCliente.id, {
           ...formData,
@@ -298,6 +301,8 @@ export function Clientes() {
       cargarClientes();
     } catch (error: any) {
       toast.error(error.message || 'Error al guardar cliente');
+    } finally {
+      setIsSavingCliente(false);
     }
   };
 
@@ -559,11 +564,13 @@ export function Clientes() {
           />
 
           <FormActions>
-            <Button variant="outline" onClick={() => setIsModalOpen(false)}>
+            <Button variant="outline" disabled={isSavingCliente} onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
-            <Button type="submit">
-              {selectedCliente ? 'Actualizar' : 'Crear'} Cliente
+            <Button type="submit" disabled={isSavingCliente}>
+              {isSavingCliente
+                ? 'Guardando...'
+                : `${selectedCliente ? 'Actualizar' : 'Crear'} Cliente`}
             </Button>
           </FormActions>
         </Form>

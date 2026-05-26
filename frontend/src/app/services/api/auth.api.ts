@@ -21,6 +21,7 @@ export const authApi = {
         permisos: string[];
         cliente_id?: number | null;
         idle_timeout_ms?: number;
+        estado?: string;
       }>('/api/auth/login', {
         method: 'POST',
         json: { email, password, rememberMe },
@@ -35,6 +36,7 @@ export const authApi = {
         permisos: Array.isArray(d.permisos) ? d.permisos : [],
         clienteId: d.cliente_id ?? undefined,
         idleTimeoutMs: d.idle_timeout_ms,
+        estado: uiAct(d.estado) as Usuario['estado'],
       };
     },
     register: async (data: Record<string, unknown>) => {
@@ -54,6 +56,7 @@ export const authApi = {
         permisos: string[];
         cliente_id?: number | null;
         idle_timeout_ms?: number;
+        estado?: string;
       }>('/api/auth/me');
       return {
         id: d.id,
@@ -64,6 +67,7 @@ export const authApi = {
         permisos: Array.isArray(d.permisos) ? d.permisos : [],
         clienteId: d.cliente_id ?? undefined,
         idleTimeoutMs: d.idle_timeout_ms,
+        estado: uiAct(d.estado) as Usuario['estado'],
       };
     },
     logout: async () => {

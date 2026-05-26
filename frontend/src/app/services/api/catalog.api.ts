@@ -8,6 +8,41 @@ import {
 } from '../mappers';
 import { q, rolIdByNombre, clearRolesCache } from './shared';
 
+const sanitizeProveedorPayload = (data: Partial<Proveedor>) => {
+  const trimOrUndefined = (value: unknown) => {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : undefined;
+  };
+
+  const payload: Record<string, unknown> = {
+    ...data,
+    nit: trimOrUndefined(data.nit),
+    telefono: trimOrUndefined(data.telefono),
+    email: trimOrUndefined(data.email),
+    direccion: trimOrUndefined(data.direccion),
+    estado: data.estado ? dbAct(data.estado) : undefined,
+  };
+
+  if (data.tipo === 'Juridica') {
+    payload.nombreRazonSocial = trimOrUndefined(data.nombreRazonSocial);
+    delete payload.nombre;
+    delete payload.apellido;
+  } else if (data.tipo === 'Natural') {
+    payload.nombre = trimOrUndefined(data.nombre);
+    payload.apellido = trimOrUndefined(data.apellido);
+    delete payload.nombreRazonSocial;
+  }
+
+  Object.keys(payload).forEach((key) => {
+    if (payload[key] === undefined) {
+      delete payload[key];
+    }
+  });
+
+  return payload;
+};
+
 
 export const catalogApi = {
   categorias: {
@@ -154,10 +189,16 @@ export const catalogApi = {
     },
     getById: async (id: number) => mapProveedor(await apiFetchData(`/api/proveedores/${id}`)),
     create: async (data: Partial<Proveedor>) => {
-      await apiFetch('/api/proveedores', { method: 'POST', json: data });
+      await apiFetch('/api/proveedores', {
+        method: 'POST',
+        json: sanitizeProveedorPayload(data),
+      });
     },
     update: async (id: number, updates: Partial<Proveedor>, _motivo?: string) => {
-      await apiFetch(`/api/proveedores/${id}`, { method: 'PUT', json: updates });
+      await apiFetch(`/api/proveedores/${id}`, {
+        method: 'PUT',
+        json: sanitizeProveedorPayload(updates),
+      });
     },
     delete: async (id: number, motivo: string) => {
       await apiFetch(`/api/proveedores/${id}`, { method: 'DELETE', json: { motivo } });

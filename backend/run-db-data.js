@@ -23,21 +23,41 @@ async function main() {
   await client.connect();
   console.log(`Conectado a «${database}» en ${config.db.host}:${config.db.port}\n`);
 
-  const sqlPath = path.join(__dirname, 'db_data.pgsql');
-  if (!fs.existsSync(sqlPath)) {
-    console.error(`No existe: ${sqlPath}`);
+  const candidatePaths = ['db_data.pgsql', 'db.pgsql'].map((fileName) => path.join(__dirname, fileName));
+  const sqlPath = candidatePaths.find((candidate) => fs.existsSync(candidate));
+  if (!sqlPath) {
+    console.error(`No existe ningún script SQL en: ${candidatePaths.join(', ')}`);
     process.exit(1);
   }
 
+  const sqlFileName = path.basename(sqlPath);
   const sql = fs.readFileSync(sqlPath, 'utf8');
 
   try {
     await client.query('SET statement_timeout = 0');
-    console.log('Ejecutando db_data.pgsql (DROP, DDL, triggers, índices y seed)…');
+
+    if (sqlFileName === 'db.pgsql') {
+      const tableCheck = await client.query(
+        `SELECT COUNT(*)::int AS total
+         FROM information_schema.tables
+         WHERE table_schema = 'public'
+           AND table_type = 'BASE TABLE'`
+      );
+      const existingTables = Number(tableCheck.rows[0]?.total || 0);
+      if (existingTables > 0) {
+        throw new Error(
+          'Se detectó una base con tablas existentes y el único script disponible es db.pgsql, que recrea toda la base. ' +
+          'Use run-migrations.js para actualizar una base existente o agregue db_data.pgsql si necesita una carga puntual.'
+        );
+      }
+      console.warn('db_data.pgsql no existe. Se usará db.pgsql solo porque la base está vacía.');
+    }
+
+    console.log(`Ejecutando ${sqlFileName}...`);
     await client.query(sql);
-    console.log('\n✅ db_data.pgsql aplicado correctamente.');
+    console.log(`\n✅ ${sqlFileName} aplicado correctamente.`);
   } catch (err) {
-    console.error('\n❌ Error al ejecutar db_data.pgsql:', err.message);
+    console.error(`\n❌ Error al ejecutar ${sqlFileName}:`, err.message);
     if (err.position) console.error('Posición SQL aproximada:', err.position);
     process.exit(1);
   } finally {

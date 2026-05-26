@@ -12,6 +12,7 @@ const {
   sendEmailChangeNotification,
   sendPasswordChangeNotification,
   sendUserStatusChangeNotification,
+  sendAccountDeletedNotification,
   sendWelcomeEmail,
 } = require('../services/email.service');
 const { isClienteUser } = require('../utils/selfServiceAccess');
@@ -171,6 +172,7 @@ module.exports = {
       const passwordToHash = useManualPassword ? rawPassword : tempPassword;
       const password_hash = await bcrypt.hash(passwordToHash, 10);
       const id = await models.Usuarios.create({ ...payload, password_hash, actor_id: req.user?.id || null });
+      await models.Usuarios.storePasswordHistory(id, password_hash);
 
       // Correo de bienvenida con credenciales (siempre que el alta sea correcta).
       // - Para alta hecha por admin se envian Email + Contrasena para iniciar sesion.
@@ -264,6 +266,7 @@ module.exports = {
       if (passwordChanged) {
         const newHash = await bcrypt.hash(normalized.data.password.trim(), 10);
         await models.Usuarios.updatePasswordHash(req.params.id, newHash);
+        await models.Usuarios.storePasswordHistory(req.params.id, newHash);
       }
 
       const userName = `${normalized.data.nombre || currentUsuario.nombre || ''} ${normalized.data.apellido || currentUsuario.apellido || ''}`.trim();
@@ -398,10 +401,28 @@ module.exports = {
         });
       }
 
+      const usuario = await models.Usuarios.getById(req.params.id);
+      if (!usuario) {
+        return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
+      }
+
       const result = await models.Usuarios.delete(req.params.id, {
         actor_id: req.user?.id || null,
         reason: motivo,
       });
+
+      if (usuario.email) {
+        void sendAccountDeletedNotification({
+          to: usuario.email,
+          name: `${usuario.nombre || ''} ${usuario.apellido || ''}`.trim(),
+          motivo,
+          changedBy: req.user?.email || null,
+          accountType: 'cuenta de usuario',
+        }).catch((notifyError) => {
+          console.error('No se pudo enviar la notificación de eliminación de usuario:', notifyError.message);
+        });
+      }
+
       res.json({
         success: true,
         message: 'Usuario eliminado exitosamente de la base de datos',

@@ -1,6 +1,14 @@
 const { z } = require('zod');
 const { motivoEstadoBody } = require('./common.schema');
 
+const proveedorEstadoInput = z.enum(['Activo', 'Inactivo', 'activo', 'inactivo']);
+const emptyStringToUndefined = (value) =>
+  typeof value === 'string' && value.trim() === '' ? undefined : value;
+const optionalTrimmedString = () =>
+  z.preprocess(emptyStringToUndefined, z.string().trim().min(1).optional());
+const optionalEmailString = () =>
+  z.preprocess(emptyStringToUndefined, z.string().trim().email().optional());
+
 const createCategoriaBody = z
   .object({
     nombre: z.string().trim().min(1),
@@ -23,18 +31,46 @@ const createProductoBody = z
 
 const updateProductoBody = createProductoBody.partial().passthrough();
 
-const createProveedorBody = z
+const proveedorBodyBase = z
   .object({
-    nombre: z.string().trim().min(1),
-    nit: z.string().trim().optional(),
-    telefono: z.string().trim().optional(),
-    email: z.string().trim().email().optional(),
-    direccion: z.string().trim().optional(),
-    estado: z.enum(['Activo', 'Inactivo']).optional(),
+    nombre: optionalTrimmedString(),
+    apellido: optionalTrimmedString(),
+    nombreRazonSocial: optionalTrimmedString(),
+    nombreEmpresa: optionalTrimmedString(),
+    tipo: z.enum(['Natural', 'Juridica']).optional(),
+    tipoPersona: z.enum(['Natural', 'Juridica']).optional(),
+    nit: optionalTrimmedString(),
+    telefono: optionalTrimmedString(),
+    email: optionalEmailString(),
+    direccion: optionalTrimmedString(),
+    estado: proveedorEstadoInput.optional(),
   })
   .passthrough();
 
-const updateProveedorBody = createProveedorBody.partial().passthrough();
+const createProveedorBody = proveedorBodyBase
+  .superRefine((data, ctx) => {
+    const tipo = String(data.tipoPersona || data.tipo || '').trim();
+    const nombre = String(data.nombre || '').trim();
+    const razonSocial = String(data.nombreRazonSocial || data.nombreEmpresa || '').trim();
+
+    if (tipo === 'Juridica' && !razonSocial) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['nombreRazonSocial'],
+        message: 'La razón social es obligatoria para proveedores jurídicos',
+      });
+    }
+
+    if (tipo === 'Natural' && !nombre) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['nombre'],
+        message: 'El nombre es obligatorio para proveedores naturales',
+      });
+    }
+  });
+
+const updateProveedorBody = proveedorBodyBase.partial().passthrough();
 
 const createCompraBody = z
   .object({

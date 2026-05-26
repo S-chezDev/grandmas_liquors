@@ -71,6 +71,8 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
   const [categoriasExpanded, setCategoriasExpanded] = useState(false);
   const [showCheckout, setShowCheckout] = useState(false);
   const [showMisPedidos, setShowMisPedidos] = useState(false);
+  const [isSubmittingPedido, setIsSubmittingPedido] = useState(false);
+  const [misPedidosLoading, setMisPedidosLoading] = useState(false);
   const [metodoPago, setMetodoPago] = useState<'efectivo' | 'transferencia'>('efectivo');
   const [porcentajePago, setPorcentajePago] = useState<'100' | '50'>('100');
   const [pedidos, setPedidos] = useState<any[]>([]);
@@ -82,11 +84,17 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
   const [categoriaSeleccionada, setCategoriaSeleccionada] = useState<string>('Todos');
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
+  const [isPasswordSubmitting, setIsPasswordSubmitting] = useState(false);
   const [passwordData, setPasswordData] = useState({
     currentPassword: '',
     newPassword: '',
     confirmPassword: ''
   });
+  const [checkoutTouched, setCheckoutTouched] = useState({
+    direccion: false,
+    telefono: false,
+  });
+  const [checkoutAttempted, setCheckoutAttempted] = useState(false);
   const [currentPwdOk, setCurrentPwdOk] = useState<boolean | null>(null);
   const [isLogoutDialogOpen, setIsLogoutDialogOpen] = useState(false);
   const [alertState, setAlertState] = useState({
@@ -152,11 +160,46 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
       setPedidos([]);
       return;
     }
+    setMisPedidosLoading(true);
     api.pedidos
       .getAllWithDetails()
       .then((rows) => setPedidos(Array.isArray(rows) ? rows : []))
-      .catch(() => setPedidos([]));
+      .catch(() => setPedidos([]))
+      .finally(() => setMisPedidosLoading(false));
   }, [user]);
+
+  useEffect(() => {
+    if (!user || !showMisPedidos) return undefined;
+
+    let cancelled = false;
+    const loadPedidos = async () => {
+      try {
+        setMisPedidosLoading(true);
+        const rows = await api.pedidos.getAllWithDetails();
+        if (!cancelled) {
+          setPedidos(Array.isArray(rows) ? rows : []);
+        }
+      } catch {
+        if (!cancelled) {
+          setPedidos([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setMisPedidosLoading(false);
+        }
+      }
+    };
+
+    void loadPedidos();
+    const intervalId = window.setInterval(() => {
+      void loadPedidos();
+    }, 15000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [showMisPedidos, user]);
 
   useEffect(() => {
     const pwd = passwordData.currentPassword.trim();
@@ -220,22 +263,22 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
 
   // Agregar al carrito
   const agregarAlCarrito = (producto: Producto) => {
-    const itemExistente = carrito.find(item => item.producto.id === producto.id);
-
-    if (itemExistente) {
-      setCarrito(carrito.map(item =>
-        item.producto.id === producto.id
-          ? { ...item, cantidad: item.cantidad + 1 }
-          : item
-      ));
-    } else {
-      setCarrito([...carrito, { producto, cantidad: 1 }]);
-    }
+    setCarrito((prev) => {
+      const itemExistente = prev.find((item) => item.producto.id === producto.id);
+      if (itemExistente) {
+        return prev.map((item) =>
+          item.producto.id === producto.id
+            ? { ...item, cantidad: item.cantidad + 1 }
+            : item
+        );
+      }
+      return [...prev, { producto, cantidad: 1 }];
+    });
   };
 
   // Incrementar cantidad
   const incrementarCantidad = (productoId: string) => {
-    setCarrito(carrito.map(item =>
+    setCarrito((prev) => prev.map((item) =>
       item.producto.id === productoId
         ? { ...item, cantidad: item.cantidad + 1 }
         : item
@@ -244,16 +287,26 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
 
   // Decrementar cantidad
   const decrementarCantidad = (productoId: string) => {
-    setCarrito(carrito.map(item =>
+    setCarrito((prev) => prev.map((item) =>
       item.producto.id === productoId
         ? { ...item, cantidad: Math.max(1, item.cantidad - 1) }
         : item
     ));
   };
 
+  const actualizarCantidad = (productoId: string, rawValue: string) => {
+    const digits = String(rawValue || '').replace(/\D/g, '');
+    const nextCantidad = digits ? Math.min(999, Math.max(1, Number(digits))) : 1;
+    setCarrito((prev) => prev.map((item) =>
+      item.producto.id === productoId
+        ? { ...item, cantidad: nextCantidad }
+        : item
+    ));
+  };
+
   // Eliminar del carrito
   const eliminarDelCarrito = (productoId: string) => {
-    setCarrito(carrito.filter(item => item.producto.id !== productoId));
+    setCarrito((prev) => prev.filter((item) => item.producto.id !== productoId));
   };
 
   // Calcular total del carrito
@@ -290,6 +343,8 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
 
     // Si hay usuario, mostrar checkout
     setIsCarritoOpen(false);
+    setCheckoutAttempted(false);
+    setCheckoutTouched({ direccion: false, telefono: false });
     setShowCheckout(true);
   };
 
@@ -316,6 +371,12 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
 
   // Función para manejar cambio de contraseña
   const newPwdErr = newPasswordPolicyMessage(passwordData.newPassword);
+  const samePasswordErr =
+    passwordData.currentPassword.trim() &&
+    passwordData.newPassword.trim() &&
+    passwordData.currentPassword === passwordData.newPassword
+      ? 'La nueva contraseña debe ser diferente a la actual.'
+      : '';
   const confirmErr =
     passwordData.confirmPassword.trim() && passwordData.newPassword !== passwordData.confirmPassword
       ? 'Las contraseñas nuevas no coinciden.'
@@ -325,8 +386,10 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
 
   const passwordSubmitDisabled =
     !!newPwdErr ||
+    !!samePasswordErr ||
     !!confirmErr ||
     !!currentErr ||
+    isPasswordSubmitting ||
     currentPwdOk !== true ||
     !passwordData.currentPassword.trim() ||
     !passwordData.newPassword.trim() ||
@@ -337,6 +400,7 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
     if (passwordSubmitDisabled) return;
 
     try {
+      setIsPasswordSubmitting(true);
       await api.auth.changePassword(
         passwordData.currentPassword,
         passwordData.newPassword,
@@ -354,8 +418,29 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'No se pudo cambiar la contraseña';
       toast.error(msg);
+    } finally {
+      setIsPasswordSubmitting(false);
     }
   };
+
+  const checkoutDireccion = checkoutData.direccion.trim();
+  const checkoutTelefonoDigits = checkoutData.telefono.replace(/\D/g, '');
+  const shouldShowDireccionError = checkoutTouched.direccion || checkoutAttempted;
+  const shouldShowTelefonoError = checkoutTouched.telefono || checkoutAttempted;
+  const checkoutDireccionError = !checkoutDireccion
+    ? 'La dirección de entrega es obligatoria.'
+    : checkoutDireccion.length < 8
+      ? 'La dirección debe ser más detallada.'
+      : '';
+  const checkoutTelefonoError = !checkoutTelefonoDigits
+    ? 'El teléfono de contacto es obligatorio.'
+    : checkoutTelefonoDigits.length !== 10
+      ? 'El teléfono de contacto debe tener exactamente 10 dígitos.'
+      : '';
+  const checkoutValid =
+    carrito.length > 0 &&
+    !checkoutDireccionError &&
+    !checkoutTelefonoError;
 
   const handleLogoutClick = () => {
     setIsLogoutDialogOpen(true);
@@ -803,7 +888,16 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
                               >
                                 <Minus className="w-4 h-4" />
                               </button>
-                              <span className="w-8 text-center">{item.cantidad}</span>
+                              <input
+                                type="number"
+                                min={1}
+                                max={999}
+                                inputMode="numeric"
+                                value={item.cantidad}
+                                onChange={(e) => actualizarCantidad(item.producto.id, e.target.value)}
+                                className="w-16 rounded-md border border-border bg-white px-2 py-1 text-center text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+                                aria-label={`Cantidad de ${item.producto.nombre}`}
+                              />
                               <button
                                 onClick={() => incrementarCantidad(item.producto.id)}
                                 className="w-7 h-7 rounded-full bg-primary hover:bg-primary/90 text-white flex items-center justify-center transition-colors"
@@ -1163,8 +1257,13 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
                 <div className="flex items-center justify-between">
                   <h3 className="text-white text-base sm:text-lg md:text-xl">Finalizar Pedido</h3>
                   <button
-                    onClick={() => setShowCheckout(false)}
+                    onClick={() => {
+                      if (!isSubmittingPedido) {
+                        setShowCheckout(false);
+                      }
+                    }}
                     className="p-1.5 sm:p-2 rounded-lg hover:bg-white/10 transition-colors"
+                    disabled={isSubmittingPedido}
                   >
                     <X className="w-5 h-5 sm:w-6 sm:h-6" />
                   </button>
@@ -1278,10 +1377,21 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
                       <input
                         type="text"
                         value={checkoutData.direccion}
-                        onChange={(e) => setCheckoutData((prev) => ({ ...prev, direccion: e.target.value }))}
+                        onChange={(e) => {
+                          setCheckoutTouched((prev) => ({ ...prev, direccion: true }));
+                          setCheckoutData((prev) => ({ ...prev, direccion: e.target.value }));
+                        }}
+                        onBlur={() => setCheckoutTouched((prev) => ({ ...prev, direccion: true }))}
                         placeholder="Calle 104 # 79D - 65"
-                        className="w-full px-4 py-3 rounded-lg bg-background border border-border focus:outline-none focus:ring-2 focus:ring-primary/20"
+                        className={`w-full px-4 py-3 rounded-lg bg-background border focus:outline-none focus:ring-2 ${
+                          shouldShowDireccionError && checkoutDireccionError
+                            ? 'border-destructive focus:ring-destructive/20'
+                            : 'border-border focus:ring-primary/20'
+                        }`}
                       />
+                      {shouldShowDireccionError && checkoutDireccionError && (
+                        <p className="mt-2 text-sm text-destructive">{checkoutDireccionError}</p>
+                      )}
                     </div>
 
                     <div>
@@ -1291,15 +1401,24 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
                         inputMode="numeric"
                         maxLength={10}
                         value={checkoutData.telefono}
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          setCheckoutTouched((prev) => ({ ...prev, telefono: true }));
                           setCheckoutData((prev) => ({
                             ...prev,
                             telefono: e.target.value.replace(/\D/g, '').slice(0, 10),
-                          }))
-                        }
+                          }));
+                        }}
+                        onBlur={() => setCheckoutTouched((prev) => ({ ...prev, telefono: true }))}
                         placeholder="3246102339"
-                        className="w-full px-4 py-3 rounded-lg bg-background border border-border focus:outline-none focus:ring-2 focus:ring-primary/20"
+                        className={`w-full px-4 py-3 rounded-lg bg-background border focus:outline-none focus:ring-2 ${
+                          shouldShowTelefonoError && checkoutTelefonoError
+                            ? 'border-destructive focus:ring-destructive/20'
+                            : 'border-border focus:ring-primary/20'
+                        }`}
                       />
+                      {shouldShowTelefonoError && checkoutTelefonoError && (
+                        <p className="mt-2 text-sm text-destructive">{checkoutTelefonoError}</p>
+                      )}
                     </div>
 
                     <div>
@@ -1319,24 +1438,27 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
                 <div className="flex gap-3">
                   <Button
                     variant="outline"
-                    onClick={() => setShowCheckout(false)}
+                    disabled={isSubmittingPedido}
+                    onClick={() => {
+                      if (!isSubmittingPedido) {
+                        setShowCheckout(false);
+                      }
+                    }}
                     className="flex-1"
                   >
                     Cancelar
                   </Button>
                   <Button
+                    disabled={!checkoutValid || isSubmittingPedido}
                     onClick={async () => {
+                      if (isSubmittingPedido) return;
                       try {
-                        if (!checkoutData.direccion.trim()) {
-                          throw new Error('La dirección de entrega es obligatoria');
+                        setCheckoutAttempted(true);
+                        setCheckoutTouched({ direccion: true, telefono: true });
+                        if (!checkoutValid) {
+                          throw new Error(checkoutDireccionError || checkoutTelefonoError || 'Completa los datos del pedido');
                         }
-                        if (!checkoutData.telefono.trim()) {
-                          throw new Error('El teléfono de contacto es obligatorio');
-                        }
-                        const telDigitsCheckout = checkoutData.telefono.replace(/\D/g, '');
-                        if (telDigitsCheckout.length !== 10) {
-                          throw new Error('El teléfono de contacto debe tener exactamente 10 dígitos');
-                        }
+                        setIsSubmittingPedido(true);
 
                         await api.pedidos.create({
                           clienteId: undefined,
@@ -1345,8 +1467,9 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
                           metodoPago,
                           porcentajeAbono: porcentajePago === '50' ? 50 : 100,
                           total: totalCarrito,
-                          direccion: checkoutData.direccion.trim(),
-                          telefono: telDigitsCheckout,
+                          direccion: checkoutDireccion,
+                          telefono: checkoutTelefonoDigits,
+                          observaciones: checkoutData.observaciones.trim(),
                           productos: carrito.map((item) => ({
                             productoId: Number(item.producto.id),
                             cantidad: item.cantidad,
@@ -1370,6 +1493,8 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
                             setMetodoPago('efectivo');
                             setPorcentajePago('100');
                             setCheckoutData({ direccion: '', telefono: '', observaciones: '' });
+                            setCheckoutTouched({ direccion: false, telefono: false });
+                            setCheckoutAttempted(false);
                           }
                         });
                       } catch (error: any) {
@@ -1380,11 +1505,13 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
                           type: 'danger',
                           onConfirm: () => setAlertState(prev => ({ ...prev, isOpen: false })),
                         });
+                      } finally {
+                        setIsSubmittingPedido(false);
                       }
                     }}
                     className="flex-1 bg-primary text-white"
                   >
-                    Confirmar Pedido
+                    {isSubmittingPedido ? 'Enviando...' : 'Confirmar Pedido'}
                   </Button>
                 </div>
               </div>
@@ -1422,7 +1549,14 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
             </div>
 
             <div className="p-4 sm:p-6">
-              {pedidos.length === 0 ? (
+              {misPedidosLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="text-center">
+                    <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-b-2 border-primary"></div>
+                    <p className="text-sm text-muted-foreground">Actualizando tus pedidos...</p>
+                  </div>
+                </div>
+              ) : pedidos.length === 0 ? (
                 <div className="text-center py-12">
                   <ShoppingBag className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-20" />
                   <p className="text-muted-foreground mb-2">No tienes pedidos aún</p>
@@ -1480,8 +1614,34 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
 
                       <div className="border-t border-border pt-3 space-y-2">
                         <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Entrega</span>
+                          <span>{pedido.fechaEntrega || 'Por confirmar'}</span>
+                        </div>
+                        {pedido.domicilio?.estado && (
+                          <div className="flex justify-between text-sm">
+                            <span className="text-muted-foreground">Estado del domicilio</span>
+                            <span>{pedido.domicilio.estado}</span>
+                          </div>
+                        )}
+                        {pedido.direccion && (
+                          <div className="flex justify-between gap-4 text-sm">
+                            <span className="text-muted-foreground">Dirección</span>
+                            <span className="text-right">{pedido.direccion}</span>
+                          </div>
+                        )}
+                        {pedido.telefono && (
+                          <div className="flex justify-between text-sm">
+                            <span className="text-muted-foreground">Teléfono</span>
+                            <span>{pedido.telefono}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">Método de pago</span>
                           <span>{pedido.metodoPago || 'Efectivo'}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Esquema de pago</span>
+                          <span>{pedido.porcentajeAbono === 50 ? 'Abono 50%' : 'Pago total 100%'}</span>
                         </div>
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">Monto pagado</span>
@@ -1657,7 +1817,7 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
             onChange={(value) => setPasswordData({ ...passwordData, newPassword: value as string })}
             placeholder="••••••••"
             required
-            error={passwordData.newPassword.trim() ? newPwdErr || undefined : undefined}
+            error={passwordData.newPassword.trim() ? samePasswordErr || newPwdErr || undefined : undefined}
           />
 
           <FormField
@@ -1678,7 +1838,7 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
           </div>
 
           <FormActions>
-            <Button variant="outline" onClick={() => {
+            <Button variant="outline" disabled={isPasswordSubmitting} onClick={() => {
               setIsChangePasswordOpen(false);
               setIsProfileOpen(true);
               setPasswordData({
@@ -1691,7 +1851,7 @@ export function LandingPage({ onNavigateToLogin, onNavigateToRegister, onNavigat
               Cancelar
             </Button>
             <Button type="submit" disabled={passwordSubmitDisabled} icon={<KeyRound className="w-5 h-5" />}>
-              Cambiar Contraseña
+              {isPasswordSubmitting ? 'Cambiando...' : 'Cambiar Contraseña'}
             </Button>
           </FormActions>
         </Form>

@@ -1,7 +1,7 @@
 ﻿const express = require('express');
 const { wrapController } = require('../utils/wrapController');
 const controller = wrapController(require('../controllers/usuarios.controllers'));
-const { authorizePermissions } = require('../middlewares/auth.middleware');
+const { authorizePermissions, simpleRateLimit } = require('../middlewares/auth.middleware');
 const { validate } = require('../middlewares/validate.middleware');
 const { idParam } = require('../validators/params.schema');
 const { createUsuarioBody, updateUsuarioBody, updateUsuarioEstadoBody } = require('../validators/usuarios.schema');
@@ -11,7 +11,13 @@ router.get('/', authorizePermissions('Ver Usuarios'), controller.getAll);
 router.get('/email/:email', authorizePermissions('Ver Usuarios'), controller.getByEmail);
 router.get('/documento/:documento', authorizePermissions('Ver Usuarios'), controller.getByDocumento);
 router.get('/telefono/:telefono', authorizePermissions('Ver Usuarios'), controller.getByTelefono);
-router.post('/', authorizePermissions('Crear Usuarios'), validate(createUsuarioBody), controller.create);
+router.post(
+  '/',
+  simpleRateLimit(1, 3000, 'create-usuario'),
+  authorizePermissions('Crear Usuarios'),
+  validate(createUsuarioBody),
+  controller.create
+);
 router.put('/:id/estado', authorizePermissions('Editar Usuarios'), validate(idParam, 'params'), validate(updateUsuarioEstadoBody), controller.updateStatus);
 router.patch('/:id/estado', authorizePermissions('Editar Usuarios'), validate(idParam, 'params'), validate(updateUsuarioEstadoBody), controller.updateStatus);
 router.put('/:id/rol', authorizePermissions('Asignar Roles'), validate(idParam, 'params'), controller.assignRole);

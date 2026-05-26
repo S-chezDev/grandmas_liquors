@@ -364,10 +364,48 @@ const sendUserStatusChangeNotification = async ({ to, name, estado, motivo, chan
   return sendWithLogging(message, 'statusChange');
 };
 
+const sendAccountDeletedNotification = async ({ to, name, motivo, changedBy, accountType = 'cuenta' }) => {
+  const safeName = String(name || '').trim() || 'usuario';
+  const safeAccountType = String(accountType || 'cuenta').trim().toLowerCase();
+  const inner = `
+    <p style="margin:0 0 12px 0">Hola <strong>${escapeHtml(safeName)}</strong>,</p>
+    <p style="margin:0 0 12px 0">
+      Le informamos que su ${escapeHtml(safeAccountType)} en <strong>Grandma's Liquors</strong> fue eliminada del sistema.
+    </p>
+    <ul style="margin:0;padding-left:20px;color:#334155">
+      ${changedBy ? `<li style="margin:6px 0"><strong>Registrado por:</strong> ${escapeHtml(changedBy)}</li>` : ''}
+      ${motivo ? `<li style="margin:6px 0"><strong>Motivo:</strong> ${escapeHtml(motivo)}</li>` : ''}
+    </ul>
+    <p style="margin:16px 0 0 0">
+      Si no reconoce esta acción o necesita más información, contacte de inmediato al administrador.
+    </p>
+  `;
+  const message = {
+    from: config.mail.from,
+    to,
+    subject: "Grandma's Liquors — Notificación de eliminación de cuenta",
+    text: [
+      `Hola ${safeName},`,
+      '',
+      `Su ${safeAccountType} en Grandma's Liquors fue eliminada del sistema.`,
+      changedBy ? `Registrado por: ${changedBy}` : null,
+      motivo ? `Motivo: ${motivo}` : null,
+      '',
+      'Si no reconoce esta acción, contacte al administrador.',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    html: wrapBrandedHtml('Cuenta eliminada', inner),
+  };
+
+  return sendWithLogging(message, 'accountDeleted');
+};
+
 module.exports = {
   sendTemporaryPasswordEmail,
   sendEmailChangeNotification,
   sendPasswordChangeNotification,
   sendUserStatusChangeNotification,
+  sendAccountDeletedNotification,
   sendWelcomeEmail,
 };

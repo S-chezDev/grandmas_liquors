@@ -54,6 +54,7 @@ export function Pedidos() {
     direccion: '',
     telefono: ''
   });
+  const [isSubmittingPedido, setIsSubmittingPedido] = useState(false);
 
   useEffect(() => {
     cargarDatos();
@@ -506,6 +507,7 @@ export function Pedidos() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingPedido) return;
 
     if (!formData.clienteId) {
       toast.error('Seleccione un cliente');
@@ -557,6 +559,7 @@ export function Pedidos() {
     }));
 
     try {
+      setIsSubmittingPedido(true);
       if (selectedPedido) {
         await api.pedidos.update(selectedPedido.id, {
           clienteId: formData.clienteId,
@@ -592,6 +595,8 @@ export function Pedidos() {
       cargarDatos();
     } catch (error: any) {
       toast.error(error.message || 'Error al guardar pedido');
+    } finally {
+      setIsSubmittingPedido(false);
     }
   };
 
@@ -1030,11 +1035,13 @@ export function Pedidos() {
           </div>
 
           <FormActions>
-            <Button variant="outline" onClick={() => setIsModalOpen(false)}>
+            <Button variant="outline" disabled={isSubmittingPedido} onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
-            <Button type="submit">
-              {selectedPedido ? 'Actualizar' : 'Crear'} Pedido
+            <Button type="submit" disabled={isSubmittingPedido}>
+              {isSubmittingPedido
+                ? 'Guardando...'
+                : `${selectedPedido ? 'Actualizar' : 'Crear'} Pedido`}
             </Button>
           </FormActions>
         </Form>

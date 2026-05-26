@@ -3,8 +3,15 @@ import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
-/** API en AWS (Elastic Beanstalk). Para backend local: VITE_API_PROXY_TARGET=http://localhost:3002 */
-const DEFAULT_API_PROXY_TARGET = 'http://grandmasapi.us-east-2.elasticbeanstalk.com'
+/**
+ * En desarrollo conviene apuntar al backend local para evitar depender del
+ * entorno AWS cuando se trabaja con `npm run dev`.
+ *
+ * Si se necesita usar otro backend, puede sobrescribirse con
+ * `VITE_API_PROXY_TARGET`.
+ */
+const DEFAULT_LOCAL_API_PROXY_TARGET = 'http://localhost:3002'
+const DEFAULT_REMOTE_API_PROXY_TARGET = 'http://grandmasapi.us-east-2.elasticbeanstalk.com'
 
 
 function figmaAssetResolver() {
@@ -21,7 +28,9 @@ function figmaAssetResolver() {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, '')
-  const apiProxyTarget = env.VITE_API_PROXY_TARGET || DEFAULT_API_PROXY_TARGET
+  const apiProxyTarget =
+    env.VITE_API_PROXY_TARGET ||
+    (mode === 'development' ? DEFAULT_LOCAL_API_PROXY_TARGET : DEFAULT_REMOTE_API_PROXY_TARGET)
 
   return {
   plugins: [

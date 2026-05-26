@@ -57,6 +57,7 @@ const mapUserForResponse = (usuario, roleName, clienteId, permissions = []) => (
   rol: roleName,
   rol_id: usuario.rol_id,
   cliente_id: clienteId,
+  estado: usuario.estado,
   permisos: permissions,
 });
 
@@ -339,6 +340,14 @@ module.exports = {
         return res.status(401).json({ success: false, message: 'La contraseña actual es incorrecta' });
       }
 
+      const sameAsCurrent = await bcrypt.compare(newPassword, usuario.password_hash || '');
+      if (sameAsCurrent) {
+        return res.status(409).json({
+          success: false,
+          message: 'La nueva contraseña debe ser diferente a la contraseña actual',
+        });
+      }
+
       const passwordHistory = await models.Usuarios.getPasswordHistory(userId, 3);
       for (const storedHash of passwordHistory) {
         if (await bcrypt.compare(newPassword, storedHash)) {
@@ -385,6 +394,7 @@ module.exports = {
       // Hash the temporary password and set it as the user's password_hash
       const tempPasswordHash = await bcrypt.hash(token, 10);
       await models.Usuarios.updatePasswordHashWithExpiry(usuario.id, tempPasswordHash, expiresAt);
+      await models.Usuarios.storePasswordHistory(usuario.id, tempPasswordHash);
 
       // Store reset token for audit trail
       await models.Usuarios.createPasswordResetToken({
@@ -446,6 +456,14 @@ module.exports = {
       const usuario = await models.Usuarios.getById(resetRow.usuario_id);
       if (!usuario) {
         return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
+      }
+
+      const sameAsCurrent = await bcrypt.compare(newPassword, usuario.password_hash || '');
+      if (sameAsCurrent) {
+        return res.status(409).json({
+          success: false,
+          message: 'La nueva contraseña debe ser diferente a la contraseña actual',
+        });
       }
 
       const passwordHistory = await models.Usuarios.getPasswordHistory(usuario.id, 3);
@@ -564,6 +582,7 @@ module.exports = {
         });
         clienteId = registered.clienteId;
         usuarioId = registered.usuarioId;
+        await models.Usuarios.storePasswordHistory(usuarioId, passwordHash);
       } catch (error) {
         const mapped = ClienteCuenta.mapRegisterPgUniqueError(error);
         if (mapped) {

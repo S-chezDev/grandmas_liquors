@@ -1,7 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ChevronDown,
-  ChevronRight,
   Users,
   ShoppingCart,
   Package,
@@ -114,7 +113,25 @@ interface SidebarProps {
 export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
   const [expandedItems, setExpandedItems] = useState<string[]>(['Usuarios', 'Compras', 'Producción', 'Ventas', 'Configuración']);
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [hoverCollapseEnabled, setHoverCollapseEnabled] = useState(false);
   const { hasPermission, user } = useAuth();
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const mediaQuery = window.matchMedia('(hover: hover) and (pointer: fine)');
+    const syncCollapseMode = () => {
+      const enableHoverCollapse = mediaQuery.matches;
+      setHoverCollapseEnabled(enableHoverCollapse);
+      setIsCollapsed(enableHoverCollapse);
+    };
+
+    syncCollapseMode();
+    mediaQuery.addEventListener('change', syncCollapseMode);
+    return () => {
+      mediaQuery.removeEventListener('change', syncCollapseMode);
+    };
+  }, []);
 
   const toggleItem = (itemName: string) => {
     setExpandedItems(prev =>
@@ -173,6 +190,12 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
 
   return (
     <div
+      onMouseEnter={() => {
+        if (hoverCollapseEnabled) setIsCollapsed(false);
+      }}
+      onMouseLeave={() => {
+        if (hoverCollapseEnabled) setIsCollapsed(true);
+      }}
       className={`bg-sidebar text-sidebar-foreground min-h-screen h-full flex flex-col border-r border-sidebar-border transition-all duration-300 flex-shrink-0 ${
         isCollapsed ? 'w-12 sm:w-16' : 'w-48 sm:w-56 md:w-64'
       }`}
@@ -205,12 +228,6 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
             </div>
           </div>
         )}
-        <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="w-full flex items-center justify-center p-2 hover:bg-sidebar-accent rounded-lg transition-colors"
-        >
-          <ChevronRight className={`w-5 h-5 transition-transform ${isCollapsed ? '' : 'rotate-180'}`} />
-        </button>
       </div>
 
       {/* Menu Items */}

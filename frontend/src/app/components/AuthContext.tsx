@@ -35,6 +35,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const handleSessionInvalidated = () => {
+      api.roles.clearCache();
+      setUser(null);
+    };
+
+    window.addEventListener('grandmas:session-invalidated', handleSessionInvalidated as EventListener);
+    return () => {
+      window.removeEventListener('grandmas:session-invalidated', handleSessionInvalidated as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
     let mounted = true;
 
     api.auth
@@ -52,6 +66,63 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!user || typeof window === 'undefined') return undefined;
+
+    let cancelled = false;
+
+    const emitSessionInvalidated = (message: string) => {
+      window.dispatchEvent(
+        new CustomEvent('grandmas:session-invalidated', {
+          detail: { message },
+        })
+      );
+    };
+
+    const refreshSession = async () => {
+      try {
+        const me = await api.auth.me();
+        if (!cancelled) {
+          setUser(me as User);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        const status = Number((error as { status?: number } | undefined)?.status || 0);
+        if (status === 401) {
+          const message =
+            error instanceof Error && error.message
+              ? error.message
+              : 'Tu sesión fue cerrada porque la cuenta ya no está activa.';
+          emitSessionInvalidated(message);
+        }
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void refreshSession();
+    }, 15000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshSession();
+      }
+    };
+
+    const handleFocus = () => {
+      void refreshSession();
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [user]);
 
   const login = async (email: string, password: string): Promise<boolean> => {
     try {

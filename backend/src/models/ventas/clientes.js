@@ -12,6 +12,7 @@ const {
   ensureMotivoEstado,
   checkInactivacionDependencias,
   registerClienteAudit,
+  getActiveUserSessionCount,
 } = require('../shared/auditoria');
 
 /**
@@ -61,8 +62,48 @@ const buildClienteBloqueoMensaje = (work, accion) => {
   return `No se puede ${accion} el cliente porque tiene ${detalle}. Finalice o cancele esos registros antes de continuar.`;
 };
 
+const getClienteRecentTransactions = async (clienteId, days = 30) => {
+  const id = Number(clienteId);
+  const safeDays = Number.isFinite(Number(days)) ? Math.max(1, Number(days)) : 30;
+  if (!Number.isFinite(id) || id <= 0) {
+    return { pedidos: 0, ventas: 0, abonos: 0, domicilios: 0, total: 0, days: safeDays };
+  }
+
+  const result = await pool.query(
+    `SELECT
+       (SELECT COUNT(*) FROM pedidos
+         WHERE cliente_id = $1
+           AND COALESCE(created_at, fecha::timestamp) >= CURRENT_TIMESTAMP - ($2 * INTERVAL '1 day'))::int AS pedidos,
+       (SELECT COUNT(*) FROM ventas
+         WHERE cliente_id = $1
+           AND COALESCE(created_at, fecha::timestamp) >= CURRENT_TIMESTAMP - ($2 * INTERVAL '1 day'))::int AS ventas,
+       (SELECT COUNT(*) FROM abonos
+         WHERE cliente_id = $1
+           AND COALESCE(created_at, fecha::timestamp) >= CURRENT_TIMESTAMP - ($2 * INTERVAL '1 day'))::int AS abonos,
+       (SELECT COUNT(*) FROM domicilios
+         WHERE cliente_id = $1
+           AND COALESCE(created_at, fecha::timestamp) >= CURRENT_TIMESTAMP - ($2 * INTERVAL '1 day'))::int AS domicilios`,
+    [id, safeDays]
+  );
+
+  const row = result.rows[0] || {};
+  const pedidos = Number(row.pedidos || 0);
+  const ventas = Number(row.ventas || 0);
+  const abonos = Number(row.abonos || 0);
+  const domicilios = Number(row.domicilios || 0);
+  return {
+    pedidos,
+    ventas,
+    abonos,
+    domicilios,
+    total: pedidos + ventas + abonos + domicilios,
+    days: safeDays,
+  };
+};
+
 const Clientes = {
   getPendingWork: getClientePendingWork,
+  getRecentTransactions: getClienteRecentTransactions,
   buildBloqueoMensaje: buildClienteBloqueoMensaje,
   getAll: async () => {
     const result = await pool.query(
@@ -246,6 +287,16 @@ const Clientes = {
     }
 
     if (current.estado !== 'Inactivo' && estado === 'Inactivo') {
+      if (current.usuario_id) {
+        const activeSessions = await getActiveUserSessionCount(current.usuario_id);
+        if (activeSessions > 0) {
+          const error = new Error('No se puede desactivar un cliente con sesion activa');
+          error.statusCode = 409;
+          error.details = { activeSessions, usuario_id: current.usuario_id };
+          throw error;
+        }
+      }
+
       const work = await getClientePendingWork(id);
       if (work.total > 0) {
         const error = new Error(buildClienteBloqueoMensaje(work, 'inactivar'));

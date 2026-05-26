@@ -30,6 +30,7 @@ export function Header({ title, userName = 'Usuario', userRole = 'Rol', userData
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
   const [isLogoutDialogOpen, setIsLogoutDialogOpen] = useState(false);
+  const [isPasswordSubmitting, setIsPasswordSubmitting] = useState(false);
   const [passwordData, setPasswordData] = useState({
     currentPassword: '',
     newPassword: '',
@@ -68,6 +69,12 @@ export function Header({ title, userName = 'Usuario', userRole = 'Rol', userData
   }, [passwordData.currentPassword]);
 
   const newPwdErr = newPasswordPolicyMessage(passwordData.newPassword);
+  const samePasswordErr =
+    passwordData.currentPassword.trim() &&
+    passwordData.newPassword.trim() &&
+    passwordData.currentPassword === passwordData.newPassword
+      ? 'La nueva contraseña debe ser diferente a la actual.'
+      : '';
   const confirmErr =
     passwordData.confirmPassword.trim() && passwordData.newPassword !== passwordData.confirmPassword
       ? 'Las contraseñas nuevas no coinciden.'
@@ -77,8 +84,10 @@ export function Header({ title, userName = 'Usuario', userRole = 'Rol', userData
 
   const passwordSubmitDisabled =
     !!newPwdErr ||
+    !!samePasswordErr ||
     !!confirmErr ||
     !!currentErr ||
+    isPasswordSubmitting ||
     currentPwdOk !== true ||
     !passwordData.currentPassword.trim() ||
     !passwordData.newPassword.trim() ||
@@ -89,6 +98,7 @@ export function Header({ title, userName = 'Usuario', userRole = 'Rol', userData
     if (passwordSubmitDisabled) return;
 
     try {
+      setIsPasswordSubmitting(true);
       await api.auth.changePassword(
         passwordData.currentPassword,
         passwordData.newPassword,
@@ -106,6 +116,8 @@ export function Header({ title, userName = 'Usuario', userRole = 'Rol', userData
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'No se pudo cambiar la contraseña';
       toast.error(msg);
+    } finally {
+      setIsPasswordSubmitting(false);
     }
   };
 
@@ -298,7 +310,7 @@ export function Header({ title, userName = 'Usuario', userRole = 'Rol', userData
             onChange={(value) => setPasswordData({ ...passwordData, newPassword: value as string })}
             placeholder="••••••••"
             required
-            error={passwordData.newPassword.trim() ? newPwdErr || undefined : undefined}
+            error={passwordData.newPassword.trim() ? samePasswordErr || newPwdErr || undefined : undefined}
           />
 
           <FormField
@@ -319,7 +331,7 @@ export function Header({ title, userName = 'Usuario', userRole = 'Rol', userData
           </div>
 
           <FormActions>
-            <Button variant="outline" onClick={() => {
+            <Button variant="outline" disabled={isPasswordSubmitting} onClick={() => {
               setIsChangePasswordOpen(false);
               setIsProfileOpen(true);
               setPasswordData({
@@ -332,7 +344,7 @@ export function Header({ title, userName = 'Usuario', userRole = 'Rol', userData
               Cancelar
             </Button>
             <Button type="submit" disabled={passwordSubmitDisabled} icon={<KeyRound className="w-5 h-5" />}>
-              Cambiar Contraseña
+              {isPasswordSubmitting ? 'Cambiando...' : 'Cambiar Contraseña'}
             </Button>
           </FormActions>
         </Form>

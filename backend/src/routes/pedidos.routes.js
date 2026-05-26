@@ -1,7 +1,7 @@
 ﻿const express = require('express');
 const { wrapController } = require('../utils/wrapController');
 const controller = wrapController(require('../controllers/pedidos.controllers'));
-const { authorizePermissions } = require('../middlewares/auth.middleware');
+const { authorizePermissions, simpleRateLimit } = require('../middlewares/auth.middleware');
 const { denyRoles } = require('../middlewares/scopeAccess');
 const { validate } = require('../middlewares/validate.middleware');
 const { idParam, clienteIdParam } = require('../validators/params.schema');
@@ -45,7 +45,13 @@ router.patch(
 
 router.get('/', authorizePermissions('Ver Pedidos', 'Ver Mis Pedidos'), denyRoles('Repartidor', 'Productor'), controller.getAll);
 router.get('/:id', authorizePermissions('Ver Pedidos', 'Ver Mis Pedidos'), validate(idParam, 'params'), controller.getById);
-router.post('/', authorizePermissions('Crear Pedidos', 'Ver Mis Pedidos'), validate(createPedidoBody), controller.create);
+router.post(
+  '/',
+  simpleRateLimit(1, 3000, 'create-pedido'),
+  authorizePermissions('Crear Pedidos', 'Ver Mis Pedidos'),
+  validate(createPedidoBody),
+  controller.create
+);
 router.put(
   '/:id',
   authorizePermissions('Editar Pedidos', 'Ver Mis Pedidos'),

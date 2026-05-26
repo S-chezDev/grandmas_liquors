@@ -16,6 +16,42 @@ const {
 const normalizeEstado = (value) => String(value || '').trim().toLowerCase();
 
 const buildDomicilioNumber = () => `DOM-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+const recentPedidoCreateCache = new Map();
+const PEDIDO_DUPLICATE_WINDOW_MS = 15000;
+
+const buildPedidoFingerprint = (clienteId, body = {}) => {
+  const productos = Array.isArray(body.productos)
+    ? body.productos
+        .map((item) => ({
+          productoId: Number(item.productoId ?? item.producto_id ?? 0),
+          cantidad: Number(item.cantidad || 0),
+          precio: Number(item.precio ?? item.precioUnitario ?? 0),
+        }))
+        .sort((a, b) => a.productoId - b.productoId)
+    : [];
+
+  return JSON.stringify({
+    clienteId: Number(clienteId || 0),
+    fecha: String(body.fecha || ''),
+    fechaEntrega: String(body.fecha_entrega || ''),
+    direccion: String(body.direccion || '').trim(),
+    telefono: String(body.telefono || '').replace(/\D/g, ''),
+    metodoPago: String(body.metodo_pago || '').trim(),
+    esquemaAbono: String(body.esquema_abono || '').trim(),
+    total: Number(body.total || 0),
+    detalles: String(body.detalles || '').trim(),
+    productos,
+  });
+};
+
+const cleanupRecentPedidoCreateCache = () => {
+  const now = Date.now();
+  for (const [key, entry] of recentPedidoCreateCache.entries()) {
+    if (!entry || now - entry.createdAtMs >= PEDIDO_DUPLICATE_WINDOW_MS) {
+      recentPedidoCreateCache.delete(key);
+    }
+  }
+};
 
 module.exports = {
   getAll: async (req, res) => {
@@ -80,7 +116,13 @@ module.exports = {
       const pedidos = await models.Pedidos.getByCliente(req.params.clienteId);
       return res.json({ success: true, data: pedidos });
     } catch (error) {
-      return res.status(500).json({ success: false, message: error.message });
+      if (error?.code === '23505') {
+        return res.status(409).json({
+          success: false,
+          message: 'Ya existe un pedido con la misma referencia. Espere un momento e intente nuevamente.',
+        });
+      }
+      return res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
   },
   create: async (req, res) => {
@@ -107,6 +149,23 @@ module.exports = {
         // compute total from productos to avoid mismatches
         const totalCalc = productos.reduce((s, it) => s + (Number(it.precio || it.precioUnitario || 0) * Number(it.cantidad || 0)), 0);
         body.total = totalCalc;
+      }
+
+      if (body.cliente_id) {
+        cleanupRecentPedidoCreateCache();
+        const fingerprint = buildPedidoFingerprint(body.cliente_id, body);
+        const cacheKey = `cliente:${body.cliente_id}`;
+        const cached = recentPedidoCreateCache.get(cacheKey);
+        if (cached && cached.fingerprint === fingerprint && Date.now() - cached.createdAtMs < PEDIDO_DUPLICATE_WINDOW_MS) {
+          return res.status(409).json({
+            success: false,
+            message: 'Ya se está procesando o ya se creó un pedido igual hace un momento. Evite reenviar la solicitud.',
+          });
+        }
+        recentPedidoCreateCache.set(cacheKey, {
+          fingerprint,
+          createdAtMs: Date.now(),
+        });
       }
 
       const id = await models.Pedidos.create(body);
@@ -160,7 +219,13 @@ module.exports = {
 
       return res.status(201).json({ success: true, id, message: 'Pedido creado exitosamente' });
     } catch (error) {
-      return res.status(500).json({ success: false, message: error.message });
+      if (error?.code === '23505') {
+        return res.status(409).json({
+          success: false,
+          message: 'Ya existe un pedido con la misma referencia. Espere un momento e intente nuevamente.',
+        });
+      }
+      return res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
   },
   addProducto: async (req, res) => {
