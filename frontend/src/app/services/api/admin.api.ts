@@ -81,6 +81,43 @@ export const adminApi = {
       return rows.map(mapUsuario);
     },
     getById: async (id: number) => mapUsuario(await apiFetchData(`/api/usuarios/${id}`)),
+    getFullDetail: async (id: number) => {
+      const raw = await apiFetchData<{
+        usuario: any;
+        logs?: any[];
+        sesiones?: Array<{ created_at?: string | null }>;
+        activeSessions?: number;
+      }>(`/api/usuarios/${id}/detalle-completo`);
+
+      const usuario = mapUsuario(raw?.usuario || {});
+      const historialCambios = Array.isArray(raw?.logs)
+        ? raw.logs.map((log) => ({
+            fecha: String(log.created_at || ''),
+            usuario:
+              [String(log.actor_nombre || '').trim(), String(log.actor_apellido || '').trim()]
+                .filter(Boolean)
+                .join(' ') || String(log.actor_email || '').trim() || 'Sistema',
+            accion: String(log.accion || 'Actualización'),
+            motivo:
+              typeof log?.cambios?.reason === 'string' && log.cambios.reason.trim()
+                ? log.cambios.reason.trim()
+                : undefined,
+            detalles:
+              Array.isArray(log?.cambios?.changedFields) && log.cambios.changedFields.length > 0
+                ? `Campos modificados: ${log.cambios.changedFields.join(', ')}`
+                : undefined,
+          }))
+        : [];
+
+      return {
+        ...usuario,
+        historialCambios,
+        ultimoInicioSesion: raw?.sesiones?.[0]?.created_at
+          ? String(raw.sesiones[0].created_at)
+          : undefined,
+        sesionesActivas: Number(raw?.activeSessions || 0),
+      };
+    },
     create: async (data: Partial<Usuario> & { password?: string; rol: string }) => {
       const rid = await rolIdByNombre(data.rol as string);
       await apiFetch('/api/usuarios', {
@@ -121,7 +158,7 @@ export const adminApi = {
     changeEstado: async (id: number, estado: 'activo' | 'inactivo', motivo: string) => {
       await apiFetch(`/api/usuarios/${id}/estado`, {
         method: 'PATCH',
-        json: { estado: dbAct(estado), motivo, notificar: true },
+        json: { estado: dbAct(estado), motivo: String(motivo || '').trim(), notificar: true },
       });
     },
   },

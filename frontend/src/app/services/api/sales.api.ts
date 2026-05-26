@@ -51,7 +51,7 @@ export const salesApi = {
     changeEstado: async (id: number, estado: 'activo' | 'inactivo', motivo: string) => {
       await apiFetch(`/api/clientes/${id}/estado`, {
         method: 'PATCH',
-        json: { estado: dbAct(estado), motivo },
+        json: { estado: dbAct(estado), motivo: String(motivo || '').trim() },
       });
     },
   },

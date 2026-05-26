@@ -400,9 +400,17 @@ export function Usuarios() {
     }
   };
 
-  const handleView = (usuario: Usuario) => {
+  const handleView = async (usuario: Usuario) => {
     setSelectedUsuario(usuario);
     setIsDetailModalOpen(true);
+    try {
+      const detalle = await api.usuarios.getFullDetail(usuario.id);
+      setSelectedUsuario((current) => (current?.id === usuario.id ? detalle : current));
+    } catch (error: any) {
+      toast.error('No se pudo cargar el detalle del usuario', {
+        description: error?.message || 'Intente nuevamente en unos segundos.',
+      });
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -921,6 +929,14 @@ export function Usuarios() {
                 }`}>
                   {selectedUsuario.estado === 'activo' ? 'Activo' : 'Inactivo'}
                 </span>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Último inicio de sesión</p>
+                <p className="font-medium">
+                  {selectedUsuario.ultimoInicioSesion
+                    ? new Date(selectedUsuario.ultimoInicioSesion).toLocaleString('es-CO')
+                    : 'Sin registros'}
+                </p>
               </div>
             </div>
 

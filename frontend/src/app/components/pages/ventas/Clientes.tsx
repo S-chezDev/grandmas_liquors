@@ -193,8 +193,9 @@ export function Clientes() {
 
   const handleConfirmCambioEstado = async () => {
     if (!clienteEstadoTarget) return;
+    const motivoTrim = motivoEstado.trim();
 
-    if (motivoEstado.length < 10 || motivoEstado.length > 50) {
+    if (motivoTrim.length < 10 || motivoTrim.length > 50) {
       toast.error('El motivo debe tener entre 10 y 50 caracteres');
       return;
     }
@@ -203,7 +204,7 @@ export function Clientes() {
       await api.clientes.changeEstado(
         clienteEstadoTarget.cliente.id,
         clienteEstadoTarget.nuevoEstado,
-        motivoEstado
+        motivoTrim
       );
       toast.success(`Estado cambiado a ${clienteEstadoTarget.nuevoEstado}`);
       setIsEstadoModalOpen(false);

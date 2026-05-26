@@ -23,6 +23,8 @@ export interface Usuario {
   createdAt: string;
   updatedAt: string;
   historialCambios: HistorialCambio[];
+  ultimoInicioSesion?: string;
+  sesionesActivas?: number;
 }
 
 export interface Categoria {

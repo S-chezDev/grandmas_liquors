@@ -71,6 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!user || typeof window === 'undefined') return undefined;
 
     let cancelled = false;
+    const refreshIntervalMs = user.rol === 'Cliente' ? 3000 : 15000;
 
     const emitSessionInvalidated = (message: string) => {
       window.dispatchEvent(
@@ -99,9 +100,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     };
 
+    void refreshSession();
     const intervalId = window.setInterval(() => {
       void refreshSession();
-    }, 15000);
+    }, refreshIntervalMs);
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {

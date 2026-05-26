@@ -3,7 +3,7 @@ import { DataTable, Column, commonActions, openPrintablePdf } from '../../DataTa
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, Eye, Trash2, Package, Search, ShoppingCart } from 'lucide-react';
+import { Plus, Eye, Trash2, Package, Search, ShoppingCart, Edit } from 'lucide-react';
 import { api } from '../../../services/api';
 import { formatEntityCode } from '../../../services/mappers';
 import type { Compra, Producto, Proveedor, CompraProducto } from '../../../services/types';
@@ -35,6 +35,7 @@ export function Compras() {
     precioCompra: 0,
     ganancia: 0
   });
+  const [editingProductoId, setEditingProductoId] = useState<number | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [filtroEstado, setFiltroEstado] = useState<string>('Todos');
@@ -76,11 +77,11 @@ export function Compras() {
 
   const seleccionarProductoCompra = (producto: Producto) => {
     const esInsumo = producto.typo === 'insumo';
-    setProductoActual({
-      ...productoActual,
+    setProductoActual((prev) => ({
+      ...prev,
       productoId: producto.id,
-      ganancia: esInsumo ? 0 : productoActual.ganancia,
-    });
+      ganancia: esInsumo ? 0 : prev.ganancia,
+    }));
     setBusquedaProducto(`${producto.nombre} (ID: ${producto.id})`);
     setMostrarListaProductos(false);
   };
@@ -109,6 +110,26 @@ export function Compras() {
       currency: 'COP',
       minimumFractionDigits: 0
     }).format(value);
+  };
+
+  const formatNumberWithThousands = (value: number) =>
+    value > 0 ? new Intl.NumberFormat('es-CO').format(value) : '';
+
+  const parseIntegerInput = (value: string | number) => {
+    const digits = String(value ?? '').replace(/\D/g, '');
+    return digits ? Number(digits) : 0;
+  };
+
+  const resetProductoForm = () => {
+    setProductoActual({
+      productoId: 0,
+      cantidad: 0,
+      precioCompra: 0,
+      ganancia: 0
+    });
+    setBusquedaProducto('');
+    setMostrarListaProductos(false);
+    setEditingProductoId(null);
   };
 
   // Filtrar proveedores según búsqueda
@@ -248,9 +269,10 @@ export function Compras() {
 
   const confirmarCambioEstado = async () => {
     if (!selectedCompra) return;
+    const motivoCancelacionLimpio = motivoCancelacion.trim();
 
     if (nuevoEstado === 'cancelada') {
-      if (motivoCancelacion.length < 10 || motivoCancelacion.length > 50) {
+      if (motivoCancelacionLimpio.length < 10 || motivoCancelacionLimpio.length > 50) {
         toast.error('Error de validación', {
           description: 'El motivo debe tener entre 10 y 50 caracteres'
         });
@@ -262,7 +284,7 @@ export function Compras() {
       await api.compras.changeEstado(
         selectedCompra.id,
         nuevoEstado,
-        nuevoEstado === 'cancelada' ? motivoCancelacion : undefined
+        nuevoEstado === 'cancelada' ? motivoCancelacionLimpio : undefined
       );
 
       toast.success('Estado actualizado', {
@@ -295,6 +317,7 @@ export function Compras() {
       precioCompra: 0,
       ganancia: 0
     });
+    setEditingProductoId(null);
     setBusquedaProveedor('');
     setMostrarListaProveedores(false);
     setBusquedaProducto('');
@@ -399,8 +422,10 @@ export function Compras() {
       }
     }
 
-    // Verificar si el producto ya está en la lista
-    const yaExiste = formData.productos.find(p => p.productoId === productoActual.productoId);
+    // Verificar si el producto ya está en la lista, salvo que se esté editando esa misma línea.
+    const yaExiste = formData.productos.find(
+      (p) => p.productoId === productoActual.productoId && p.productoId !== editingProductoId
+    );
     if (yaExiste) {
       toast.error('Error', { description: 'El producto ya está en la lista' });
       return;
@@ -414,22 +439,41 @@ export function Compras() {
       subtotal: productoActual.cantidad * productoActual.precioCompra
     };
 
-    setFormData({
-      ...formData,
-      productos: [...formData.productos, nuevoProducto]
-    });
+    if (editingProductoId !== null) {
+      setFormData({
+        ...formData,
+        productos: formData.productos.map((p) =>
+          p.productoId === editingProductoId ? nuevoProducto : p
+        )
+      });
+      toast.success('Producto actualizado');
+    } else {
+      setFormData({
+        ...formData,
+        productos: [...formData.productos, nuevoProducto]
+      });
+      toast.success('Producto agregado');
+    }
 
-    // Limpiar formulario de producto
+    resetProductoForm();
+  };
+
+  const editarProducto = (productoId: number) => {
+    const producto = formData.productos.find((p) => p.productoId === productoId);
+    const productoCatalogo = productos.find((p) => p.id === productoId);
+    if (!producto) return;
+
+    setEditingProductoId(productoId);
     setProductoActual({
-      productoId: 0,
-      cantidad: 0,
-      precioCompra: 0,
-      ganancia: 0
+      productoId: producto.productoId,
+      cantidad: producto.cantidad,
+      precioCompra: producto.precioCompra,
+      ganancia: producto.ganancia
     });
-    setBusquedaProducto('');
+    setBusquedaProducto(
+      productoCatalogo ? `${productoCatalogo.nombre} (ID: ${productoCatalogo.id})` : `ID: ${productoId}`
+    );
     setMostrarListaProductos(false);
-
-    toast.success('Producto agregado');
   };
 
   const eliminarProducto = (productoId: number) => {
@@ -437,6 +481,9 @@ export function Compras() {
       ...formData,
       productos: formData.productos.filter(p => p.productoId !== productoId)
     });
+    if (editingProductoId === productoId) {
+      resetProductoForm();
+    }
     toast.success('Producto eliminado');
   };
 
@@ -735,17 +782,13 @@ export function Compras() {
               <FormField
                 label="Precio de Compra *"
                 name="precioCompra"
-                type="number"
-                value={productoActual.precioCompra === 0 ? '' : productoActual.precioCompra}
+                type="text"
+                value={formatNumberWithThousands(productoActual.precioCompra)}
                 onChange={(value) => {
-                  const num = parseInt(value as string) || 0;
-                  if (num < 0) {
-                    toast.warning('No se permiten números negativos');
-                    return;
-                  }
+                  const num = parseIntegerInput(value as string);
                   setProductoActual({ ...productoActual, precioCompra: num });
                 }}
-                min={1}
+                placeholder="Ej: 125.000"
               />
 
               {!lineaCompraEsInsumo && (
@@ -772,9 +815,16 @@ export function Compras() {
               )}
             </div>
 
-            <Button type="button" onClick={agregarProducto} size="sm">
-              Agregar Producto
-            </Button>
+            <div className="flex gap-2">
+              <Button type="button" onClick={agregarProducto} size="sm">
+                {editingProductoId !== null ? 'Guardar cambios' : 'Agregar Producto'}
+              </Button>
+              {editingProductoId !== null && (
+                <Button type="button" variant="outline" onClick={resetProductoForm} size="sm">
+                  Cancelar edición
+                </Button>
+              )}
+            </div>
           </div>
 
           {/* Lista de productos agregados */}
@@ -796,14 +846,24 @@ export function Compras() {
                           | Subtotal: {formatCurrency(prod.subtotal)}
                         </p>
                       </div>
-                      <Button
-                        type="button"
-                        variant="danger"
-                        size="sm"
-                        onClick={() => eliminarProducto(prod.productoId)}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => editarProducto(prod.productoId)}
+                        >
+                          <Edit className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="danger"
+                          size="sm"
+                          onClick={() => eliminarProducto(prod.productoId)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
                     </div>
                   );
                 })}

@@ -260,7 +260,7 @@ export const catalogApi = {
       const mapDb: Record<string, string> = { pendiente: 'Pendiente', recibida: 'Recibida', cancelada: 'Cancelada' };
       await apiFetch(`/api/compras/${id}/estado`, {
         method: 'PATCH',
-        json: { estado: mapDb[estado], motivo_cancelacion: motivo },
+        json: { estado: mapDb[estado], motivo_cancelacion: typeof motivo === 'string' ? motivo.trim() : undefined },
       });
     },
   },
