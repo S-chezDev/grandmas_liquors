@@ -73,10 +73,10 @@ const menuItems: MenuItem[] = [
     module: 'compras',
     roles: ['Administrador', 'Asesor'],
     subItems: [
-      { name: 'Proveedores', icon: <Building2 className="w-4 h-4" />, path: '/compras/proveedores', module: 'compras' },
-      { name: 'Compras', icon: <ShoppingCart className="w-4 h-4" />, path: '/compras/compras', module: 'compras' },
+      { name: 'Proveedores', icon: <Building2 className="w-4 h-4" />, path: '/compras/proveedores', module: 'compras/proveedores' },
+      { name: 'Compras', icon: <ShoppingCart className="w-4 h-4" />, path: '/compras/compras', module: 'compras/compras' },
       { name: 'Productos', icon: <Package className="w-4 h-4" />, path: '/compras/productos', module: 'compras/productos' },
-      { name: 'Categorías de Producto', icon: <Tags className="w-4 h-4" />, path: '/compras/categorias', module: 'compras' }
+      { name: 'Categorías de Producto', icon: <Tags className="w-4 h-4" />, path: '/compras/categorias', module: 'compras/categorias' }
     ]
   },
   {
@@ -87,7 +87,7 @@ const menuItems: MenuItem[] = [
     subItems: [
       { name: 'Producción', icon: <Boxes className="w-4 h-4" />, path: '/produccion/produccion', module: 'produccion/produccion', roles: ['Administrador', 'Asesor', 'Productor'] },
       { name: 'Entrega de Insumos', icon: <Truck className="w-4 h-4" />, path: '/produccion/entrega-insumos', module: 'produccion/entrega-insumos', roles: ['Administrador', 'Asesor', 'Productor'] },
-      { name: 'Insumos', icon: <Package className="w-4 h-4" />, path: '/produccion/insumos', module: 'produccion', roles: ['Administrador', 'Asesor'] }
+      { name: 'Insumos', icon: <Package className="w-4 h-4" />, path: '/produccion/insumos', module: 'produccion/insumos', roles: ['Administrador', 'Asesor'] }
     ]
   },
   {
@@ -96,9 +96,9 @@ const menuItems: MenuItem[] = [
     module: 'ventas',
     roles: ['Administrador', 'Asesor', 'Repartidor'],
     subItems: [
-      { name: 'Clientes', icon: <UserCircle className="w-4 h-4" />, path: '/ventas/clientes', module: 'ventas', roles: ['Administrador', 'Asesor'] },
-      { name: 'Ventas', icon: <Receipt className="w-4 h-4" />, path: '/ventas/ventas', module: 'ventas', roles: ['Administrador', 'Asesor'] },
-      { name: 'Abonos', icon: <CreditCard className="w-4 h-4" />, path: '/ventas/abonos', module: 'ventas', roles: ['Administrador', 'Asesor'] },
+      { name: 'Clientes', icon: <UserCircle className="w-4 h-4" />, path: '/ventas/clientes', module: 'ventas/clientes', roles: ['Administrador', 'Asesor'] },
+      { name: 'Ventas', icon: <Receipt className="w-4 h-4" />, path: '/ventas/ventas', module: 'ventas/ventas', roles: ['Administrador', 'Asesor'] },
+      { name: 'Abonos', icon: <CreditCard className="w-4 h-4" />, path: '/ventas/abonos', module: 'ventas/abonos', roles: ['Administrador', 'Asesor'] },
       { name: 'Pedidos', icon: <ClipboardList className="w-4 h-4" />, path: '/ventas/pedidos', module: 'ventas/pedidos', roles: ['Administrador', 'Asesor'] },
       { name: 'Domicilios', icon: <Truck className="w-4 h-4" />, path: '/ventas/domicilios', module: 'ventas/domicilios', roles: ['Administrador', 'Asesor', 'Repartidor'] }
     ]
@@ -170,12 +170,7 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
       // Filtro real por permisos (respeta roles personalizados creados en BD).
       if (item.subItems && item.subItems.length > 0) {
         // Si hay sub-items, filtrarlos por permiso
-        item.subItems = item.subItems.filter((subItem) => {
-          if (subItem.roles && user?.rol && !subItem.roles.includes(user.rol)) {
-            return false;
-          }
-          return hasPermission(subItem.module);
-        });
+        item.subItems = item.subItems.filter((subItem) => hasPermission(subItem.module));
         // Si quedan sub-items, mostrar el padre aunque no tenga permiso directo
         return item.subItems.length > 0;
       }

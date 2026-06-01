@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const config = require('../../config');
 const pool = require('../../db');
+const { roleGrantsPermission } = require('../models/shared/auditoria');
 const { getLatestUserStatusReason } = require('../models/shared/auditoria');
 
 // ============================================================
@@ -250,10 +251,8 @@ const authorizePermissions = (...requiredPermissions) => async (req, res, next) 
 
     const userPermissions = Array.isArray(rol.permisos) ? rol.permisos : [];
 
-    // Verificar que el usuario tenga al menos uno de los permisos requeridos
-    const hasPermission = requiredPermissions.some((perm) =>
-      getEquivalentPermissions(perm).some((candidate) => userPermissions.includes(candidate))
-    );
+    // Verificar permiso granular o acceso completo a la gestión que lo incluye
+    const hasPermission = requiredPermissions.some((perm) => roleGrantsPermission(userPermissions, perm));
 
     if (!hasPermission) {
       return res.status(403).json({

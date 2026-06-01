@@ -1008,8 +1008,386 @@ const CLIENT_ALLOWED_PERMISSIONS = [
   'Ver Mis Pedidos',
 ];
 
+/** Prefijo almacenado en BD para acceso completo a una gestión del backoffice. */
+const GESTION_PERMISSION_PREFIX = 'Gestion:';
+
+const PERMISSION_ALIASES_FOR_GRANTS = {
+  'Crear Compras': ['Registrar Compras'],
+  'Crear Ventas': ['Registrar Ventas'],
+  'Crear Abonos': ['Registrar Abonos'],
+  'Editar Domicilios': ['Gestionar Domicilios'],
+  'Eliminar Compras': ['Anular Compras'],
+  'Eliminar Ventas': ['Anular Ventas'],
+};
+
+const getEquivalentPermissionsForGrant = (permission) => {
+  const aliases = PERMISSION_ALIASES_FOR_GRANTS[permission] || [];
+  return [permission, ...aliases];
+};
+
+/**
+ * Módulos del backoffice y sub-gestiones (pantallas/áreas).
+ * id de sub-gestión: "Modulo.SubGestion". El id del módulo agrupa todas sus sub-gestiones.
+ */
+const STAFF_MODULE_CATALOG = [
+  {
+    id: 'Dashboard',
+    label: 'Dashboard',
+    subGestiones: [{ id: 'Dashboard.Panel', label: 'Dashboard', permisos: ['Ver Dashboard'] }],
+  },
+  {
+    id: 'Configuración',
+    label: 'Configuración',
+    subGestiones: [
+      {
+        id: 'Configuración.Roles',
+        label: 'Gestión de roles',
+        permisos: ['Ver Roles', 'Crear Roles', 'Editar Roles', 'Eliminar Roles', 'Asignar Permisos'],
+      },
+    ],
+  },
+  {
+    id: 'Usuarios',
+    label: 'Usuarios',
+    subGestiones: [
+      {
+        id: 'Usuarios.Usuarios',
+        label: 'Gestión de usuarios',
+        permisos: [
+          'Ver Usuarios',
+          'Crear Usuarios',
+          'Editar Usuarios',
+          'Eliminar Usuarios',
+          'Asignar Roles',
+        ],
+      },
+    ],
+  },
+  {
+    id: 'Compras',
+    label: 'Compras',
+    subGestiones: [
+      {
+        id: 'Compras.Proveedores',
+        label: 'Proveedores',
+        permisos: [
+          'Ver Proveedores',
+          'Crear Proveedores',
+          'Editar Proveedores',
+          'Eliminar Proveedores',
+        ],
+      },
+      {
+        id: 'Compras.Compras',
+        label: 'Compras',
+        permisos: [
+          'Ver Compras',
+          'Crear Compras',
+          'Registrar Compras',
+          'Editar Compras',
+          'Eliminar Compras',
+          'Anular Compras',
+        ],
+      },
+      {
+        id: 'Compras.Productos',
+        label: 'Productos',
+        permisos: [
+          'Ver Productos',
+          'Crear Productos',
+          'Editar Productos',
+          'Eliminar Productos',
+          'Ver Producto-Insumos',
+          'Crear Producto-Insumos',
+          'Editar Producto-Insumos',
+          'Eliminar Producto-Insumos',
+        ],
+      },
+      {
+        id: 'Compras.Categorías',
+        label: 'Categorías',
+        permisos: [
+          'Ver Categorías',
+          'Crear Categorías',
+          'Editar Categorías',
+          'Eliminar Categorías',
+        ],
+      },
+    ],
+  },
+  {
+    id: 'Producción',
+    label: 'Producción',
+    subGestiones: [
+      {
+        id: 'Producción.Ordenes',
+        label: 'Producción',
+        permisos: ['Ver Producción', 'Registrar Producción'],
+      },
+      {
+        id: 'Producción.EntregaInsumos',
+        label: 'Entrega de insumos',
+        permisos: ['Entregar Insumos', 'Ver Insumos'],
+      },
+      {
+        id: 'Producción.Insumos',
+        label: 'Insumos',
+        permisos: ['Ver Insumos', 'Crear Insumos', 'Editar Insumos', 'Eliminar Insumos'],
+      },
+    ],
+  },
+  {
+    id: 'Ventas',
+    label: 'Ventas',
+    subGestiones: [
+      {
+        id: 'Ventas.Clientes',
+        label: 'Clientes',
+        permisos: ['Ver Clientes', 'Crear Clientes', 'Editar Clientes', 'Eliminar Clientes'],
+      },
+      {
+        id: 'Ventas.Ventas',
+        label: 'Ventas',
+        permisos: [
+          'Ver Ventas',
+          'Crear Ventas',
+          'Registrar Ventas',
+          'Editar Ventas',
+          'Eliminar Ventas',
+          'Anular Ventas',
+        ],
+      },
+      {
+        id: 'Ventas.Pedidos',
+        label: 'Pedidos',
+        permisos: ['Ver Pedidos', 'Crear Pedidos', 'Editar Pedidos', 'Eliminar Pedidos'],
+      },
+      {
+        id: 'Ventas.Abonos',
+        label: 'Abonos',
+        permisos: ['Ver Abonos', 'Crear Abonos', 'Editar Abonos', 'Eliminar Abonos'],
+      },
+      {
+        id: 'Ventas.Domicilios',
+        label: 'Domicilios',
+        permisos: [
+          'Ver Domicilios',
+          'Crear Domicilios',
+          'Editar Domicilios',
+          'Eliminar Domicilios',
+          'Gestionar Domicilios',
+        ],
+      },
+    ],
+  },
+];
+
+const SUB_GESTION_BY_ID = {};
+const MODULE_BY_SUB_ID = {};
+for (const mod of STAFF_MODULE_CATALOG) {
+  for (const sub of mod.subGestiones) {
+    SUB_GESTION_BY_ID[sub.id] = { ...sub, moduleId: mod.id, moduleLabel: mod.label };
+    MODULE_BY_SUB_ID[sub.id] = mod.id;
+  }
+}
+
+const buildModuleBundle = (moduleId) => {
+  const mod = STAFF_MODULE_CATALOG.find((m) => m.id === moduleId);
+  if (!mod) return [];
+  const perms = new Set();
+  for (const sub of mod.subGestiones) {
+    for (const p of sub.permisos || []) perms.add(p);
+  }
+  return [...perms];
+};
+
+const GESTION_BUNDLES_BY_ID = {};
+for (const mod of STAFF_MODULE_CATALOG) {
+  GESTION_BUNDLES_BY_ID[mod.id] = buildModuleBundle(mod.id);
+  for (const sub of mod.subGestiones) {
+    GESTION_BUNDLES_BY_ID[sub.id] = [...new Set(sub.permisos || [])];
+  }
+}
+
+/** Compatibilidad con código que iteraba GESTION_DEFINITIONS plano */
+const GESTION_DEFINITIONS = STAFF_MODULE_CATALOG.flatMap((mod) =>
+  mod.subGestiones.map((sub) => ({
+    id: sub.id,
+    label: sub.label,
+    moduleId: mod.id,
+    permisos: sub.permisos,
+  }))
+);
+
+const isModuleId = (id) => STAFF_MODULE_CATALOG.some((m) => m.id === id);
+
+const resolveExpansionTargets = (rawId) => {
+  const id = String(rawId || '').trim();
+  if (!id) return [];
+  if (isModuleId(id)) {
+    const mod = STAFF_MODULE_CATALOG.find((m) => m.id === id);
+    return mod ? mod.subGestiones.map((s) => s.id) : [];
+  }
+  if (SUB_GESTION_BY_ID[id]) return [id];
+  return [];
+};
+
+const gestionMarker = (gestionId) => `${GESTION_PERMISSION_PREFIX}${String(gestionId || '').trim()}`;
+
+const parseGestionMarker = (permission) => {
+  const raw = String(permission || '').trim();
+  if (!raw.startsWith(GESTION_PERMISSION_PREFIX)) return null;
+  return raw.slice(GESTION_PERMISSION_PREFIX.length).trim() || null;
+};
+
+const permissionDirectlyHeld = (userPermissions, permission) => {
+  const list = Array.isArray(userPermissions) ? userPermissions : [];
+  return getEquivalentPermissionsForGrant(permission).some((candidate) => list.includes(candidate));
+};
+
+const gestionBundleFullyGranted = (userPermissions, gestionId) => {
+  const bundle = GESTION_BUNDLES_BY_ID[gestionId];
+  if (!bundle || bundle.length === 0) return false;
+  return bundle.every((perm) => permissionDirectlyHeld(userPermissions, perm));
+};
+
+const userHasGestionAccess = (userPermissions, gestionId) => {
+  const list = Array.isArray(userPermissions) ? userPermissions : [];
+  const id = String(gestionId || '').trim();
+  if (!id) return false;
+
+  if (list.some((p) => parseGestionMarker(p) === id)) return true;
+
+  if (isModuleId(id)) {
+    const mod = STAFF_MODULE_CATALOG.find((m) => m.id === id);
+    if (!mod) return false;
+    return mod.subGestiones.some((sub) => userHasGestionAccess(list, sub.id));
+  }
+
+  if (gestionBundleFullyGranted(list, id)) return true;
+
+  const moduleId = MODULE_BY_SUB_ID[id];
+  if (moduleId && list.some((p) => parseGestionMarker(p) === moduleId)) return true;
+
+  return false;
+};
+
+const userHasModuleAccess = (userPermissions, moduleId) => userHasGestionAccess(userPermissions, moduleId);
+
+const roleGrantsPermission = (userPermissions, requiredPermission) => {
+  if (permissionDirectlyHeld(userPermissions, requiredPermission)) return true;
+
+  // Solo sub-gestiones: el bundle del módulo es la unión de todas las subs y no debe
+  // otorgar permisos de áreas sin acceso cuando el rol tiene solo algunas subs marcadas.
+  for (const gestionId of Object.keys(GESTION_BUNDLES_BY_ID)) {
+    if (isModuleId(gestionId)) continue;
+    if (!userHasGestionAccess(userPermissions, gestionId)) continue;
+    const bundle = GESTION_BUNDLES_BY_ID[gestionId] || [];
+    const granted = bundle.some((bundlePerm) =>
+      getEquivalentPermissionsForGrant(bundlePerm).some(
+        (candidate) =>
+          candidate === requiredPermission ||
+          getEquivalentPermissionsForGrant(requiredPermission).includes(candidate)
+      )
+    );
+    if (granted) return true;
+  }
+
+  return false;
+};
+
+const expandRolePermissionsForStorage = (permissions) => {
+  const input = Array.isArray(permissions) ? permissions : [];
+  const granular = new Set();
+  const subMarkers = new Set();
+
+  for (const raw of input) {
+    const trimmed = String(raw || '').trim();
+    if (!trimmed) continue;
+
+    const gestionFromMarker = parseGestionMarker(trimmed);
+    if (gestionFromMarker) {
+      for (const targetId of resolveExpansionTargets(gestionFromMarker)) {
+        subMarkers.add(targetId);
+      }
+      if (isModuleId(gestionFromMarker)) {
+        granular.add(gestionMarker(gestionFromMarker));
+      }
+      continue;
+    }
+
+    for (const targetId of resolveExpansionTargets(trimmed)) {
+      subMarkers.add(targetId);
+    }
+
+    if (!SUB_GESTION_BY_ID[trimmed] && !isModuleId(trimmed)) {
+      granular.add(trimmed);
+    }
+  }
+
+  for (const subId of subMarkers) {
+    granular.add(gestionMarker(subId));
+    const bundle = GESTION_BUNDLES_BY_ID[subId] || [];
+    for (const perm of bundle) {
+      granular.add(perm);
+      for (const alias of PERMISSION_ALIASES_FOR_GRANTS[perm] || []) {
+        granular.add(alias);
+      }
+    }
+    const moduleId = MODULE_BY_SUB_ID[subId];
+    if (moduleId) {
+      const mod = STAFF_MODULE_CATALOG.find((m) => m.id === moduleId);
+      const allSubsMarked = mod?.subGestiones.every((s) => subMarkers.has(s.id));
+      if (allSubsMarked) {
+        granular.add(gestionMarker(moduleId));
+      }
+    }
+  }
+
+  return [...granular];
+};
+
+const collapseRolePermissionsToGestiones = (permissions) => {
+  const list = Array.isArray(permissions) ? permissions : [];
+  const selected = new Set();
+
+  for (const raw of list) {
+    const markerId = parseGestionMarker(raw);
+    if (!markerId) continue;
+    if (isModuleId(markerId)) {
+      const mod = STAFF_MODULE_CATALOG.find((m) => m.id === markerId);
+      if (mod) {
+        for (const sub of mod.subGestiones) selected.add(sub.id);
+      }
+      continue;
+    }
+    if (SUB_GESTION_BY_ID[markerId]) selected.add(markerId);
+  }
+
+  for (const sub of GESTION_DEFINITIONS) {
+    if (gestionBundleFullyGranted(list, sub.id)) {
+      selected.add(sub.id);
+    }
+  }
+
+  return [...selected];
+};
+
 const normalizePermissions = (permissions) => {
   if (!Array.isArray(permissions)) return [];
+
+  const hasGestionInput = permissions.some((permission) => {
+    const trimmed = String(permission || '').trim();
+    return (
+      parseGestionMarker(trimmed) ||
+      SUB_GESTION_BY_ID[trimmed] ||
+      isModuleId(trimmed)
+    );
+  });
+
+  if (hasGestionInput) {
+    return expandRolePermissionsForStorage(permissions);
+  }
 
   const normalized = permissions
     .filter((permission) => typeof permission === 'string')
@@ -1160,6 +1538,17 @@ module.exports = {
   CLIENT_ROLE_NAME,
   CLIENT_ALLOWED_PERMISSIONS,
   normalizePermissions,
+  GESTION_DEFINITIONS,
+  STAFF_MODULE_CATALOG,
+  GESTION_BUNDLES_BY_ID,
+  GESTION_PERMISSION_PREFIX,
+  gestionMarker,
+  parseGestionMarker,
+  expandRolePermissionsForStorage,
+  collapseRolePermissionsToGestiones,
+  roleGrantsPermission,
+  userHasGestionAccess,
+  userHasModuleAccess,
   isClientRoleName,
   validateRoleName,
   buildDuplicateRoleNameError,

@@ -1,4 +1,5 @@
 const pool = require('../../../db');
+const { userHasGestionAccess } = require('../shared/auditoria');
 const Usuarios = require('../usuarios/usuarios');
 
 const Dashboard = {
@@ -134,18 +135,20 @@ const Dashboard = {
     const roleName = rol?.nombre || 'Cliente';
 
     const modulosMap = {
-      dashboard: ['Ver Dashboard'],
-      usuarios: ['Ver Usuarios', 'Ver Roles', 'Asignar Permisos'],
-      configuracion: ['Ver Roles', 'Asignar Permisos'],
-      compras: ['Ver Proveedores', 'Ver Compras', 'Ver Productos', 'Ver Categorías', 'Crear Proveedores', 'Crear Compras'],
-      produccion: ['Ver Insumos', 'Entregar Insumos', 'Ver Producción', 'Registrar Producción'],
-      ventas: ['Ver Clientes', 'Ver Ventas', 'Ver Abonos', 'Ver Pedidos', 'Crear Clientes', 'Crear Ventas'],
-      domicilios: ['Ver Domicilios', 'Editar Domicilios'],
-      cliente: ['Ver Tienda', 'Ver Mis Pedidos', 'Cliente'],
+      dashboard: { moduleId: 'Dashboard', subGestion: 'Dashboard.Panel', permisos: ['Ver Dashboard'] },
+      usuarios: { moduleId: 'Usuarios', subGestion: 'Usuarios.Usuarios', permisos: ['Ver Usuarios'] },
+      configuracion: { moduleId: 'Configuración', subGestion: 'Configuración.Roles', permisos: ['Ver Roles'] },
+      compras: { moduleId: 'Compras', subGestion: null, permisos: ['Ver Compras'] },
+      produccion: { moduleId: 'Producción', subGestion: null, permisos: ['Ver Producción'] },
+      ventas: { moduleId: 'Ventas', subGestion: null, permisos: ['Ver Ventas'] },
+      domicilios: { moduleId: 'Ventas', subGestion: 'Ventas.Domicilios', permisos: ['Ver Domicilios'] },
+      cliente: { moduleId: null, subGestion: null, permisos: ['Ver Tienda', 'Ver Mis Pedidos', 'Cliente'] },
     };
 
     const modulosDisponibles = {};
-    for (const [modulo, permisosRequeridos] of Object.entries(modulosMap)) {
+    for (const [modulo, config] of Object.entries(modulosMap)) {
+      const permisosRequeridos = config.permisos || [];
+
       if (roleName === 'Administrador' && modulo !== 'cliente') {
         modulosDisponibles[modulo] = true;
       } else if (roleName === 'Asesor' && !['usuarios', 'configuracion'].includes(modulo)) {
@@ -154,6 +157,10 @@ const Dashboard = {
         modulosDisponibles[modulo] = modulo === 'dashboard' || modulo === 'domicilios';
       } else if (roleName === 'Productor') {
         modulosDisponibles[modulo] = modulo === 'dashboard' || modulo === 'produccion';
+      } else if (config.subGestion && userHasGestionAccess(permisos, config.subGestion)) {
+        modulosDisponibles[modulo] = true;
+      } else if (config.moduleId && userHasGestionAccess(permisos, config.moduleId)) {
+        modulosDisponibles[modulo] = true;
       } else {
         modulosDisponibles[modulo] = permisosRequeridos.some((p) => permisos.includes(p));
       }
