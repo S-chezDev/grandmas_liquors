@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:grandmas_liquors_movil/presentation/styles/app_colors.dart';
-import 'package:grandmas_liquors_movil/presentation/providers/menu_provider.dart';
 import 'package:grandmas_liquors_movil/presentation/providers/auth_provider.dart';
+import 'package:grandmas_liquors_movil/presentation/providers/menu_provider.dart';
+import 'package:grandmas_liquors_movil/presentation/widgets/app_logo.dart';
 
 class AppDrawer extends ConsumerWidget {
   const AppDrawer({Key? key}) : super(key: key);
@@ -49,44 +50,18 @@ class AppDrawer extends ConsumerWidget {
 
   Widget _buildHeader(dynamic currentUser) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
       width: double.infinity,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              color: AppColors.white,
-              borderRadius: BorderRadius.circular(32),
-              boxShadow: const [
-                BoxShadow(
-                  color: Colors.black26,
-                  blurRadius: 6,
-                  offset: Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Center(
-              child: Text(
-                currentUser?.nombre.isNotEmpty == true
-                    ? currentUser!.nombre[0].toUpperCase()
-                    : 'U',
-                style: const TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.primaryRed,
-                ),
-              ),
-            ),
-          ),
+          const AppLogo(size: 48, borderRadius: BorderRadius.all(Radius.circular(8))),
           const SizedBox(height: 14),
           Text(
             currentUser?.nombre ?? 'Usuario',
             style: const TextStyle(
               color: AppColors.white,
-              fontSize: 18,
+              fontSize: 16,
               fontWeight: FontWeight.bold,
             ),
           ),
@@ -94,7 +69,7 @@ class AppDrawer extends ConsumerWidget {
           Text(
             currentUser?.email ?? '',
             style: TextStyle(
-              color: AppColors.white.withOpacity(0.85),
+              color: AppColors.white.withValues(alpha: 0.85),
               fontSize: 12,
             ),
           ),
@@ -103,9 +78,9 @@ class AppDrawer extends ConsumerWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
-                color: AppColors.white.withOpacity(0.18),
+                color: AppColors.white.withValues(alpha: 0.18),
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: AppColors.white.withOpacity(0.35)),
+                border: Border.all(color: AppColors.white.withValues(alpha: 0.35)),
               ),
               child: Text(
                 currentUser.rol,
@@ -176,7 +151,7 @@ class AppDrawer extends ConsumerWidget {
           child: ExpansionTile(
             iconColor: AppColors.white,
             collapsedIconColor: AppColors.white,
-            backgroundColor: Colors.white.withOpacity(0.08),
+            backgroundColor: Colors.white.withValues(alpha: 0.08),
             collapsedBackgroundColor: Colors.transparent,
             tilePadding: const EdgeInsets.symmetric(
               horizontal: 12,
@@ -219,7 +194,7 @@ class AppDrawer extends ConsumerWidget {
                         children: [
                           Icon(
                             _getIconForItem(subitem.id),
-                            color: AppColors.white.withOpacity(0.85),
+                            color: AppColors.white.withValues(alpha: 0.85),
                             size: 18,
                           ),
                           const SizedBox(width: 12),

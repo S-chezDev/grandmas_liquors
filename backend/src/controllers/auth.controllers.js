@@ -254,6 +254,8 @@ module.exports = {
         message: 'Inicio de sesion exitoso',
         data: {
           ...mapUserForResponse(usuario, roleName, clienteId, permissions),
+          // Token en cuerpo para clientes móviles / Flutter web (origen cruzado no puede usar cookie HttpOnly).
+          token,
           expires_in_ms: sessionTtlMs,
           ...buildSessionMetadata(sessionExpiresAtMs),
         },

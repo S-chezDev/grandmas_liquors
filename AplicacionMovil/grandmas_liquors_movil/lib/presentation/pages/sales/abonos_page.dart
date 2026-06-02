@@ -5,7 +5,9 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:grandmas_liquors_movil/data/models/sales/sales_management_models.dart';
 import 'package:grandmas_liquors_movil/presentation/providers/sales_management_provider.dart';
 import 'package:grandmas_liquors_movil/presentation/styles/app_colors.dart';
-import 'package:grandmas_liquors_movil/presentation/widgets/app_drawer.dart';
+import 'package:grandmas_liquors_movil/presentation/widgets/app_page_scaffold.dart';
+import 'package:grandmas_liquors_movil/presentation/widgets/sales/app_form_helpers.dart';
+import 'package:grandmas_liquors_movil/presentation/widgets/sales/sales_create_sheets.dart';
 
 class AbonosPage extends ConsumerStatefulWidget {
   const AbonosPage({super.key});
@@ -58,104 +60,20 @@ class _AbonosPageState extends ConsumerState<AbonosPage> {
   }
 
   Future<void> _showCreateDialog() async {
-    int? pedidoId;
-    String metodo = 'Efectivo';
-    final montoCtrl = TextEditingController();
-    final formKey = GlobalKey<FormState>();
-
-    final ok = await showDialog<bool>(
+    if (_pedidos.isEmpty) {
+      showAppMessage(context, message: 'No hay pedidos disponibles', isError: true);
+      return;
+    }
+    final ok = await showAppFormSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Nuevo abono'),
-        content: SingleChildScrollView(
-          child: Form(
-            key: formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<int>(
-                  decoration: const InputDecoration(labelText: 'Pedido'),
-                  items: _pedidos
-                      .map(
-                        (p) => DropdownMenuItem(
-                          value: p.id,
-                          child: Text(p.label),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (v) => pedidoId = v,
-                  validator: (v) => v == null ? 'Seleccione un pedido' : null,
-                ),
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: montoCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  decoration: const InputDecoration(labelText: 'Monto'),
-                  validator: (v) {
-                    final n = double.tryParse(
-                      (v ?? '').replaceAll(',', '.').trim(),
-                    );
-                    if (n == null || n <= 0) {
-                      return 'Indique un monto mayor a 0';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  initialValue: metodo,
-                  decoration: const InputDecoration(labelText: 'Método pago'),
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'Efectivo',
-                      child: Text('Efectivo'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'Transferencia',
-                      child: Text('Transferencia'),
-                    ),
-                  ],
-                  onChanged: (v) => metodo = v ?? 'Efectivo',
-                ),
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (formKey.currentState?.validate() != true) return;
-              Navigator.pop(context, true);
-            },
-            child: const Text('Guardar'),
-          ),
-        ],
+      builder: (ctx) => CreateAbonoSheet(
+        repo: ref.read(salesManagementRepositoryProvider),
+        pedidos: _pedidos,
       ),
     );
-
-    if (ok != true) return;
-    if (pedidoId == null || pedidoId! <= 0) return;
-
-    final monto = double.tryParse(montoCtrl.text.replaceAll(',', '.')) ?? 0;
-    if (monto <= 0) return;
-
-    try {
-      final repo = ref.read(salesManagementRepositoryProvider);
-      await repo.createAbono(
-        pedidoId: pedidoId!,
-        monto: monto,
-        metodoPago: metodo,
-      );
+    if (ok == true) {
       await _load();
-      _showSnack('Abono creado correctamente.', isError: false);
-    } catch (e) {
-      _showSnack('No se pudo crear el abono: $e', isError: true);
+      if (mounted) showAppMessage(context, message: 'Abono creado correctamente');
     }
   }
 
@@ -277,9 +195,9 @@ class _AbonosPageState extends ConsumerState<AbonosPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Gestión Abonos')),
-      drawer: const AppDrawer(),
+    return AppPageScaffold(
+      title: 'Gestión de abonos',
+      subtitle: 'Control de pagos parciales y totales',
       floatingActionButton: FloatingActionButton(
         onPressed: _showCreateDialog,
         child: const Icon(LucideIcons.plus),
@@ -303,50 +221,33 @@ class _AbonosPageState extends ConsumerState<AbonosPage> {
 
     if (_error != null) {
       return ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Card(
-            child: ListTile(
-              leading: const Icon(
-                LucideIcons.circleAlert,
-                color: AppColors.error,
-              ),
-              title: const Text('No se pudo cargar la información'),
-              subtitle: Text(_error!),
-              trailing: TextButton(
-                onPressed: _load,
-                child: const Text('Reintentar'),
-              ),
-            ),
-          ),
-        ],
+        children: [AppErrorState(message: _error!, onRetry: _load)],
       );
     }
 
     if (_items.isEmpty) {
       return ListView(
-        padding: const EdgeInsets.all(24),
-        children: [
-          const SizedBox(height: 60),
-          Icon(
-            LucideIcons.creditCard,
-            size: 56,
-            color: AppColors.primaryRed.withOpacity(0.4),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            'Aún no hay abonos registrados.',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium,
+        children: const [
+          AppPageHeader(title: 'Abonos', subtitle: '0 registros en total'),
+          AppEmptyState(
+            icon: LucideIcons.creditCard,
+            message: 'Aún no hay abonos registrados.',
           ),
         ],
       );
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      itemCount: _items.length,
-      itemBuilder: (context, index) => _buildAbonoCard(_items[index]),
+    return ListView(
+      children: [
+        AppPageHeader(
+          title: 'Abonos',
+          subtitle: '${_items.length} registros en total',
+          onCreate: _showCreateDialog,
+          createLabel: 'Nuevo abono',
+        ),
+        ..._items.map(_buildAbonoCard),
+        const SizedBox(height: 80),
+      ],
     );
   }
 

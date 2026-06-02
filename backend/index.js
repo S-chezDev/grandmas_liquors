@@ -103,17 +103,14 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    // In non-production, allow localhost/127.0.0.1 with any port (useful for Flutter web dev servers)
-    if (config.server.env !== 'production') {
-      try {
-        const lc = origin.toLowerCase();
-        if (/^https?:\/\/localhost(:\d+)?$/.test(lc) || /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(lc)) {
-          console.log(`CORS: allowing local dev origin ${origin}`);
-          return callback(null, true);
-        }
-      } catch (e) {
-        // fallthrough to reject
+    // Flutter web y Vite dev: localhost/127.0.0.1 con cualquier puerto
+    try {
+      const lc = origin.toLowerCase();
+      if (/^https?:\/\/localhost(:\d+)?$/.test(lc) || /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(lc)) {
+        return callback(null, true);
       }
+    } catch (e) {
+      // fallthrough to reject
     }
 
     console.warn(`CORS: rejected origin ${origin}. Allowed: ${config.auth.corsOrigins.join(', ')}`);

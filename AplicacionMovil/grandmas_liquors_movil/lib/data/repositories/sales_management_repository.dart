@@ -97,13 +97,79 @@ class SalesManagementRepository {
     final rows = response['data'] is List
         ? response['data'] as List
         : <dynamic>[];
-    return rows.map((r) {
-      final id = _toInt((r as Map<String, dynamic>)['id']);
-      final nombre = (r['nombre'] ?? '').toString().trim();
-      final apellido = (r['apellido'] ?? '').toString().trim();
-      final label = '$nombre $apellido'.trim();
-      return SalesOption(id: id, label: label.isEmpty ? 'Cliente $id' : label);
-    }).toList();
+    return rows
+        .where((r) {
+          final estado = (r as Map<String, dynamic>)['estado']?.toString().toLowerCase() ?? '';
+          return estado.isEmpty || estado == 'activo';
+        })
+        .map((r) {
+          final row = r as Map<String, dynamic>;
+          final id = _toInt(row['id']);
+          final nombre = (row['nombre'] ?? '').toString().trim();
+          final apellido = (row['apellido'] ?? '').toString().trim();
+          final label = '$nombre $apellido'.trim();
+          return SalesOption(id: id, label: label.isEmpty ? 'Cliente $id' : label);
+        })
+        .toList();
+  }
+
+  Future<ClienteDetail> getClienteById(int clienteId) async {
+    final response = await _api.get('/api/clientes/$clienteId');
+    final row = response['data'] is Map<String, dynamic>
+        ? response['data'] as Map<String, dynamic>
+        : <String, dynamic>{};
+    return ClienteDetail(
+      id: _toInt(row['id']),
+      nombre: (row['nombre'] ?? '').toString(),
+      apellido: (row['apellido'] ?? '').toString(),
+      direccion: (row['direccion'] ?? '').toString(),
+      telefono: (row['telefono'] ?? '').toString(),
+      estado: (row['estado'] ?? '').toString(),
+    );
+  }
+
+  Future<List<ProductOption>> getProductosOptions() async {
+    final response = await _api.get('/api/productos');
+    final rows = response['data'] is List
+        ? response['data'] as List
+        : <dynamic>[];
+    return rows
+        .where((r) {
+          final row = r as Map<String, dynamic>;
+          final estado = (row['estado'] ?? '').toString().toLowerCase();
+          final typo = (row['typo'] ?? row['tipo'] ?? '').toString().toLowerCase();
+          return (estado.isEmpty || estado == 'activo') && !typo.contains('insumo');
+        })
+        .map((r) {
+          final row = r as Map<String, dynamic>;
+          return ProductOption(
+            id: _toInt(row['id']),
+            nombre: (row['nombre'] ?? 'Producto').toString(),
+            precio: _toDouble(row['precio_venta'] ?? row['precioVenta'] ?? row['precio']),
+            stock: _toInt(row['stock'] ?? row['stock_actual'] ?? 0),
+          );
+        })
+        .toList();
+  }
+
+  Future<PedidoDetail> getPedidoDetail(int pedidoId) async {
+    final response = await _api.get('/api/pedidos/$pedidoId');
+    final row = response['data'] is Map<String, dynamic>
+        ? response['data'] as Map<String, dynamic>
+        : <String, dynamic>{};
+    return PedidoDetail(
+      id: _toInt(row['id']),
+      clienteId: _toInt(row['cliente_id']),
+      total: _toDouble(row['total']),
+      montoAbonado: _toDouble(row['monto_abonado'] ?? row['montoAbonado']),
+      esquemaAbono: (row['esquema_abono'] ?? row['esquemaAbono'] ?? '100%').toString(),
+      metodoPago: _normalizeMetodoUi((row['metodo_pago'] ?? '').toString()),
+      estado: (row['estado'] ?? '').toString(),
+      fechaEntrega: (row['fecha_entrega'] ?? '').toString().split('T').first,
+      fechaPedido: (row['fecha'] ?? '').toString().split('T').first,
+      direccion: (row['direccion'] ?? row['detalles'] ?? '').toString(),
+      telefono: (row['telefono'] ?? '').toString(),
+    );
   }
 
   Future<List<SalesOption>> getPedidosOptions() async {
@@ -168,22 +234,28 @@ class SalesManagementRepository {
   }
 
   Future<void> createVenta({
-    required int clienteId,
+    required String tipo,
+    int? clienteId,
+    int? pedidoId,
     required double total,
     required String metodoPago,
-    String tipo = 'Directa',
+    required String fecha,
+    required String estado,
+    List<ProductLineInput> productos = const [],
   }) async {
-    await _api.post(
-      '/api/ventas',
-      data: {
-        'tipo': tipo,
-        'cliente_id': clienteId,
-        'fecha': DateTime.now().toIso8601String().split('T').first,
-        'metodopago': _metodoToApi(metodoPago),
-        'total': total,
-        'estado': 'Pendiente',
-      },
-    );
+    final payload = <String, dynamic>{
+      'tipo': tipo.toLowerCase().contains('pedido') ? 'Por Pedido' : 'Directa',
+      'fecha': fecha,
+      'metodopago': _metodoToApi(metodoPago),
+      'total': total,
+      'estado': _estadoVentaToApi(estado),
+    };
+    if (clienteId != null && clienteId > 0) payload['cliente_id'] = clienteId;
+    if (pedidoId != null && pedidoId > 0) payload['pedido_id'] = pedidoId;
+    if (productos.isNotEmpty) {
+      payload['items'] = productos.map((p) => p.toApiJson()).toList();
+    }
+    await _api.post('/api/ventas', data: payload);
   }
 
   Future<VentaItem> getVentaById(int ventaId) async {
@@ -283,15 +355,18 @@ class SalesManagementRepository {
     required int pedidoId,
     required double monto,
     required String metodoPago,
+    required String fecha,
+    int? porcentaje,
   }) async {
     await _api.post(
       '/api/abonos',
       data: {
         'pedido_id': pedidoId,
         'monto': monto,
-        'fecha': DateTime.now().toIso8601String().split('T').first,
+        'fecha': fecha,
         'metodo_pago': _metodoToApi(metodoPago),
         'estado': 'Registrado',
+        if (porcentaje != null) 'porcentaje_abonado': porcentaje,
       },
     );
   }
@@ -393,25 +468,32 @@ class SalesManagementRepository {
 
   Future<void> createPedido({
     required int clienteId,
-    required double total,
     required String metodoPago,
     required String esquemaAbono,
     required String fechaEntrega,
+    required List<ProductLineInput> productos,
+    String? direccion,
+    String? telefono,
+    String? detalles,
   }) async {
-    await _api.post(
-      '/api/pedidos',
-      data: {
-        'numero_pedido': 'PED-${DateTime.now().millisecondsSinceEpoch}',
-        'cliente_id': clienteId,
-        'fecha': DateTime.now().toIso8601String().split('T').first,
-        'fecha_entrega': fechaEntrega,
-        'detalles': '',
-        'total': total,
-        'estado': 'Pendiente',
-        'metodo_pago': _metodoToApi(metodoPago),
-        'esquema_abono': esquemaAbono,
-      },
-    );
+    final total = productos.fold<double>(0, (s, p) => s + p.subtotal);
+    final payload = <String, dynamic>{
+      'cliente_id': clienteId,
+      'fecha': DateTime.now().toIso8601String().split('T').first,
+      'fecha_entrega': fechaEntrega,
+      'total': total,
+      'estado': 'Pendiente',
+      'metodo_pago': _metodoToApi(metodoPago),
+      'esquema_abono': esquemaAbono,
+      'productos': productos.map((p) => p.toApiJson()).toList(),
+    };
+    final dir = (direccion ?? '').trim();
+    final tel = (telefono ?? '').replaceAll(RegExp(r'\D'), '');
+    final det = (detalles ?? '').trim();
+    if (dir.length >= 5) payload['direccion'] = dir;
+    if (tel.isNotEmpty) payload['telefono'] = tel;
+    if (det.length >= 5) payload['detalles'] = det;
+    await _api.post('/api/pedidos', data: payload);
   }
 
   Future<PedidoItem> getPedidoById(int pedidoId) async {
@@ -535,15 +617,21 @@ class SalesManagementRepository {
   Future<void> createDomicilio({
     required int pedidoId,
     required int repartidorId,
+    String? repartidorNombre,
+    String? direccionFallback,
+    String? fecha,
   }) async {
-    await _api.post(
-      '/api/domicilios',
-      data: {
-        'pedido_id': pedidoId,
-        'repartidor_id': repartidorId,
-        'estado': 'Pendiente',
-      },
-    );
+    final payload = <String, dynamic>{
+      'pedido_id': pedidoId,
+      'repartidor_id': repartidorId,
+      'estado': 'Pendiente',
+    };
+    final nombre = (repartidorNombre ?? '').trim();
+    if (nombre.isNotEmpty) payload['repartidor'] = nombre.length > 100 ? nombre.substring(0, 100) : nombre;
+    final dir = (direccionFallback ?? '').trim();
+    if (dir.isNotEmpty) payload['direccion'] = dir.length > 2000 ? dir.substring(0, 2000) : dir;
+    if (fecha != null && fecha.isNotEmpty) payload['fecha'] = fecha.split('T').first;
+    await _api.post('/api/domicilios', data: payload);
   }
 
   Future<void> changeDomicilioEstado(

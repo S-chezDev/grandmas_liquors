@@ -5,6 +5,93 @@ class SalesOption {
   SalesOption({required this.id, required this.label});
 }
 
+class ProductOption {
+  final int id;
+  final String nombre;
+  final double precio;
+  final int stock;
+
+  ProductOption({
+    required this.id,
+    required this.nombre,
+    required this.precio,
+    required this.stock,
+  });
+}
+
+class ClienteDetail {
+  final int id;
+  final String nombre;
+  final String apellido;
+  final String direccion;
+  final String telefono;
+  final String estado;
+
+  ClienteDetail({
+    required this.id,
+    required this.nombre,
+    required this.apellido,
+    required this.direccion,
+    required this.telefono,
+    required this.estado,
+  });
+
+  String get label => '$nombre $apellido'.trim();
+}
+
+class PedidoDetail {
+  final int id;
+  final int clienteId;
+  final double total;
+  final double montoAbonado;
+  final String esquemaAbono;
+  final String metodoPago;
+  final String estado;
+  final String fechaEntrega;
+  final String fechaPedido;
+  final String direccion;
+  final String telefono;
+
+  PedidoDetail({
+    required this.id,
+    required this.clienteId,
+    required this.total,
+    required this.montoAbonado,
+    required this.esquemaAbono,
+    required this.metodoPago,
+    required this.estado,
+    required this.fechaEntrega,
+    required this.fechaPedido,
+    required this.direccion,
+    required this.telefono,
+  });
+
+  double get saldoPendiente => (total - montoAbonado).clamp(0, double.infinity);
+}
+
+class ProductLineInput {
+  final int productoId;
+  final String nombre;
+  final int cantidad;
+  final double precio;
+
+  ProductLineInput({
+    required this.productoId,
+    required this.nombre,
+    required this.cantidad,
+    required this.precio,
+  });
+
+  double get subtotal => precio * cantidad;
+
+  Map<String, dynamic> toApiJson() => {
+    'productoId': productoId,
+    'cantidad': cantidad,
+    'precio': precio,
+    'precioUnitario': precio,
+  };
+}
+
 class VentaItem {
   final int id;
   final int clienteId;

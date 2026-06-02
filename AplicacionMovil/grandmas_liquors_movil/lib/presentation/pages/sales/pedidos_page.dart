@@ -4,7 +4,10 @@ import 'package:intl/intl.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:grandmas_liquors_movil/data/models/sales/sales_management_models.dart';
 import 'package:grandmas_liquors_movil/presentation/providers/sales_management_provider.dart';
-import 'package:grandmas_liquors_movil/presentation/widgets/app_drawer.dart';
+import 'package:grandmas_liquors_movil/presentation/widgets/app_form_field.dart';
+import 'package:grandmas_liquors_movil/presentation/widgets/app_page_scaffold.dart';
+import 'package:grandmas_liquors_movil/presentation/widgets/sales/app_form_helpers.dart';
+import 'package:grandmas_liquors_movil/presentation/widgets/sales/sales_create_sheets.dart';
 
 class PedidosPage extends ConsumerStatefulWidget {
   const PedidosPage({super.key});
@@ -15,133 +18,98 @@ class PedidosPage extends ConsumerStatefulWidget {
 
 class _PedidosPageState extends ConsumerState<PedidosPage> {
   bool _loading = true;
+  String? _error;
   List<PedidoItem> _items = [];
   List<SalesOption> _clientes = [];
-  final _currency = NumberFormat.currency(
-    locale: 'es_CO',
-    symbol: r'$ ',
-    decimalDigits: 0,
-  );
+  List<ProductOption> _productos = [];
+  final _searchCtrl = TextEditingController();
+  String? _estadoFilter;
+  final _currency = NumberFormat.currency(locale: 'es_CO', symbol: r'$ ', decimalDigits: 0);
 
   @override
   void initState() {
     super.initState();
+    _searchCtrl.addListener(() => setState(() {}));
     _load();
   }
 
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<PedidoItem> get _filteredItems {
+    final q = _searchCtrl.text.trim().toLowerCase();
+    return _items.where((item) {
+      final matchSearch = q.isEmpty ||
+          item.id.toString().contains(q) ||
+          item.clienteId.toString().contains(q) ||
+          item.estado.toLowerCase().contains(q);
+      final matchEstado = _estadoFilter == null ||
+          _estadoFilter!.isEmpty ||
+          item.estado.toLowerCase() == _estadoFilter!.toLowerCase();
+      return matchSearch && matchEstado;
+    }).toList();
+  }
+
   Future<void> _load() async {
-    setState(() => _loading = true);
-    final repo = ref.read(salesManagementRepositoryProvider);
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
+      final repo = ref.read(salesManagementRepositoryProvider);
       final results = await Future.wait([
         repo.getPedidos(),
         repo.getClientesOptions(),
+        repo.getProductosOptions(),
       ]);
+      if (!mounted) return;
       setState(() {
         _items = results[0] as List<PedidoItem>;
         _clientes = results[1] as List<SalesOption>;
+        _productos = results[2] as List<ProductOption>;
+        _loading = false;
       });
-    } finally {
-      if (mounted) setState(() => _loading = false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
     }
   }
 
-  Future<void> _showCreateDialog() async {
-    int? clienteId;
-    String metodo = 'Efectivo';
-    String esquema = '50%';
-    final totalCtrl = TextEditingController();
-    final fechaCtrl = TextEditingController(
-      text: DateTime.now().toIso8601String().split('T').first,
-    );
+  String _clienteLabel(int clienteId) {
+    return _clientes
+            .where((c) => c.id == clienteId)
+            .map((c) => c.label)
+            .firstOrNull ??
+        'Cliente $clienteId';
+  }
 
-    final ok = await showDialog<bool>(
+  Future<void> _showCreateDialog() async {
+    if (_clientes.isEmpty) {
+      showAppMessage(context, message: 'No hay clientes disponibles', isError: true);
+      return;
+    }
+    if (_productos.isEmpty) {
+      showAppMessage(context, message: 'No hay productos disponibles', isError: true);
+      return;
+    }
+    final ok = await showAppFormSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Nuevo pedido'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButtonFormField<int>(
-                decoration: const InputDecoration(labelText: 'Cliente'),
-                items: _clientes
-                    .map(
-                      (c) =>
-                          DropdownMenuItem(value: c.id, child: Text(c.label)),
-                    )
-                    .toList(),
-                onChanged: (v) => clienteId = v,
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: totalCtrl,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                decoration: const InputDecoration(labelText: 'Total'),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: fechaCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Fecha entrega (YYYY-MM-DD)',
-                ),
-              ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                value: metodo,
-                decoration: const InputDecoration(labelText: 'Metodo pago'),
-                items: const [
-                  DropdownMenuItem(value: 'Efectivo', child: Text('Efectivo')),
-                  DropdownMenuItem(
-                    value: 'Transferencia',
-                    child: Text('Transferencia'),
-                  ),
-                ],
-                onChanged: (v) => metodo = v ?? 'Efectivo',
-              ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                value: esquema,
-                decoration: const InputDecoration(labelText: 'Esquema abono'),
-                items: const [
-                  DropdownMenuItem(value: '50%', child: Text('50%')),
-                  DropdownMenuItem(value: '100%', child: Text('100%')),
-                ],
-                onChanged: (v) => esquema = v ?? '50%',
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Guardar'),
-          ),
-        ],
+      builder: (ctx) => CreatePedidoSheet(
+        repo: ref.read(salesManagementRepositoryProvider),
+        clientes: _clientes,
+        productos: _productos,
       ),
     );
-
-    if (ok != true) return;
-    if (clienteId == null || clienteId! <= 0) return;
-
-    final total = double.tryParse(totalCtrl.text.replaceAll(',', '.')) ?? 0;
-    if (total <= 0) return;
-
-    final repo = ref.read(salesManagementRepositoryProvider);
-    await repo.createPedido(
-      clienteId: clienteId!,
-      total: total,
-      metodoPago: metodo,
-      esquemaAbono: esquema,
-      fechaEntrega: fechaCtrl.text.trim(),
-    );
-    await _load();
+    if (ok == true) {
+      await _load();
+      if (mounted) showAppMessage(context, message: 'Pedido creado correctamente');
+    }
   }
 
   Future<void> _changeEstado(PedidoItem item, String estado) async {
@@ -150,64 +118,13 @@ class _PedidosPageState extends ConsumerState<PedidosPage> {
       motivo = await _askMotivo();
       if (motivo == null) return;
     }
-    final repo = ref.read(salesManagementRepositoryProvider);
-    await repo.changePedidoEstado(item.id, estado, motivo: motivo);
-    await _load();
-  }
-
-  Future<void> _deleteItem(PedidoItem item) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Eliminar pedido'),
-        content: Text('¿Eliminar el pedido #${item.id}?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Eliminar'),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true) return;
-    await ref.read(salesManagementRepositoryProvider).deletePedido(item.id);
-    await _load();
-  }
-
-  Future<void> _showDetails(PedidoItem item) async {
-    final detail = await ref
-        .read(salesManagementRepositoryProvider)
-        .getPedidoById(item.id);
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Pedido #${detail.id}'),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Cliente: ${detail.clienteId}'),
-              Text('Total: ${_currency.format(detail.total)}'),
-              Text('Método: ${detail.metodoPago}'),
-              Text('Estado: ${detail.estado}'),
-              Text('Entrega: ${detail.fechaEntrega}'),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
-          ),
-        ],
-      ),
-    );
+    try {
+      await ref.read(salesManagementRepositoryProvider).changePedidoEstado(item.id, estado, motivo: motivo);
+      await _load();
+      if (mounted) showAppMessage(context, message: 'Estado actualizado');
+    } catch (e) {
+      if (mounted) showAppMessage(context, message: formatApiError(e), isError: true);
+    }
   }
 
   Future<String?> _askMotivo() async {
@@ -215,23 +132,11 @@ class _PedidosPageState extends ConsumerState<PedidosPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Motivo de cancelacion'),
-        content: TextField(
-          controller: ctrl,
-          maxLength: 50,
-          decoration: const InputDecoration(
-            hintText: 'Entre 10 y 50 caracteres',
-          ),
-        ),
+        title: const Text('Motivo de cancelación'),
+        content: AppFormField(controller: ctrl, label: 'Motivo', hint: 'Entre 10 y 50 caracteres'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Confirmar'),
-          ),
+          OutlinedButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Confirmar')),
         ],
       ),
     );
@@ -243,83 +148,94 @@ class _PedidosPageState extends ConsumerState<PedidosPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Gestion Pedidos')),
-      drawer: const AppDrawer(),
+    final filtered = _filteredItems;
+    return AppPageScaffold(
+      title: 'Gestión de pedidos',
+      subtitle: 'Administra pedidos y entregas',
       floatingActionButton: FloatingActionButton(
         onPressed: _showCreateDialog,
         child: const Icon(LucideIcons.plus),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
+          : _error != null
+          ? AppErrorState(message: _error!, onRetry: _load)
           : RefreshIndicator(
               onRefresh: _load,
-              child: ListView.builder(
-                itemCount: _items.length,
-                itemBuilder: (context, index) {
-                  final item = _items[index];
-                  return Card(
-                    margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                    child: ListTile(
-                      title: Text(
-                        'Pedido #${item.id} - Cliente ${item.clienteId}',
+              child: ListView(
+                children: [
+                  AppPageHeader(
+                    title: 'Pedidos',
+                    subtitle: '${_items.length} registros en total',
+                    onCreate: _showCreateDialog,
+                    createLabel: 'Nuevo pedido',
+                  ),
+                  AppFilterBar(
+                    searchController: _searchCtrl,
+                    searchHint: 'Buscar por ID, cliente o estado...',
+                    filters: [
+                      SizedBox(
+                        width: 160,
+                        child: DropdownButtonFormField<String>(
+                          value: _estadoFilter,
+                          decoration: const InputDecoration(labelText: 'Estado', isDense: true),
+                          items: const [
+                            DropdownMenuItem(value: null, child: Text('Todos')),
+                            DropdownMenuItem(value: 'Pendiente', child: Text('Pendiente')),
+                            DropdownMenuItem(value: 'En Proceso', child: Text('En Proceso')),
+                            DropdownMenuItem(value: 'Completado', child: Text('Completado')),
+                            DropdownMenuItem(value: 'Cancelado', child: Text('Cancelado')),
+                          ],
+                          onChanged: (v) => setState(() => _estadoFilter = v),
+                        ),
                       ),
-                      subtitle: Text(
-                        'Entrega ${item.fechaEntrega} - ${_currency.format(item.total)} - ${item.metodoPago}',
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
+                    ],
+                    onClear: () => setState(() {
+                      _searchCtrl.clear();
+                      _estadoFilter = null;
+                    }),
+                  ),
+                  if (filtered.isEmpty)
+                    const AppEmptyState(icon: LucideIcons.clipboardList, message: 'No hay pedidos para mostrar')
+                  else
+                    ...filtered.map((item) => AppDataCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          DropdownButton<String>(
-                            value: item.estado,
-                            items: const [
-                              DropdownMenuItem(
-                                value: 'Pendiente',
-                                child: Text('Pendiente'),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Pedido #${item.id}',
+                                  style: Theme.of(context).textTheme.titleMedium,
+                                ),
                               ),
-                              DropdownMenuItem(
-                                value: 'En Proceso',
-                                child: Text('En Proceso'),
-                              ),
-                              DropdownMenuItem(
-                                value: 'Completado',
-                                child: Text('Completado'),
-                              ),
-                              DropdownMenuItem(
-                                value: 'Cancelado',
-                                child: Text('Cancelado'),
-                              ),
+                              AppStatusChip(label: item.estado),
                             ],
-                            onChanged: (value) {
-                              if (value == null || value == item.estado) return;
-                              _changeEstado(item, value);
-                            },
                           ),
-                          PopupMenuButton<String>(
-                            icon: const Icon(Icons.more_vert),
-                            onSelected: (value) {
-                              if (value == 'detail') {
-                                _showDetails(item);
-                              } else if (value == 'delete') {
-                                _deleteItem(item);
-                              }
-                            },
-                            itemBuilder: (context) => const [
-                              PopupMenuItem(
-                                value: 'detail',
-                                child: Text('Ver detalle'),
+                          const SizedBox(height: 8),
+                          Text(_clienteLabel(item.clienteId)),
+                          Text('Entrega: ${item.fechaEntrega}'),
+                          Text('${_currency.format(item.total)} · ${item.metodoPago}'),
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 8,
+                            children: [
+                              OutlinedButton(
+                                onPressed: () => _changeEstado(item, 'En Proceso'),
+                                child: const Text('En proceso'),
                               ),
-                              PopupMenuItem(
-                                value: 'delete',
-                                child: Text('Eliminar'),
+                              OutlinedButton(
+                                onPressed: () => _changeEstado(item, 'Completado'),
+                                child: const Text('Completar'),
                               ),
                             ],
                           ),
                         ],
                       ),
-                    ),
-                  );
-                },
+                    )),
+                  const SizedBox(height: 80),
+                ],
               ),
             ),
     );

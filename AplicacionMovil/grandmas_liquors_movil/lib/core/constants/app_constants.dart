@@ -38,16 +38,27 @@ class AppConstants {
   static const String appName = 'Grandmas Liquors';
   static const String appVersion = '1.0.0';
 
+  /// Backend en AWS Elastic Beanstalk (mismo que el frontend React).
+  static const String productionApiBaseUrl =
+      'http://apigrandmasliquors.us-east-1.elasticbeanstalk.com';
+
+  /// Proxy local (tool/api_proxy.mjs) para Flutter web + cookies de sesión.
+  static const String webDevProxyBaseUrl = 'http://localhost:3002';
+
   static String _resolveApiBaseUrl() {
     const configuredUrl = String.fromEnvironment('API_BASE_URL');
     if (configuredUrl.isNotEmpty) {
-      return configuredUrl;
+      return _normalizeBaseUrl(configuredUrl);
     }
 
     if (kIsWeb) {
-      return 'http://localhost:3002';
+      return webDevProxyBaseUrl;
     }
 
-    return 'http://192.168.40.76:3002';
+    return productionApiBaseUrl;
+  }
+
+  static String _normalizeBaseUrl(String url) {
+    return url.endsWith('/') ? url.substring(0, url.length - 1) : url;
   }
 }

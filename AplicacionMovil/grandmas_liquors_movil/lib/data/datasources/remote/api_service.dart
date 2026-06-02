@@ -261,9 +261,10 @@ class ApiService {
           error.message != null &&
           error.message!.contains('XMLHttpRequest');
 
+      final baseUrl = AppConstants.apiBaseUrl;
       return NetworkException(
         message: isBrowserNetworkError
-            ? 'No se pudo conectar con la API desde el navegador. Verifica la URL del backend y la configuración CORS.'
+            ? 'No se pudo conectar con la API ($baseUrl). Comprueba tu conexión a internet o que el backend esté desplegado.'
             : 'Error de conexión. Por favor, verifica tu conexión a internet.',
         originalError: error,
       );

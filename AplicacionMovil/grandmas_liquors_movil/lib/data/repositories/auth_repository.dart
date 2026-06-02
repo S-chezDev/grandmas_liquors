@@ -1,5 +1,9 @@
 import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
+
 import '../../core/constants/app_constants.dart';
+import '../../core/errors/exceptions.dart';
 import '../models/auth/auth_models.dart';
 import '../datasources/local/secure_storage.dart';
 import '../datasources/remote/api_service.dart';
@@ -34,17 +38,29 @@ class AuthRepository {
         : <String, dynamic>{};
 
     final user = UsuarioModel.fromJson(payload);
-    final token =
-        _extractTokenFromCookieHeader(response['set_cookie'] as String?) ?? '';
+    final token = _resolveSessionToken(payload, response['set_cookie'] as String?);
 
     if (token.isNotEmpty) {
       await _secureStorage.saveToken(token);
+      await _persistUserSession(user);
+      return LoginResponse(token: token, usuario: user);
     }
 
-    await _secureStorage.saveUserData(jsonEncode(user.toJson()));
-    await _secureStorage.savePermissions(jsonEncode(user.permisos));
+    if (kIsWeb) {
+      final verified = await refreshUser();
+      if (verified == null) {
+        throw AuthenticationException(
+          message:
+              'No se pudo iniciar sesión en el navegador. Ejecute el proxy de API (tool/start_api_proxy.bat) en otra terminal y reinicie la app.',
+        );
+      }
+      await _persistUserSession(verified);
+      return LoginResponse(token: token, usuario: verified);
+    }
 
-    return LoginResponse(token: token, usuario: user);
+    throw AuthenticationException(
+      message: 'El servidor no devolvió un token de sesión.',
+    );
   }
 
   Future<void> logout() async {
@@ -71,7 +87,13 @@ class AuthRepository {
 
   Future<bool> hasValidToken() async {
     try {
-      return await _secureStorage.hasToken();
+      if (await _secureStorage.hasToken()) {
+        return true;
+      }
+      if (kIsWeb && await getCurrentUser() != null) {
+        return await refreshUser() != null;
+      }
+      return false;
     } catch (e) {
       return false;
     }
@@ -161,6 +183,22 @@ class AuthRepository {
 
   Future<void> clearSession() async {
     await _secureStorage.clearAll();
+  }
+
+  Future<void> _persistUserSession(UsuarioModel user) async {
+    await _secureStorage.saveUserData(jsonEncode(user.toJson()));
+    await _secureStorage.savePermissions(jsonEncode(user.permisos));
+  }
+
+  String _resolveSessionToken(
+    Map<String, dynamic> payload,
+    String? setCookieHeader,
+  ) {
+    final bodyToken = payload['token']?.toString().trim();
+    if (bodyToken != null && bodyToken.isNotEmpty) {
+      return bodyToken;
+    }
+    return _extractTokenFromCookieHeader(setCookieHeader) ?? '';
   }
 
   String? _extractTokenFromCookieHeader(String? setCookieHeader) {

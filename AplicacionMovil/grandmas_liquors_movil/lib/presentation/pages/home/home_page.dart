@@ -2,133 +2,99 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../providers/auth_provider.dart';
-import '../../widgets/app_drawer.dart';
+import '../../widgets/app_page_scaffold.dart';
+import '../../widgets/app_logo.dart';
 import '../../styles/app_colors.dart';
 
 class HomePage extends ConsumerWidget {
-  const HomePage({Key? key}) : super(key: key);
+  const HomePage({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(currentUserProvider);
 
-    return Scaffold(
-      appBar: AppBar(title: Text('Grandmas Liquors'), elevation: 0),
-      drawer: AppDrawer(),
+    return AppPageScaffold(
+      title: 'Panel principal',
+      subtitle: 'Grandma\'s Liqueurs · Gestión empresarial',
       body: SingleChildScrollView(
         child: Padding(
-          padding: EdgeInsets.all(16),
+          padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Welcome Card
-              Card(
-                child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 60,
-                        height: 60,
-                        decoration: BoxDecoration(
-                          gradient: AppColors.primaryGradient,
-                          borderRadius: BorderRadius.circular(30),
-                        ),
-                        child: Center(
-                          child: Text(
-                            user?.nombre.isNotEmpty == true
-                                ? user!.nombre[0].toUpperCase()
-                                : 'U',
-                            style: TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.white,
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: AppColors.white,
+                  borderRadius: BorderRadius.circular(AppColors.radiusLg),
+                  border: Border.all(color: AppColors.borderColor),
+                ),
+                child: Row(
+                  children: [
+                    const AppLogo(size: 56, borderRadius: BorderRadius.all(Radius.circular(10))),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Bienvenido',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            user?.nombre ?? 'Usuario',
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
+                          Text(
+                            user?.rol.isNotEmpty == true ? user!.rol : 'Sin rol asignado',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: AppColors.primaryRed,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
-                        ),
+                        ],
                       ),
-                      SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Bienvenido',
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(color: AppColors.greyMedium),
-                            ),
-                            SizedBox(height: 4),
-                            Text(
-                              user?.nombre ?? 'Usuario',
-                              style: Theme.of(context).textTheme.titleMedium
-                                  ?.copyWith(fontWeight: FontWeight.bold),
-                            ),
-                            Text(
-                              user?.rol.isNotEmpty == true
-                                  ? user!.rol
-                                  : 'Sin rol asignado',
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(color: AppColors.primaryRed),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
-              SizedBox(height: 24),
-
-              // Quick Actions
+              const SizedBox(height: 24),
               Text(
-                'Accesos Rápidos',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+                'Accesos rápidos',
+                style: Theme.of(context).textTheme.headlineSmall,
               ),
-              SizedBox(height: 16),
-
+              const SizedBox(height: 12),
               GridView.count(
                 crossAxisCount: 2,
                 shrinkWrap: true,
-                physics: NeverScrollableScrollPhysics(),
-                mainAxisSpacing: 16,
-                crossAxisSpacing: 16,
+                physics: const NeverScrollableScrollPhysics(),
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: 1.15,
                 children: [
-                  _buildQuickActionCard(
-                    context,
-                    'Ventas',
-                    LucideIcons.shoppingBag,
-                    () => Navigator.pushNamed(context, '/sales/ventas'),
+                  _QuickAction(
+                    title: 'Ventas',
+                    icon: LucideIcons.receipt,
+                    onTap: () => Navigator.pushNamed(context, '/sales/ventas'),
                   ),
-                  _buildQuickActionCard(
-                    context,
-                    'Abonos',
-                    LucideIcons.creditCard,
-                    () => Navigator.pushNamed(context, '/sales/abonos'),
+                  _QuickAction(
+                    title: 'Abonos',
+                    icon: LucideIcons.creditCard,
+                    onTap: () => Navigator.pushNamed(context, '/sales/abonos'),
                   ),
-                  _buildQuickActionCard(
-                    context,
-                    'Domicilios',
-                    LucideIcons.truck,
-                    () => Navigator.pushNamed(context, '/sales/domicilios'),
+                  _QuickAction(
+                    title: 'Pedidos',
+                    icon: LucideIcons.clipboardList,
+                    onTap: () => Navigator.pushNamed(context, '/sales/pedidos'),
+                  ),
+                  _QuickAction(
+                    title: 'Domicilios',
+                    icon: LucideIcons.truck,
+                    onTap: () => Navigator.pushNamed(context, '/sales/domicilios'),
                   ),
                 ],
-              ),
-
-              SizedBox(height: 24),
-
-              // Information Section
-              Text(
-                'Sistema de Gestión',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              SizedBox(height: 12),
-              Text(
-                'Gestiona todos los aspectos de tu negocio desde una plataforma unificada. Acceso a módulos de acceso, ventas, abonos, pedidos y domicilios.',
-                style: Theme.of(context).textTheme.bodyMedium,
               ),
             ],
           ),
@@ -136,32 +102,44 @@ class HomePage extends ConsumerWidget {
       ),
     );
   }
+}
 
-  Widget _buildQuickActionCard(
-    BuildContext context,
-    String title,
-    IconData icon,
-    VoidCallback onTap,
-  ) {
+class _QuickAction extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _QuickAction({
+    required this.title,
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Card(
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 40, color: AppColors.primaryRed),
-              SizedBox(height: 12),
-              Text(
-                title,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center,
+      borderRadius: BorderRadius.circular(AppColors.radiusLg),
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.white,
+          borderRadius: BorderRadius.circular(AppColors.radiusLg),
+          border: Border.all(color: AppColors.borderColor),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.primaryRed.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(AppColors.radiusLg),
               ),
-            ],
-          ),
+              child: Icon(icon, color: AppColors.primaryRed, size: 28),
+            ),
+            const SizedBox(height: 10),
+            Text(title, style: Theme.of(context).textTheme.titleMedium),
+          ],
         ),
       ),
     );

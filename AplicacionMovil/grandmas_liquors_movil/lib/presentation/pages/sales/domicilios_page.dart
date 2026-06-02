@@ -5,7 +5,10 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:grandmas_liquors_movil/data/models/sales/sales_management_models.dart';
 import 'package:grandmas_liquors_movil/presentation/providers/auth_provider.dart';
 import 'package:grandmas_liquors_movil/presentation/providers/sales_management_provider.dart';
-import 'package:grandmas_liquors_movil/presentation/widgets/app_drawer.dart';
+import 'package:grandmas_liquors_movil/presentation/widgets/app_form_field.dart';
+import 'package:grandmas_liquors_movil/presentation/widgets/app_page_scaffold.dart';
+import 'package:grandmas_liquors_movil/presentation/widgets/sales/app_form_helpers.dart';
+import 'package:grandmas_liquors_movil/presentation/widgets/sales/sales_create_sheets.dart';
 
 class DomiciliosPage extends ConsumerStatefulWidget {
   const DomiciliosPage({super.key});
@@ -16,95 +19,99 @@ class DomiciliosPage extends ConsumerStatefulWidget {
 
 class _DomiciliosPageState extends ConsumerState<DomiciliosPage> {
   bool _loading = true;
+  String? _error;
   List<DomicilioItem> _items = [];
   List<SalesOption> _pedidos = [];
   List<SalesOption> _repartidores = [];
-  final _currency = NumberFormat.currency(
-    locale: 'es_CO',
-    symbol: r'$ ',
-    decimalDigits: 0,
-  );
+  String? _repartidoresError;
+  final _searchCtrl = TextEditingController();
+  String? _estadoFilter;
+  final _currency = NumberFormat.currency(locale: 'es_CO', symbol: r'$ ', decimalDigits: 0);
 
   @override
   void initState() {
     super.initState();
+    _searchCtrl.addListener(() => setState(() {}));
     _load();
   }
 
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<DomicilioItem> get _filteredItems {
+    final q = _searchCtrl.text.trim().toLowerCase();
+    return _items.where((item) {
+      final matchSearch = q.isEmpty ||
+          item.id.toString().contains(q) ||
+          item.pedidoId.toString().contains(q) ||
+          item.repartidorNombre.toLowerCase().contains(q) ||
+          item.estado.toLowerCase().contains(q);
+      final matchEstado = _estadoFilter == null ||
+          _estadoFilter!.isEmpty ||
+          item.estado.toLowerCase() == _estadoFilter!.toLowerCase();
+      return matchSearch && matchEstado;
+    }).toList();
+  }
+
   Future<void> _load() async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     final repo = ref.read(salesManagementRepositoryProvider);
     final user = ref.read(currentUserProvider);
     try {
+      final domiciliosFuture = repo.getDomicilios(user);
+      final pedidosFuture = repo.getPedidosOptions();
+      List<SalesOption> repartidores = [];
+      String? repError;
+      try {
+        repartidores = await repo.getRepartidoresOptions();
+      } catch (e) {
+        repError = formatApiError(e);
+      }
+
       final results = await Future.wait([
-        repo.getDomicilios(user),
-        repo.getPedidosOptions(),
-        repo.getRepartidoresOptions(),
+        domiciliosFuture,
+        pedidosFuture,
       ]);
+      if (!mounted) return;
       setState(() {
         _items = results[0] as List<DomicilioItem>;
         _pedidos = results[1] as List<SalesOption>;
-        _repartidores = results[2] as List<SalesOption>;
+        _repartidores = repartidores;
+        _repartidoresError = repError;
+        _loading = false;
       });
-    } finally {
-      if (mounted) setState(() => _loading = false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
     }
   }
 
   Future<void> _showCreateDialog() async {
-    int? pedidoId;
-    int? repartidorId;
-
-    final ok = await showDialog<bool>(
+    if (_pedidos.isEmpty) {
+      showAppMessage(context, message: 'No hay pedidos disponibles', isError: true);
+      return;
+    }
+    final ok = await showAppFormSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Nuevo domicilio'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            DropdownButtonFormField<int>(
-              decoration: const InputDecoration(labelText: 'Pedido'),
-              items: _pedidos
-                  .map(
-                    (p) => DropdownMenuItem(value: p.id, child: Text(p.label)),
-                  )
-                  .toList(),
-              onChanged: (v) => pedidoId = v,
-            ),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<int>(
-              decoration: const InputDecoration(labelText: 'Repartidor'),
-              items: _repartidores
-                  .map(
-                    (p) => DropdownMenuItem(value: p.id, child: Text(p.label)),
-                  )
-                  .toList(),
-              onChanged: (v) => repartidorId = v,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Guardar'),
-          ),
-        ],
+      builder: (ctx) => CreateDomicilioSheet(
+        repo: ref.read(salesManagementRepositoryProvider),
+        pedidos: _pedidos,
+        repartidores: _repartidores,
       ),
     );
-
-    if (ok != true) return;
-    if (pedidoId == null || repartidorId == null) return;
-
-    final repo = ref.read(salesManagementRepositoryProvider);
-    await repo.createDomicilio(
-      pedidoId: pedidoId!,
-      repartidorId: repartidorId!,
-    );
-    await _load();
+    if (ok == true) {
+      await _load();
+      if (mounted) showAppMessage(context, message: 'Domicilio creado correctamente');
+    }
   }
 
   Future<void> _changeEstado(DomicilioItem item, String estado) async {
@@ -113,70 +120,17 @@ class _DomiciliosPageState extends ConsumerState<DomiciliosPage> {
       motivo = await _askMotivo();
       if (motivo == null) return;
     }
-    final repo = ref.read(salesManagementRepositoryProvider);
-    await repo.changeDomicilioEstado(
-      item.id,
-      estado,
-      motivoCancelacion: motivo,
-    );
-    await _load();
-  }
-
-  Future<void> _deleteItem(DomicilioItem item) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Eliminar domicilio'),
-        content: Text('¿Eliminar el domicilio #${item.id}?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Eliminar'),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true) return;
-    await ref.read(salesManagementRepositoryProvider).deleteDomicilio(item.id);
-    await _load();
-  }
-
-  Future<void> _showDetails(DomicilioItem item) async {
-    final detail = await ref
-        .read(salesManagementRepositoryProvider)
-        .getDomicilioById(item.id);
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Domicilio #${detail.id}'),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Pedido: ${detail.pedidoId}'),
-              Text('Cliente: ${detail.clienteId}'),
-              Text('Repartidor: ${detail.repartidorNombre}'),
-              Text('Dirección: ${detail.direccion}'),
-              Text('Total: ${_currency.format(detail.total)}'),
-              Text('Estado: ${detail.estado}'),
-              Text('Fecha: ${detail.fecha}'),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
-          ),
-        ],
-      ),
-    );
+    try {
+      await ref.read(salesManagementRepositoryProvider).changeDomicilioEstado(
+        item.id,
+        estado,
+        motivoCancelacion: motivo,
+      );
+      await _load();
+      if (mounted) showAppMessage(context, message: 'Estado actualizado');
+    } catch (e) {
+      if (mounted) showAppMessage(context, message: formatApiError(e), isError: true);
+    }
   }
 
   Future<String?> _askMotivo() async {
@@ -184,23 +138,11 @@ class _DomiciliosPageState extends ConsumerState<DomiciliosPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Motivo de cancelacion'),
-        content: TextField(
-          controller: ctrl,
-          maxLength: 50,
-          decoration: const InputDecoration(
-            hintText: 'Entre 10 y 50 caracteres',
-          ),
-        ),
+        title: const Text('Motivo de cancelación'),
+        content: AppFormField(controller: ctrl, label: 'Motivo', hint: 'Entre 10 y 50 caracteres'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Confirmar'),
-          ),
+          OutlinedButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Confirmar')),
         ],
       ),
     );
@@ -214,86 +156,101 @@ class _DomiciliosPageState extends ConsumerState<DomiciliosPage> {
   Widget build(BuildContext context) {
     final role = (ref.watch(currentUserProvider)?.rol ?? '').toLowerCase();
     final canCreate = role != 'cliente' && role != 'repartidor';
+    final filtered = _filteredItems;
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Gestion Domicilios')),
-      drawer: const AppDrawer(),
+    return AppPageScaffold(
+      title: 'Gestión de domicilios',
+      subtitle: 'Asigna y da seguimiento a entregas',
       floatingActionButton: canCreate
-          ? FloatingActionButton(
-              onPressed: _showCreateDialog,
-              child: const Icon(LucideIcons.plus),
-            )
+          ? FloatingActionButton(onPressed: _showCreateDialog, child: const Icon(LucideIcons.plus))
           : null,
       body: _loading
           ? const Center(child: CircularProgressIndicator())
+          : _error != null
+          ? AppErrorState(message: _error!, onRetry: _load)
           : RefreshIndicator(
               onRefresh: _load,
-              child: ListView.builder(
-                itemCount: _items.length,
-                itemBuilder: (context, index) {
-                  final item = _items[index];
-                  return Card(
-                    margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                    child: ListTile(
-                      title: Text(
-                        'Domicilio #${item.id} - Pedido #${item.pedidoId}',
+              child: ListView(
+                children: [
+                  AppPageHeader(
+                    title: 'Domicilios',
+                    subtitle: '${_items.length} registros en total',
+                    onCreate: canCreate ? _showCreateDialog : null,
+                    createLabel: 'Nuevo domicilio',
+                  ),
+                  if (_repartidoresError != null)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                      child: AppInfoBanner(
+                        message: 'Repartidores: $_repartidoresError',
+                        icon: Icons.warning_amber_rounded,
                       ),
-                      subtitle: Text(
-                        '${item.fecha} - ${_currency.format(item.total)} - ${item.repartidorNombre}',
+                    ),
+                  AppFilterBar(
+                    searchController: _searchCtrl,
+                    searchHint: 'Buscar por ID, pedido o repartidor...',
+                    filters: [
+                      SizedBox(
+                        width: 160,
+                        child: DropdownButtonFormField<String>(
+                          value: _estadoFilter,
+                          decoration: const InputDecoration(labelText: 'Estado', isDense: true),
+                          items: const [
+                            DropdownMenuItem(value: null, child: Text('Todos')),
+                            DropdownMenuItem(value: 'Pendiente', child: Text('Pendiente')),
+                            DropdownMenuItem(value: 'En Camino', child: Text('En Camino')),
+                            DropdownMenuItem(value: 'Entregado', child: Text('Entregado')),
+                            DropdownMenuItem(value: 'Cancelado', child: Text('Cancelado')),
+                          ],
+                          onChanged: (v) => setState(() => _estadoFilter = v),
+                        ),
                       ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
+                    ],
+                    onClear: () => setState(() {
+                      _searchCtrl.clear();
+                      _estadoFilter = null;
+                    }),
+                  ),
+                  if (filtered.isEmpty)
+                    const AppEmptyState(icon: LucideIcons.truck, message: 'No hay domicilios para mostrar')
+                  else
+                    ...filtered.map((item) => AppDataCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          DropdownButton<String>(
-                            value: item.estado,
-                            items: const [
-                              DropdownMenuItem(
-                                value: 'Pendiente',
-                                child: Text('Pendiente'),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Domicilio #${item.id} · Pedido #${item.pedidoId}',
+                                  style: Theme.of(context).textTheme.titleMedium,
+                                ),
                               ),
-                              DropdownMenuItem(
-                                value: 'En Camino',
-                                child: Text('En Camino'),
-                              ),
-                              DropdownMenuItem(
-                                value: 'Entregado',
-                                child: Text('Entregado'),
-                              ),
-                              DropdownMenuItem(
-                                value: 'Cancelado',
-                                child: Text('Cancelado'),
-                              ),
+                              AppStatusChip(label: item.estado),
                             ],
-                            onChanged: (value) {
-                              if (value == null || value == item.estado) return;
-                              _changeEstado(item, value);
-                            },
                           ),
-                          PopupMenuButton<String>(
-                            icon: const Icon(Icons.more_vert),
-                            onSelected: (value) {
-                              if (value == 'detail') {
-                                _showDetails(item);
-                              } else if (value == 'delete') {
-                                _deleteItem(item);
-                              }
-                            },
-                            itemBuilder: (context) => const [
-                              PopupMenuItem(
-                                value: 'detail',
-                                child: Text('Ver detalle'),
+                          const SizedBox(height: 8),
+                          Text('${item.fecha} · ${_currency.format(item.total)}'),
+                          Text(item.repartidorNombre),
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 8,
+                            children: [
+                              OutlinedButton(
+                                onPressed: () => _changeEstado(item, 'En Camino'),
+                                child: const Text('En camino'),
                               ),
-                              PopupMenuItem(
-                                value: 'delete',
-                                child: Text('Eliminar'),
+                              OutlinedButton(
+                                onPressed: () => _changeEstado(item, 'Entregado'),
+                                child: const Text('Entregado'),
                               ),
                             ],
                           ),
                         ],
                       ),
-                    ),
-                  );
-                },
+                    )),
+                  const SizedBox(height: 80),
+                ],
               ),
             ),
     );

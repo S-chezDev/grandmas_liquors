@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:grandmas_liquors_movil/data/models/auth/auth_models.dart';
 import 'package:grandmas_liquors_movil/presentation/providers/auth_provider.dart';
-import 'package:grandmas_liquors_movil/presentation/widgets/app_drawer.dart';
+import 'package:grandmas_liquors_movil/presentation/widgets/app_page_scaffold.dart';
 
 class AccessPage extends ConsumerStatefulWidget {
   const AccessPage({super.key});
@@ -46,9 +46,9 @@ class _AccessPageState extends ConsumerState<AccessPage> {
   Widget build(BuildContext context) {
     final permissions = ref.watch(userPermissionsProvider);
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Gestion Acceso')),
-      drawer: const AppDrawer(),
+    return AppPageScaffold(
+      title: 'Gestión de acceso',
+      subtitle: 'Usuarios, roles y permisos',
       body: RefreshIndicator(
         onRefresh: _refresh,
         child: FutureBuilder<_AccessData>(
@@ -56,7 +56,7 @@ class _AccessPageState extends ConsumerState<AccessPage> {
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return ListView(
-                children: [
+                children: const [
                   SizedBox(height: 200),
                   Center(child: CircularProgressIndicator()),
                 ],
@@ -65,14 +65,10 @@ class _AccessPageState extends ConsumerState<AccessPage> {
 
             if (snapshot.hasError) {
               return ListView(
-                padding: const EdgeInsets.all(16),
                 children: [
-                  Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.error_outline),
-                      title: const Text('No fue posible cargar el acceso'),
-                      subtitle: Text(snapshot.error.toString()),
-                    ),
+                  AppErrorState(
+                    message: snapshot.error.toString(),
+                    onRetry: _refresh,
                   ),
                 ],
               );
@@ -84,69 +80,91 @@ class _AccessPageState extends ConsumerState<AccessPage> {
             final roles = data?.roles ?? const <String>[];
 
             return ListView(
-              padding: const EdgeInsets.all(16),
               children: [
-                Card(
-                  child: ListTile(
-                    leading: const Icon(LucideIcons.users),
-                    title: Text(
-                      '${user?.nombre ?? ''} ${user?.apellido ?? ''}'.trim(),
-                    ),
-                    subtitle: Text(user?.email ?? '-'),
-                    trailing: Chip(label: Text(user?.rol ?? '-')),
+                AppPageHeader(
+                  title: 'Acceso',
+                  subtitle: '${users.length} usuarios registrados',
+                ),
+                AppDataCard(
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        backgroundColor: Theme.of(context).colorScheme.primary.withOpacity(0.12),
+                        child: Icon(LucideIcons.user, color: Theme.of(context).colorScheme.primary),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${user?.nombre ?? ''} ${user?.apellido ?? ''}'.trim(),
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            Text(user?.email ?? '-'),
+                          ],
+                        ),
+                      ),
+                      AppStatusChip(label: user?.rol ?? '-'),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 12),
-                Text(
-                  'Permisos del rol',
-                  style: Theme.of(context).textTheme.titleMedium,
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Text('Permisos del rol', style: Theme.of(context).textTheme.titleMedium),
                 ),
-                const SizedBox(height: 8),
                 if (permissions.isEmpty)
-                  const Card(
-                    child: ListTile(title: Text('Sin permisos asignados')),
-                  ),
-                ...permissions.map(
-                  (permission) => Card(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    child: ListTile(
-                      leading: const Icon(LucideIcons.shieldCheck),
-                      title: Text(permission),
+                  const AppDataCard(child: Text('Sin permisos asignados'))
+                else
+                  ...permissions.map(
+                    (permission) => AppDataCard(
+                      child: Row(
+                        children: [
+                          Icon(LucideIcons.shieldCheck, size: 18, color: Theme.of(context).colorScheme.primary),
+                          const SizedBox(width: 10),
+                          Expanded(child: Text(permission)),
+                        ],
+                      ),
                     ),
                   ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Text('Roles disponibles', style: Theme.of(context).textTheme.titleMedium),
                 ),
-                const SizedBox(height: 12),
-                Text(
-                  'Roles disponibles',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
                 ...roles.map(
-                  (role) => Card(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    child: ListTile(
-                      leading: const Icon(LucideIcons.badgeCheck),
-                      title: Text(role),
+                  (role) => AppDataCard(
+                    child: Row(
+                      children: [
+                        Icon(LucideIcons.badgeCheck, size: 18, color: Theme.of(context).colorScheme.primary),
+                        const SizedBox(width: 10),
+                        Text(role),
+                      ],
                     ),
                   ),
                 ),
-                const SizedBox(height: 12),
-                Text(
-                  'Usuarios registrados',
-                  style: Theme.of(context).textTheme.titleMedium,
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Text('Usuarios registrados', style: Theme.of(context).textTheme.titleMedium),
                 ),
-                const SizedBox(height: 8),
                 ...users.map(
-                  (item) => Card(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    child: ListTile(
-                      leading: const Icon(LucideIcons.users),
-                      title: Text('${item.nombre} ${item.apellido}'.trim()),
-                      subtitle: Text(item.email),
-                      trailing: Chip(label: Text(item.rol)),
+                  (item) => AppDataCard(
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('${item.nombre} ${item.apellido}'.trim(), style: Theme.of(context).textTheme.titleSmall),
+                              Text(item.email),
+                            ],
+                          ),
+                        ),
+                        AppStatusChip(label: item.rol),
+                      ],
                     ),
                   ),
                 ),
+                const SizedBox(height: 24),
               ],
             );
           },
