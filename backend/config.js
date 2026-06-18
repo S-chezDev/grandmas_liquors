@@ -20,7 +20,11 @@ if (isProduction && !process.env.JWT_SECRET) {
 
 const defaultCorsOrigins = isProduction
   ? []
-  : ['http://localhost:3000', 'http://localhost:8080'];
+  : [
+      'https://grandmas-liquors-feqf.vercel.app',       // Frontend Vercel (URL principal)
+      'https://grandmas-liquors-devploy.vercel.app',    // Frontend Vercel (alternativa)
+      'http://localhost:3000',                          // Frontend local (puerto Vite)
+    ];
 
 const configuredCorsOrigins = parseCsv(process.env.CORS_ORIGINS);
 
