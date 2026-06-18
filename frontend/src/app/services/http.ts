@@ -18,6 +18,30 @@ const AUTH_EVENT_EXCLUDED_PATHS = new Set([
   '/api/auth/password-reset-request',
 ]);
 
+/**
+ * Resolver URL de API según el contexto:
+ * - Development: /api (proxy de Vite redirige a backend)
+ * - Production (S3/CloudFront): usa import.meta.env.VITE_API_BASE_URL
+ */
+function resolveApiPath(path: string): string {
+  // Si es una URL absoluta, úsala tal cual
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    return path;
+  }
+
+  // En producción, si VITE_API_BASE_URL está definida, úsala
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
+  if (apiBaseUrl && !import.meta.env.DEV) {
+    // Si el path comienza con /api o /uploads, úsalo con la URL base
+    if (path.startsWith('/api') || path.startsWith('/uploads')) {
+      return `${apiBaseUrl}${path}`;
+    }
+  }
+
+  // En desarrollo o si es una ruta relativa, devuélvela tal cual
+  return path;
+}
+
 export async function apiFetch<T = unknown>(
   path: string,
   init?: RequestInit & { json?: unknown }
@@ -29,16 +53,18 @@ export async function apiFetch<T = unknown>(
     body = JSON.stringify(formatOutgoingTextPayload(init.json));
   }
 
+  const resolvedPath = resolveApiPath(path);
+
   let res: Response;
   try {
-    res = await fetch(path, {
+    res = await fetch(resolvedPath, {
       ...init,
       credentials: 'include',
       headers,
       body,
     });
   } catch (networkError: unknown) {
-    const isDev = typeof import.meta !== 'undefined' && import.meta.env?.DEV;
+    const isDev = import.meta.env.DEV;
     const hint =
       path.startsWith('/api/') && isDev
         ? ' Verifique que Elastic Beanstalk tenga desplegada la última versión del backend, que CORS_ORIGINS incluya http://localhost:3000 y reinicie el frontend (proxy VITE_API_PROXY_TARGET).'
@@ -48,7 +74,7 @@ export async function apiFetch<T = unknown>(
         ? networkError.message
         : 'No se pudo conectar con el servidor.';
     if (isDev) {
-      console.error('[apiFetch] Error de red', path, networkError);
+      console.error('[apiFetch] Error de red', resolvedPath, networkError);
     }
     throw Object.assign(new Error(`${base}${hint}`), { status: 0, code: 'NETWORK_ERROR' });
   }

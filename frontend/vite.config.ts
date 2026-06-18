@@ -4,15 +4,18 @@ import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
 /**
- * API en desarrollo: proxy hacia Elastic Beanstalk (mismo entorno que producción).
- * Para apuntar al backend local: VITE_API_PROXY_TARGET=http://localhost:3002
+ * API Configuration:
+ * - Production/Development: proxy hacia Elastic Beanstalk
+ * - URL API: http://grandmas-api.us-east-2.elasticbeanstalk.com/
+ * - Para apuntar al backend local: VITE_API_PROXY_TARGET=http://localhost:3002
  */
 const DEFAULT_API_PROXY_TARGET = 'http://grandmas-api.us-east-2.elasticbeanstalk.com'
+const DEFAULT_API_BASE_URL = 'http://grandmas-api.us-east-2.elasticbeanstalk.com'
 
 function figmaAssetResolver() {
   return {
     name: 'figma-asset-resolver',
-    resolveId(id) {
+    resolveId(id: string) {
       if (id.startsWith('figma:asset/')) {
         const filename = id.replace('figma:asset/', '')
         return path.resolve(__dirname, 'src/assets', filename)
@@ -24,6 +27,7 @@ function figmaAssetResolver() {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, '')
   const apiProxyTarget = env.VITE_API_PROXY_TARGET || DEFAULT_API_PROXY_TARGET
+  const apiBaseUrl = env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL
 
   return {
   plugins: [
