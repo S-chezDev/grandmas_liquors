@@ -150,88 +150,106 @@ const Productos = {
     }
     const tipoProducto = normalizeProductoTipoValue(data?.tipo_producto ?? data?.tipo);
 
-    const duplicate = await pool.query(
-      `SELECT id, estado
-       FROM productos
-       WHERE LOWER(TRIM(nombre)) = LOWER(TRIM($1))
-         AND COALESCE(tipo_producto, 'terminado') = $2
-       LIMIT 1`,
-      [nombre, tipoProducto]
-    );
-    if (duplicate.rows[0]) {
-      const error = new Error('Ya existe un producto con ese nombre para el mismo tipo');
-      error.statusCode = 409;
-      throw error;
-    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    const precioInicial = Number(data?.precio ?? data?.precioVenta);
-    const precioSeguro = Number.isFinite(precioInicial) && precioInicial >= 0 ? precioInicial : 0;
+      const duplicate = await client.query(
+        `SELECT id, estado
+         FROM productos
+         WHERE LOWER(TRIM(nombre)) = LOWER(TRIM($1))
+           AND COALESCE(tipo_producto, 'terminado') = $2
+         LIMIT 1`,
+        [nombre, tipoProducto]
+      );
+      if (duplicate.rows[0]) {
+        await client.query('ROLLBACK');
+        client.release();
+        const error = new Error('Ya existe un producto con ese nombre para el mismo tipo');
+        error.statusCode = 409;
+        throw error;
+      }
 
-    // Validar que stock sea 0 (stock se gestiona solo desde Compras)
-    if (data.stock && Number(data.stock) !== 0) {
-      const error = new Error('Stock inicial debe ser 0. Se modifica solo via Compras/Ajustes.');
-      error.statusCode = 400;
-      throw error;
-    }
+      const precioInicial = Number(data?.precio ?? data?.precioVenta);
+      const precioSeguro = Number.isFinite(precioInicial) && precioInicial >= 0 ? precioInicial : 0;
 
-    if (tipoProducto === 'preparacion' && (!Number.isFinite(precioSeguro) || precioSeguro <= 0)) {
-      const error = new Error('El precio de venta es obligatorio y debe ser mayor a 0 para productos de preparación');
-      error.statusCode = 400;
-      throw error;
-    }
-    const { u: insumoUnidad, q: insumoCantidad } = parseInsumoMedidasForProduct(tipoProducto, data);
-    const smRawCreate = Number(data.stock_minimo ?? data.stockMinimo);
-    const stockMinimoInsert =
-      tipoProducto === 'preparacion'
-        ? 0
-        : tipoProducto === 'insumo'
-          ? Number.isFinite(smRawCreate) && smRawCreate >= 0
-            ? Math.floor(smRawCreate)
-            : 0
-          : Number(data.stock_minimo ?? data.stockMinimo) >= 0
-            ? Number(data.stock_minimo ?? data.stockMinimo)
-            : 10;
+      // Validar que stock sea 0 (stock se gestiona solo desde Compras)
+      if (data.stock && Number(data.stock) !== 0) {
+        await client.query('ROLLBACK');
+        client.release();
+        const error = new Error('Stock inicial debe ser 0. Se modifica solo via Compras/Ajustes.');
+        error.statusCode = 400;
+        throw error;
+      }
 
-    const result = await pool.query(
-      `INSERT INTO productos (
-         nombre, categoria_id, descripcion, precio, stock, stock_minimo, imagen_url, estado, tipo_producto,
-         insumo_unidad_medida, insumo_cantidad_medida
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
-      [
-        nombre,
-        data.categoria_id,
-        data.descripcion,
-        precioSeguro,
-        0, // ✅ Stock siempre inicia en 0
-        stockMinimoInsert,
-        data.imagen_url,
-        'Activo',
-        tipoProducto,
-        insumoUnidad,
-        insumoCantidad,
-      ]
-    );
-    await syncCategoriaProductCount(data.categoria_id);
-    const newId = result.rows[0].id;
-    await registerProductoAudit({
-      productoId: newId,
-      accion: 'CREATE',
-      usuarioId: data?.actor_id ?? null,
-      cambios: {
-        before: null,
-        after: {
+      if (tipoProducto === 'preparacion' && (!Number.isFinite(precioSeguro) || precioSeguro <= 0)) {
+        await client.query('ROLLBACK');
+        client.release();
+        const error = new Error('El precio de venta es obligatorio y debe ser mayor a 0 para productos de preparación');
+        error.statusCode = 400;
+        throw error;
+      }
+      const { u: insumoUnidad, q: insumoCantidad } = parseInsumoMedidasForProduct(tipoProducto, data);
+      const smRawCreate = Number(data.stock_minimo ?? data.stockMinimo);
+      const stockMinimoInsert =
+        tipoProducto === 'preparacion'
+          ? 0
+          : tipoProducto === 'insumo'
+            ? Number.isFinite(smRawCreate) && smRawCreate >= 0
+              ? Math.floor(smRawCreate)
+              : 0
+            : Number(data.stock_minimo ?? data.stockMinimo) >= 0
+              ? Number(data.stock_minimo ?? data.stockMinimo)
+              : 10;
+
+      const result = await client.query(
+        `INSERT INTO productos (
+           nombre, categoria_id, descripcion, precio, stock, stock_minimo, imagen_url, estado, tipo_producto,
+           insumo_unidad_medida, insumo_cantidad_medida
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+        [
           nombre,
-          categoria_id: data.categoria_id,
-          precio: precioSeguro,
-          stock_minimo: stockMinimoInsert,
-          tipo_producto: tipoProducto,
-          insumo_unidad_medida: insumoUnidad,
-          insumo_cantidad_medida: insumoCantidad,
-          estado: 'Activo',
+          data.categoria_id,
+          data.descripcion,
+          precioSeguro,
+          0, // ✅ Stock siempre inicia en 0
+          stockMinimoInsert,
+          data.imagen_url,
+          'Activo',
+          tipoProducto,
+          insumoUnidad,
+          insumoCantidad,
+        ]
+      );
+      await syncCategoriaProductCount(data.categoria_id);
+      const newId = result.rows[0].id;
+      await registerProductoAudit({
+        productoId: newId,
+        accion: 'CREATE',
+        usuarioId: data?.actor_id ?? null,
+        cambios: {
+          before: null,
+          after: {
+            nombre,
+            categoria_id: data.categoria_id,
+            precio: precioSeguro,
+            stock_minimo: stockMinimoInsert,
+            tipo_producto: tipoProducto,
+            insumo_unidad_medida: insumoUnidad,
+            insumo_cantidad_medida: insumoCantidad,
+            estado: 'Activo',
+          },
         },
-      },
-    });
-    return newId;
+      });
+
+      await client.query('COMMIT');
+      client.release();
+      return newId;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      client.release();
+      throw error;
+    }
   },
   update: async (id, data) => {
     await ensureCategoriaProductCountColumn();
@@ -244,113 +262,129 @@ const Productos = {
       throw error;
     }
 
-    const previous = await pool.query(
-      'SELECT categoria_id, stock, tipo_producto, stock_minimo, imagen_url, insumo_unidad_medida, insumo_cantidad_medida FROM productos WHERE id = $1',
-      [id]
-    );
-    if (!previous.rows[0]) {
-      const error = new Error('Producto no encontrado');
-      error.statusCode = 404;
-      throw error;
-    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    const previousCategoriaId = previous.rows[0]?.categoria_id ?? null;
-    const stockActual = previous.rows[0]?.stock ?? 0;
-    const currentTipo = normalizeProductoTipoValue(previous.rows[0]?.tipo_producto);
+      const previous = await client.query(
+        'SELECT categoria_id, stock, tipo_producto, stock_minimo, imagen_url, insumo_unidad_medida, insumo_cantidad_medida FROM productos WHERE id = $1 FOR UPDATE',
+        [id]
+      );
+      if (!previous.rows[0]) {
+        await client.query('ROLLBACK');
+        client.release();
+        const error = new Error('Producto no encontrado');
+        error.statusCode = 404;
+        throw error;
+      }
 
-    const duplicate = await pool.query(
-      `SELECT id
-       FROM productos
-       WHERE LOWER(TRIM(nombre)) = LOWER(TRIM($1))
-         AND COALESCE(tipo_producto, 'terminado') = $2
-         AND id <> $3
-       LIMIT 1`,
-      [nombre, currentTipo, id]
-    );
-    if (duplicate.rows[0]) {
-      const error = new Error('Ya existe un producto con ese nombre para el mismo tipo');
-      error.statusCode = 409;
-      throw error;
-    }
-    const prevStockMinimo = Number(previous.rows[0]?.stock_minimo ?? 10);
+      const previousCategoriaId = previous.rows[0]?.categoria_id ?? null;
+      const stockActual = previous.rows[0]?.stock ?? 0;
+      const currentTipo = normalizeProductoTipoValue(previous.rows[0]?.tipo_producto);
 
-    const newTipo = currentTipo;
-    const prevRow = previous.rows[0];
-    const mergedData = {
-      ...data,
-      insumo_unidad_medida:
-        data.insumo_unidad_medida ?? data.insumoUnidadMedida ?? prevRow.insumo_unidad_medida,
-      insumo_cantidad_medida:
-        data.insumo_cantidad_medida ?? data.insumoCantidadMedida ?? prevRow.insumo_cantidad_medida,
-    };
-    const { u: insumoUnidad, q: insumoCantidad } = parseInsumoMedidasForProduct(newTipo, mergedData);
-    const imagenUrl =
-      data.imagen_url !== undefined && data.imagen_url !== null ? data.imagen_url : prevRow.imagen_url;
-    const stockMinimoVal =
-      newTipo === 'preparacion'
-        ? 0
-        : newTipo === 'insumo'
-          ? data.stock_minimo !== undefined && data.stock_minimo !== null && Number.isFinite(Number(data.stock_minimo))
-            ? Math.max(0, Math.floor(Number(data.stock_minimo)))
-            : data.stockMinimo !== undefined && data.stockMinimo !== null && Number.isFinite(Number(data.stockMinimo))
-              ? Math.max(0, Math.floor(Number(data.stockMinimo)))
-              : prevStockMinimo
-          : data.stock_minimo !== undefined && data.stock_minimo !== null && Number.isFinite(Number(data.stock_minimo))
-            ? Number(data.stock_minimo)
-            : data.stockMinimo !== undefined && data.stockMinimo !== null && Number.isFinite(Number(data.stockMinimo))
-              ? Number(data.stockMinimo)
-              : prevStockMinimo;
+      const duplicate = await client.query(
+        `SELECT id
+         FROM productos
+         WHERE LOWER(TRIM(nombre)) = LOWER(TRIM($1))
+           AND COALESCE(tipo_producto, 'terminado') = $2
+           AND id <> $3
+         LIMIT 1`,
+        [nombre, currentTipo, id]
+      );
+      if (duplicate.rows[0]) {
+        await client.query('ROLLBACK');
+        client.release();
+        const error = new Error('Ya existe un producto con ese nombre para el mismo tipo');
+        error.statusCode = 409;
+        throw error;
+      }
+      const prevStockMinimo = Number(previous.rows[0]?.stock_minimo ?? 10);
 
-    await pool.query(
-      `UPDATE productos
-       SET nombre = $1,
-           categoria_id = $2,
-           descripcion = $3,
-           precio = $4,
-           stock = $5,
-           stock_minimo = $6,
-           imagen_url = $7,
-           tipo_producto = $8,
-           insumo_unidad_medida = $9,
-           insumo_cantidad_medida = $10,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $11`,
-      [
-        nombre,
-        data.categoria_id,
-        data.descripcion,
-        data.precio,
-        newTipo === 'preparacion' ? 0 : stockActual,
-        stockMinimoVal,
-        imagenUrl,
-        newTipo,
-        insumoUnidad,
-        insumoCantidad,
-        id,
-      ]
-    );
-    await syncCategoriaProductCount(data.categoria_id);
-    if (previousCategoriaId && Number(previousCategoriaId) !== Number(data.categoria_id)) {
-      await syncCategoriaProductCount(previousCategoriaId);
-    }
-    await registerProductoAudit({
-      productoId: Number(id),
-      accion: 'UPDATE',
-      usuarioId: data?.actor_id ?? null,
-      cambios: {
-        before: { categoria_id: previousCategoriaId, stock: stockActual },
-        after: {
+      const newTipo = currentTipo;
+      const prevRow = previous.rows[0];
+      const mergedData = {
+        ...data,
+        insumo_unidad_medida:
+          data.insumo_unidad_medida ?? data.insumoUnidadMedida ?? prevRow.insumo_unidad_medida,
+        insumo_cantidad_medida:
+          data.insumo_cantidad_medida ?? data.insumoCantidadMedida ?? prevRow.insumo_cantidad_medida,
+      };
+      const { u: insumoUnidad, q: insumoCantidad } = parseInsumoMedidasForProduct(newTipo, mergedData);
+      const imagenUrl =
+        data.imagen_url !== undefined && data.imagen_url !== null ? data.imagen_url : prevRow.imagen_url;
+      const stockMinimoVal =
+        newTipo === 'preparacion'
+          ? 0
+          : newTipo === 'insumo'
+            ? data.stock_minimo !== undefined && data.stock_minimo !== null && Number.isFinite(Number(data.stock_minimo))
+              ? Math.max(0, Math.floor(Number(data.stock_minimo)))
+              : data.stockMinimo !== undefined && data.stockMinimo !== null && Number.isFinite(Number(data.stockMinimo))
+                ? Math.max(0, Math.floor(Number(data.stockMinimo)))
+                : prevStockMinimo
+            : data.stock_minimo !== undefined && data.stock_minimo !== null && Number.isFinite(Number(data.stock_minimo))
+              ? Number(data.stock_minimo)
+              : data.stockMinimo !== undefined && data.stockMinimo !== null && Number.isFinite(Number(data.stockMinimo))
+                ? Number(data.stockMinimo)
+                : prevStockMinimo;
+
+      await client.query(
+        `UPDATE productos
+         SET nombre = $1,
+             categoria_id = $2,
+             descripcion = $3,
+             precio = $4,
+             stock = $5,
+             stock_minimo = $6,
+             imagen_url = $7,
+             tipo_producto = $8,
+             insumo_unidad_medida = $9,
+             insumo_cantidad_medida = $10,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $11`,
+        [
           nombre,
-          categoria_id: data.categoria_id,
-          precio: data.precio,
-          stock_minimo: stockMinimoVal,
-          tipo_producto: newTipo,
-          insumo_unidad_medida: insumoUnidad,
-          insumo_cantidad_medida: insumoCantidad,
+          data.categoria_id,
+          data.descripcion,
+          data.precio,
+          newTipo === 'preparacion' ? 0 : stockActual,
+          stockMinimoVal,
+          imagenUrl,
+          newTipo,
+          insumoUnidad,
+          insumoCantidad,
+          id,
+        ]
+      );
+      await syncCategoriaProductCount(data.categoria_id);
+      if (previousCategoriaId && Number(previousCategoriaId) !== Number(data.categoria_id)) {
+        await syncCategoriaProductCount(previousCategoriaId);
+      }
+      await registerProductoAudit({
+        productoId: Number(id),
+        accion: 'UPDATE',
+        usuarioId: data?.actor_id ?? null,
+        cambios: {
+          before: { categoria_id: previousCategoriaId, stock: stockActual },
+          after: {
+            nombre,
+            categoria_id: data.categoria_id,
+            precio: data.precio,
+            stock_minimo: stockMinimoVal,
+            tipo_producto: newTipo,
+            insumo_unidad_medida: insumoUnidad,
+            insumo_cantidad_medida: insumoCantidad,
+          },
         },
-      },
-    });
-    return true;
+      });
+
+      await client.query('COMMIT');
+      client.release();
+      return true;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      client.release();
+      throw error;
+    }
   },
   updateStatus: async (id, data = {}) => {
     const current = await Productos.getById(id);
@@ -414,35 +448,49 @@ const Productos = {
 
     await assertProductoEliminable(id, previousFull);
 
+    const client = await pool.connect();
     try {
-      await pool.query('DELETE FROM productos WHERE id = $1', [id]);
-    } catch (err) {
-      const mapped = productoDeleteBlockedByFk(err, previousFull);
-      if (mapped) throw mapped;
-      throw err;
-    }
+      await client.query('BEGIN');
 
-    if (previousCategoriaId) {
-      await syncCategoriaProductCount(previousCategoriaId);
+      try {
+        await client.query('DELETE FROM productos WHERE id = $1', [id]);
+      } catch (err) {
+        await client.query('ROLLBACK');
+        client.release();
+        const mapped = productoDeleteBlockedByFk(err, previousFull);
+        if (mapped) throw mapped;
+        throw err;
+      }
+
+      if (previousCategoriaId) {
+        await syncCategoriaProductCount(previousCategoriaId);
+      }
+      await registerProductoAudit({
+        productoId: Number(id),
+        accion: 'DELETE',
+        usuarioId: options?.actor_id ?? null,
+        cambios: {
+          before: previousFull
+            ? {
+                nombre: previousFull.nombre,
+                categoria_id: previousCategoriaId,
+                estado: previousFull.estado,
+                stock: previousFull.stock,
+              }
+            : null,
+          after: null,
+          reason,
+        },
+      });
+
+      await client.query('COMMIT');
+      client.release();
+      return true;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      client.release();
+      throw error;
     }
-    await registerProductoAudit({
-      productoId: Number(id),
-      accion: 'DELETE',
-      usuarioId: options?.actor_id ?? null,
-      cambios: {
-        before: previousFull
-          ? {
-              nombre: previousFull.nombre,
-              categoria_id: previousCategoriaId,
-              estado: previousFull.estado,
-              stock: previousFull.stock,
-            }
-          : null,
-        after: null,
-        reason,
-      },
-    });
-    return true;
   },
   getPublicCatalog: async () => {
     await ensureProductoTipoColumn();

@@ -29,9 +29,9 @@ function resolveApiPath(path: string): string {
     return path;
   }
 
-  // En producción, si VITE_API_BASE_URL está definida, úsala
+  // En producción o si VITE_API_BASE_URL está definida, úsala
   const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
-  if (apiBaseUrl && !import.meta.env.DEV) {
+  if (apiBaseUrl) {
     // Si el path comienza con /api o /uploads, úsalo con la URL base
     if (path.startsWith('/api') || path.startsWith('/uploads')) {
       return `${apiBaseUrl}${path}`;

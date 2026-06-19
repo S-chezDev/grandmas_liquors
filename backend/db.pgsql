@@ -110,6 +110,8 @@ CREATE TABLE categorias (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_categorias_estado ON categorias(estado);
+
 -- TABLA: productos
 CREATE TABLE productos (
     id SERIAL PRIMARY KEY,
@@ -136,6 +138,11 @@ ALTER TABLE productos
 CREATE UNIQUE INDEX ux_productos_nombre_tipo_normalizado
     ON productos (LOWER(TRIM(nombre)), tipo_producto);
 
+CREATE INDEX idx_productos_categoria_id ON productos(categoria_id);
+CREATE INDEX idx_productos_estado ON productos(estado);
+CREATE INDEX idx_productos_tipo_producto ON productos(tipo_producto);
+CREATE INDEX idx_productos_categoria_estado ON productos(categoria_id, estado);
+
 -- TABLA: usuarios
 CREATE TABLE usuarios (
     id SERIAL PRIMARY KEY,
@@ -153,6 +160,10 @@ CREATE TABLE usuarios (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_usuarios_estado ON usuarios(estado);
+CREATE INDEX idx_usuarios_rol_id ON usuarios(rol_id);
+CREATE INDEX idx_usuarios_email_estado ON usuarios(email, estado);
 
 -- TABLA: clientes
 CREATE TABLE clientes (
@@ -174,6 +185,9 @@ CREATE TABLE clientes (
 CREATE UNIQUE INDEX ux_clientes_email_normalizado
     ON clientes (LOWER(TRIM(email)))
     WHERE email IS NOT NULL AND TRIM(email) <> '';
+
+CREATE INDEX idx_clientes_estado ON clientes(estado);
+CREATE INDEX idx_clientes_usuario_id ON clientes(usuario_id);
 
 -- TABLA: proveedores
 CREATE TABLE proveedores (
@@ -230,6 +244,12 @@ CREATE TABLE pedidos (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_pedidos_cliente_id ON pedidos(cliente_id);
+CREATE INDEX idx_pedidos_fecha ON pedidos(fecha);
+CREATE INDEX idx_pedidos_estado ON pedidos(estado);
+CREATE INDEX idx_pedidos_cliente_estado ON pedidos(cliente_id, estado);
+CREATE INDEX idx_pedidos_cliente_fecha ON pedidos(cliente_id, fecha);
 ALTER TABLE pedidos
     ADD CONSTRAINT pedidos_numero_formato_chk
     CHECK (numero_pedido ~ '^P[0-9]{3,}$');
@@ -244,6 +264,9 @@ CREATE TABLE detalle_pedidos (
     subtotal DECIMAL(18,2) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_detalle_pedidos_pedido_id ON detalle_pedidos(pedido_id);
+CREATE INDEX idx_detalle_pedidos_producto_id ON detalle_pedidos(producto_id);
 
 -- TABLA: ventas
 CREATE TABLE ventas (
@@ -261,6 +284,12 @@ CREATE TABLE ventas (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_ventas_cliente_id ON ventas(cliente_id);
+CREATE INDEX idx_ventas_fecha ON ventas(fecha);
+CREATE INDEX idx_ventas_estado ON ventas(estado);
+CREATE INDEX idx_ventas_cliente_fecha ON ventas(cliente_id, fecha);
+CREATE INDEX idx_ventas_pedido_id ON ventas(pedido_id);
 ALTER TABLE ventas
     ADD CONSTRAINT ventas_numero_formato_chk
     CHECK (numero_venta ~ '^V[0-9]{3,}$');
@@ -275,6 +304,9 @@ CREATE TABLE detalle_ventas (
     subtotal DECIMAL(18,2) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_detalle_ventas_venta_id ON detalle_ventas(venta_id);
+CREATE INDEX idx_detalle_ventas_producto_id ON detalle_ventas(producto_id);
 
 -- TABLA: abonos
 CREATE TABLE abonos (
@@ -297,6 +329,11 @@ CREATE TABLE abonos (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_abonos_pedido_id ON abonos(pedido_id);
+CREATE INDEX idx_abonos_cliente_id ON abonos(cliente_id);
+CREATE INDEX idx_abonos_fecha ON abonos(fecha);
+CREATE INDEX idx_abonos_estado ON abonos(estado);
 ALTER TABLE abonos
     ADD CONSTRAINT abonos_numero_formato_chk
     CHECK (numero_abono ~ '^A[0-9]{3,}$');
@@ -318,6 +355,12 @@ CREATE TABLE domicilios (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_domicilios_pedido_id ON domicilios(pedido_id);
+CREATE INDEX idx_domicilios_cliente_id ON domicilios(cliente_id);
+CREATE INDEX idx_domicilios_estado ON domicilios(estado);
+CREATE INDEX idx_domicilios_fecha ON domicilios(fecha);
+CREATE INDEX idx_domicilios_repartidor_id ON domicilios(repartidor_id);
 ALTER TABLE domicilios
     ADD CONSTRAINT domicilios_numero_formato_chk
     CHECK (numero_domicilio ~ '^D[0-9]{3,}$');
@@ -340,6 +383,10 @@ CREATE TABLE compras (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_compras_proveedor_id ON compras(proveedor_id);
+CREATE INDEX idx_compras_fecha ON compras(fecha);
+CREATE INDEX idx_compras_estado ON compras(estado);
 ALTER TABLE compras
     ADD CONSTRAINT compras_numero_formato_chk
     CHECK (numero_compra ~ '^C[0-9]{3,}$');
@@ -356,6 +403,9 @@ CREATE TABLE detalle_compras (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_detalle_compras_compra_id ON detalle_compras(compra_id);
+CREATE INDEX idx_detalle_compras_producto_id ON detalle_compras(producto_id);
+
 -- TABLA: insumos
 CREATE TABLE insumos (
     id SERIAL PRIMARY KEY,
@@ -371,6 +421,8 @@ CREATE TABLE insumos (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_insumos_estado ON insumos(estado);
+
 -- TABLA: producto_insumos (receta: insumo legacy por id; la produccion descuenta entregas al productor segun suma cantidad_requerida * cantidad preparacion del pedido)
 CREATE TABLE producto_insumos (
     id SERIAL PRIMARY KEY,
@@ -382,6 +434,9 @@ CREATE TABLE producto_insumos (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (producto_id, insumo_id)
 );
+
+CREATE INDEX idx_producto_insumos_producto_id ON producto_insumos(producto_id);
+CREATE INDEX idx_producto_insumos_insumo_id ON producto_insumos(insumo_id);
 
 -- TABLA: entregas_insumos (al registrar una entrega se descuenta stock en productos tipo insumo o en insumos legacy)
 CREATE TABLE entregas_insumos (
@@ -402,6 +457,11 @@ CREATE TABLE entregas_insumos (
         OR (insumo_id IS NULL AND producto_catalogo_id IS NOT NULL)
     )
 );
+
+CREATE INDEX idx_entregas_insumos_insumo_id ON entregas_insumos(insumo_id);
+CREATE INDEX idx_entregas_insumos_producto_catalogo_id ON entregas_insumos(producto_catalogo_id);
+CREATE INDEX idx_entregas_insumos_fecha ON entregas_insumos(fecha);
+CREATE INDEX idx_entregas_insumos_operario_id ON entregas_insumos(operario_id);
 ALTER TABLE entregas_insumos
     ADD CONSTRAINT entregas_numero_formato_chk
     CHECK (numero_entrega ~ '^E[0-9]{3,}$');
@@ -421,6 +481,9 @@ CREATE TABLE insumo_movimientos (
     razon TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_insumo_movimientos_insumo_id ON insumo_movimientos(insumo_id);
+CREATE INDEX idx_insumo_movimientos_created_at ON insumo_movimientos(created_at);
 
 -- TABLA: produccion
 CREATE TABLE produccion (
@@ -442,6 +505,12 @@ CREATE TABLE produccion (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_produccion_producto_id ON produccion(producto_id);
+CREATE INDEX idx_produccion_pedido_id ON produccion(pedido_id);
+CREATE INDEX idx_produccion_estado ON produccion(estado);
+CREATE INDEX idx_produccion_fecha ON produccion(fecha);
+CREATE INDEX idx_produccion_productor_id ON produccion(productor_id);
 ALTER TABLE produccion
     ADD CONSTRAINT produccion_numero_formato_chk
     CHECK (numero_produccion ~ '^O[0-9]{3,}$');
@@ -456,6 +525,9 @@ CREATE TABLE productos_auditoria (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_productos_auditoria_producto_id ON productos_auditoria(producto_id);
+CREATE INDEX idx_productos_auditoria_created_at ON productos_auditoria(created_at);
+
 CREATE TABLE categorias_auditoria (
     id SERIAL PRIMARY KEY,
     categoria_id INTEGER,
@@ -464,6 +536,9 @@ CREATE TABLE categorias_auditoria (
     cambios JSONB NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_categorias_auditoria_categoria_id ON categorias_auditoria(categoria_id);
+CREATE INDEX idx_categorias_auditoria_created_at ON categorias_auditoria(created_at);
 
 CREATE TABLE clientes_auditoria (
     id SERIAL PRIMARY KEY,
@@ -474,6 +549,9 @@ CREATE TABLE clientes_auditoria (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_clientes_auditoria_cliente_id ON clientes_auditoria(cliente_id);
+CREATE INDEX idx_clientes_auditoria_created_at ON clientes_auditoria(created_at);
+
 CREATE TABLE proveedores_auditoria (
     id SERIAL PRIMARY KEY,
     proveedor_id INTEGER,
@@ -482,6 +560,9 @@ CREATE TABLE proveedores_auditoria (
     cambios JSONB NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_proveedores_auditoria_proveedor_id ON proveedores_auditoria(proveedor_id);
+CREATE INDEX idx_proveedores_auditoria_created_at ON proveedores_auditoria(created_at);
 
 CREATE TABLE compras_estado_historial (
     id SERIAL PRIMARY KEY,
@@ -493,6 +574,9 @@ CREATE TABLE compras_estado_historial (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_compras_estado_historial_compra_id ON compras_estado_historial(compra_id);
+CREATE INDEX idx_compras_estado_historial_created_at ON compras_estado_historial(created_at);
+
 CREATE TABLE roles_auditoria (
     id SERIAL PRIMARY KEY,
     rol_id INTEGER,
@@ -502,6 +586,9 @@ CREATE TABLE roles_auditoria (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_roles_auditoria_rol_id ON roles_auditoria(rol_id);
+CREATE INDEX idx_roles_auditoria_created_at ON roles_auditoria(created_at);
+
 CREATE TABLE usuarios_auditoria (
     id SERIAL PRIMARY KEY,
     usuario_id INTEGER,
@@ -510,6 +597,9 @@ CREATE TABLE usuarios_auditoria (
     cambios JSONB NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_usuarios_auditoria_usuario_id ON usuarios_auditoria(usuario_id);
+CREATE INDEX idx_usuarios_auditoria_created_at ON usuarios_auditoria(created_at);
 
 CREATE TABLE usuarios_sesiones (
     id SERIAL PRIMARY KEY,
@@ -522,6 +612,10 @@ CREATE TABLE usuarios_sesiones (
     ip_address VARCHAR(64),
     user_agent TEXT
 );
+
+CREATE INDEX idx_usuarios_sesiones_usuario_id ON usuarios_sesiones(usuario_id);
+CREATE INDEX idx_usuarios_sesiones_expires_at ON usuarios_sesiones(expires_at);
+CREATE INDEX idx_usuarios_sesiones_revoked_at ON usuarios_sesiones(revoked_at);
 
 CREATE TABLE usuarios_backup (
     id SERIAL PRIMARY KEY,
@@ -539,6 +633,9 @@ CREATE TABLE usuarios_password_historial (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_usuarios_password_historial_usuario_id ON usuarios_password_historial(usuario_id);
+CREATE INDEX idx_usuarios_password_historial_created_at ON usuarios_password_historial(created_at);
+
 CREATE TABLE usuarios_password_resets (
     id SERIAL PRIMARY KEY,
     usuario_id INTEGER NOT NULL,
@@ -547,6 +644,9 @@ CREATE TABLE usuarios_password_resets (
     used_at TIMESTAMP NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_usuarios_password_resets_usuario_id ON usuarios_password_resets(usuario_id);
+CREATE INDEX idx_usuarios_password_resets_expires_at ON usuarios_password_resets(expires_at);
 
 CREATE TABLE usuarios_login_intentos (
     email VARCHAR(255) PRIMARY KEY,

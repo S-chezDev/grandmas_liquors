@@ -9,6 +9,7 @@ const appConfig = require('../../config');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const sharp = require('sharp');
 const bcrypt = require('bcryptjs');
 const ClienteCuenta = require('../models/ventas/cliente-cuenta');
 const { normalizeClientePayload } = require('./normalizador-http');
@@ -415,7 +416,13 @@ module.exports = {
       const absolutePath = path.join(uploadsDir, filename);
       const relativeUrl = `/uploads/perfiles/${filename}`;
 
-      fs.writeFileSync(absolutePath, req.file.buffer);
+      // Optimizar imagen con Sharp
+      const optimizedBuffer = await sharp(req.file.buffer)
+        .resize(400, 400, { fit: 'cover', withoutEnlargement: true })
+        .jpeg({ quality: 85, progressive: true })
+        .toBuffer();
+
+      fs.writeFileSync(absolutePath, optimizedBuffer);
 
       await models.Clientes.update(cliente.id, { foto_url: relativeUrl });
 

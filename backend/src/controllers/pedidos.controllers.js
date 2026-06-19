@@ -3,6 +3,7 @@
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const sharp = require('sharp');
 const pool = require('../../db');
 const appConfig = require('../../config');
 const models = {
@@ -605,7 +606,13 @@ module.exports = {
       const absolutePath = path.join(uploadsDir, filename);
       const relativeUrl = `/uploads/comprobantes/${filename}`;
 
-      fs.writeFileSync(absolutePath, req.file.buffer);
+      // Optimizar imagen con Sharp
+      const optimizedBuffer = await sharp(req.file.buffer)
+        .resize(1200, 1200, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 85, progressive: true })
+        .toBuffer();
+
+      fs.writeFileSync(absolutePath, optimizedBuffer);
 
       return res.json({
         success: true,

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, lazy, Suspense } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router';
 import { Toaster, toast } from './components/AlertDialog';
 import { Sidebar } from './components/Sidebar';
@@ -6,27 +6,36 @@ import { Header } from './components/Header';
 import { AuthProvider, useAuth } from './components/AuthContext';
 import { api } from './services/api';
 import { firstPermittedStaffPath } from './services/routePermissions';
-import { LandingPage } from './components/pages/LandingPage';
-import { NosotrosPage } from './components/pages/NosotrosPage';
-import { Login } from './components/pages/Login';
-import { Dashboard } from './components/pages/Dashboard';
-import { Roles } from './components/pages/usuarios/Roles';
-import { Usuarios } from './components/pages/usuarios/Usuarios';
-import { Accesos } from './components/pages/usuarios/Accesos';
-import { Proveedores } from './components/pages/compras/Proveedores';
-import { Compras } from './components/pages/compras/Compras';
-import { Productos } from './components/pages/compras/Productos';
-import { Categorias } from './components/pages/compras/Categorias';
-import { Insumos } from './components/pages/produccion/Insumos';
-import { EntregaInsumos } from './components/pages/produccion/EntregaInsumos';
-import { Produccion } from './components/pages/produccion/Produccion';
-import { Clientes } from './components/pages/ventas/Clientes';
-import { Ventas } from './components/pages/ventas/Ventas';
-import { Abonos } from './components/pages/ventas/Abonos';
-import { Pedidos } from './components/pages/ventas/Pedidos';
-import { Domicilios } from './components/pages/ventas/Domicilios';
 import { SessionIdleWatcher } from './components/SessionIdleWatcher';
 import { requestLandingScroll } from './components/hooks/landingShared';
+
+// Lazy loading de páginas para reducir el bundle inicial
+const LandingPage = lazy(() => import('./components/pages/LandingPage').then(m => ({ default: m.LandingPage })));
+const NosotrosPage = lazy(() => import('./components/pages/NosotrosPage').then(m => ({ default: m.NosotrosPage })));
+const Login = lazy(() => import('./components/pages/Login').then(m => ({ default: m.Login })));
+const Dashboard = lazy(() => import('./components/pages/Dashboard').then(m => ({ default: m.Dashboard })));
+const Roles = lazy(() => import('./components/pages/usuarios/Roles').then(m => ({ default: m.Roles })));
+const Usuarios = lazy(() => import('./components/pages/usuarios/Usuarios').then(m => ({ default: m.Usuarios })));
+const Accesos = lazy(() => import('./components/pages/usuarios/Accesos').then(m => ({ default: m.Accesos })));
+const Proveedores = lazy(() => import('./components/pages/compras/Proveedores').then(m => ({ default: m.Proveedores })));
+const Compras = lazy(() => import('./components/pages/compras/Compras').then(m => ({ default: m.Compras })));
+const Productos = lazy(() => import('./components/pages/compras/Productos').then(m => ({ default: m.Productos })));
+const Categorias = lazy(() => import('./components/pages/compras/Categorias').then(m => ({ default: m.Categorias })));
+const Insumos = lazy(() => import('./components/pages/produccion/Insumos').then(m => ({ default: m.Insumos })));
+const EntregaInsumos = lazy(() => import('./components/pages/produccion/EntregaInsumos').then(m => ({ default: m.EntregaInsumos })));
+const Produccion = lazy(() => import('./components/pages/produccion/Produccion').then(m => ({ default: m.Produccion })));
+const Clientes = lazy(() => import('./components/pages/ventas/Clientes').then(m => ({ default: m.Clientes })));
+const Ventas = lazy(() => import('./components/pages/ventas/Ventas').then(m => ({ default: m.Ventas })));
+const Abonos = lazy(() => import('./components/pages/ventas/Abonos').then(m => ({ default: m.Abonos })));
+const Pedidos = lazy(() => import('./components/pages/ventas/Pedidos').then(m => ({ default: m.Pedidos })));
+const Domicilios = lazy(() => import('./components/pages/ventas/Domicilios').then(m => ({ default: m.Domicilios })));
+
+// Componente de carga para Suspense
+const PageLoader = () => (
+  <div className="flex items-center justify-center min-h-screen">
+    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+  </div>
+);
 
 const pageTitles: Record<string, string> = {
   '/dashboard': 'Dashboard',
@@ -91,28 +100,30 @@ function StaffLayout({ onLogout }: { onLogout: () => void | Promise<void> }) {
         />
         <main key={user.id} className="main-content-scroll flex-1 overflow-y-auto bg-background p-3 sm:p-4 md:p-6">
           <RequireRouteAccess>
-            <Routes>
-              <Route path="/" element={<Navigate to={staffHome} replace />} />
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/medicion" element={<Dashboard />} />
-              <Route path="/configuracion/roles" element={<Roles />} />
-              <Route path="/usuarios/roles" element={<Roles />} />
-              <Route path="/usuarios/usuarios" element={<Usuarios />} />
-              <Route path="/usuarios/accesos" element={<Accesos />} />
-              <Route path="/compras/proveedores" element={<Proveedores />} />
-              <Route path="/compras/compras" element={<Compras />} />
-              <Route path="/compras/productos" element={<Productos />} />
-              <Route path="/compras/categorias" element={<Categorias />} />
-              <Route path="/produccion/produccion" element={<Produccion />} />
-              <Route path="/produccion/entrega-insumos" element={<EntregaInsumos />} />
-              <Route path="/produccion/insumos" element={<Insumos />} />
-              <Route path="/ventas/clientes" element={<Clientes />} />
-              <Route path="/ventas/ventas" element={<Ventas />} />
-              <Route path="/ventas/abonos" element={<Abonos />} />
-              <Route path="/ventas/pedidos" element={<Pedidos />} />
-              <Route path="/ventas/domicilios" element={<Domicilios />} />
-              <Route path="*" element={<Navigate to={staffHome} replace />} />
-            </Routes>
+            <Suspense fallback={<PageLoader />}>
+              <Routes>
+                <Route path="/" element={<Navigate to={staffHome} replace />} />
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/medicion" element={<Dashboard />} />
+                <Route path="/configuracion/roles" element={<Roles />} />
+                <Route path="/usuarios/roles" element={<Roles />} />
+                <Route path="/usuarios/usuarios" element={<Usuarios />} />
+                <Route path="/usuarios/accesos" element={<Accesos />} />
+                <Route path="/compras/proveedores" element={<Proveedores />} />
+                <Route path="/compras/compras" element={<Compras />} />
+                <Route path="/compras/productos" element={<Productos />} />
+                <Route path="/compras/categorias" element={<Categorias />} />
+                <Route path="/produccion/produccion" element={<Produccion />} />
+                <Route path="/produccion/entrega-insumos" element={<EntregaInsumos />} />
+                <Route path="/produccion/insumos" element={<Insumos />} />
+                <Route path="/ventas/clientes" element={<Clientes />} />
+                <Route path="/ventas/ventas" element={<Ventas />} />
+                <Route path="/ventas/abonos" element={<Abonos />} />
+                <Route path="/ventas/pedidos" element={<Pedidos />} />
+                <Route path="/ventas/domicilios" element={<Domicilios />} />
+                <Route path="*" element={<Navigate to={staffHome} replace />} />
+              </Routes>
+            </Suspense>
           </RequireRouteAccess>
         </main>
       </div>
@@ -179,24 +190,28 @@ function AppContent() {
   if (user?.rol === 'Cliente') {
     if (showAuth === 'nosotros') {
       return (
-        <NosotrosPage
-          onNavigateToRegister={() => setShowAuth('register')}
-          onBackToHome={() => setShowAuth('landing')}
-          onViewCatalog={() => {
-            requestLandingScroll('productos');
-            setShowAuth('landing');
-          }}
-        />
+        <Suspense fallback={<PageLoader />}>
+          <NosotrosPage
+            onNavigateToRegister={() => setShowAuth('register')}
+            onBackToHome={() => setShowAuth('landing')}
+            onViewCatalog={() => {
+              requestLandingScroll('productos');
+              setShowAuth('landing');
+            }}
+          />
+        </Suspense>
       );
     }
     return (
-      <LandingPage
-        onNavigateToLogin={() => setShowAuth('login')}
-        onNavigateToRegister={() => setShowAuth('register')}
-        onNavigateToNosotros={() => setShowAuth('nosotros')}
-        user={user}
-        onLogout={handleLogoutToLanding}
-      />
+      <Suspense fallback={<PageLoader />}>
+        <LandingPage
+          onNavigateToLogin={() => setShowAuth('login')}
+          onNavigateToRegister={() => setShowAuth('register')}
+          onNavigateToNosotros={() => setShowAuth('nosotros')}
+          user={user}
+          onLogout={handleLogoutToLanding}
+        />
+      </Suspense>
     );
   }
 
@@ -206,33 +221,39 @@ function AppContent() {
 
   if (showAuth === 'landing') {
     return (
-      <LandingPage
-        onNavigateToLogin={() => setShowAuth('login')}
-        onNavigateToRegister={() => setShowAuth('register')}
-        onNavigateToNosotros={() => setShowAuth('nosotros')}
-      />
+      <Suspense fallback={<PageLoader />}>
+        <LandingPage
+          onNavigateToLogin={() => setShowAuth('login')}
+          onNavigateToRegister={() => setShowAuth('register')}
+          onNavigateToNosotros={() => setShowAuth('nosotros')}
+        />
+      </Suspense>
     );
   }
 
   if (showAuth === 'nosotros') {
     return (
-      <NosotrosPage
-        onNavigateToRegister={() => setShowAuth('register')}
-        onBackToHome={() => setShowAuth('landing')}
-        onViewCatalog={() => {
-          requestLandingScroll('productos');
-          setShowAuth('landing');
-        }}
-      />
+      <Suspense fallback={<PageLoader />}>
+        <NosotrosPage
+          onNavigateToRegister={() => setShowAuth('register')}
+          onBackToHome={() => setShowAuth('landing')}
+          onViewCatalog={() => {
+            requestLandingScroll('productos');
+            setShowAuth('landing');
+          }}
+        />
+      </Suspense>
     );
   }
 
   return (
-    <Login
-      onLogin={handleLogin}
-      initialTab={showAuth === 'register' ? 'register' : 'login'}
-      onBackToLanding={() => setShowAuth('landing')}
-    />
+    <Suspense fallback={<PageLoader />}>
+      <Login
+        onLogin={handleLogin}
+        initialTab={showAuth === 'register' ? 'register' : 'login'}
+        onBackToLanding={() => setShowAuth('landing')}
+      />
+    </Suspense>
   );
 }
 

@@ -185,29 +185,46 @@ const Pedidos = {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('DELETE FROM detalle_pedidos WHERE pedido_id = $1', [pedidoId]);
+      
+      // Obtener todos los productos en una sola query
+      const productoIds = items.map(item => Number(item.productoId ?? item.producto_id)).filter(id => Number.isFinite(id));
+      if (productoIds.length === 0) {
+        await client.query('DELETE FROM detalle_pedidos WHERE pedido_id = $1', [pedidoId]);
+        await client.query('UPDATE pedidos SET total = 0, updated_at = CURRENT_TIMESTAMP WHERE id = $1', [pedidoId]);
+        await client.query('COMMIT');
+        return true;
+      }
+
+      const productosResult = await client.query(
+        `SELECT id, stock, estado, COALESCE(tipo_producto, 'terminado') AS tipo_producto
+         FROM productos WHERE id = ANY($1)`,
+        [productoIds]
+      );
+      const productosMap = new Map(productosResult.rows.map(p => [p.id, p]));
+
+      // Validar todos los productos antes de insertar
       for (const item of items) {
         const productoId = Number(item.productoId ?? item.producto_id);
         const cantidad = Number(item.cantidad);
         const precioUnitario = Number(item.precio ?? item.precioUnitario ?? 0);
-        const subtotal = cantidad * precioUnitario;
-        const prod = await client.query(
-          `SELECT id, stock, estado, COALESCE(tipo_producto, 'terminado') AS tipo_producto
-           FROM productos WHERE id = $1 LIMIT 1`,
-          [productoId]
-        );
-        if (!prod.rows[0]) {
+        
+        if (!Number.isFinite(productoId)) continue;
+        
+        const p = productosMap.get(productoId);
+        if (!p) {
+          await client.query('ROLLBACK');
           const error = new Error('Producto no encontrado');
           error.statusCode = 404;
           throw error;
         }
-        const p = prod.rows[0];
         if (String(p.estado || '').toLowerCase() !== 'activo') {
+          await client.query('ROLLBACK');
           const error = new Error('No se puede agregar al pedido un producto inactivo');
           error.statusCode = 409;
           throw error;
         }
         if (String(p.tipo_producto || '').toLowerCase() === 'insumo') {
+          await client.query('ROLLBACK');
           const error = new Error('Los productos tipo insumo no se pueden incluir en pedidos de cliente');
           error.statusCode = 400;
           throw error;
@@ -217,16 +234,41 @@ const Pedidos = {
         if (!esPreparacion) {
           const available = Number(p.stock || 0);
           if (!Number.isFinite(available) || available <= 0 || available < Number(cantidad || 0)) {
+            await client.query('ROLLBACK');
             const error = new Error(`Stock insuficiente para el producto. Disponible: ${available}`);
             error.statusCode = 409;
             throw error;
           }
         }
+      }
+
+      // Eliminar detalles existentes
+      await client.query('DELETE FROM detalle_pedidos WHERE pedido_id = $1', [pedidoId]);
+
+      // Insertar todos los detalles en una sola query usando VALUES
+      const values = items.map((item, index) => {
+        const productoId = Number(item.productoId ?? item.producto_id);
+        const cantidad = Number(item.cantidad);
+        const precioUnitario = Number(item.precio ?? item.precioUnitario ?? 0);
+        const subtotal = cantidad * precioUnitario;
+        return `($${index * 5 + 1}, $${index * 5 + 2}, $${index * 5 + 3}, $${index * 5 + 4}, $${index * 5 + 5})`;
+      }).join(', ');
+
+      const flatValues = items.flatMap(item => {
+        const productoId = Number(item.productoId ?? item.producto_id);
+        const cantidad = Number(item.cantidad);
+        const precioUnitario = Number(item.precio ?? item.precioUnitario ?? 0);
+        const subtotal = cantidad * precioUnitario;
+        return [pedidoId, productoId, cantidad, precioUnitario, subtotal];
+      });
+
+      if (flatValues.length > 0) {
         await client.query(
-          'INSERT INTO detalle_pedidos (pedido_id, producto_id, cantidad, precio_unitario, subtotal) VALUES ($1, $2, $3, $4, $5)',
-          [pedidoId, productoId, cantidad, precioUnitario, subtotal]
+          `INSERT INTO detalle_pedidos (pedido_id, producto_id, cantidad, precio_unitario, subtotal) VALUES ${values}`,
+          flatValues
         );
       }
+
       const totalResult = await client.query(
         'SELECT COALESCE(SUM(subtotal), 0)::numeric AS total FROM detalle_pedidos WHERE pedido_id = $1',
         [pedidoId]

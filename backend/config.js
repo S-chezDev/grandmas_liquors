@@ -19,12 +19,15 @@ if (isProduction && !process.env.JWT_SECRET) {
 }
 
 const defaultCorsOrigins = isProduction
-  ? []
+  ? [
+      process.env.CORS_CLOUDFRONT_URL ,
+      process.env.CORS_CUSTOM_DOMAIN ,
+    ].filter(Boolean)
   : [
-      'https://grandmas-liquors-feqf.vercel.app',       // Frontend Vercel (URL principal)
-      'https://grandmas-liquors-devploy.vercel.app',    // Frontend Vercel (alternativa)
-      'http://localhost:3000',                          // Frontend local (puerto Vite)
-    ];
+      process.env.CORS_CLOUDFRONT_URL,
+      process.env.CORS_CUSTOM_DOMAIN ,
+      'http://localhost:3000',
+    ].filter(Boolean);
 
 const configuredCorsOrigins = parseCsv(process.env.CORS_ORIGINS);
 
@@ -33,10 +36,10 @@ const resolveDbSsl = (host) => {
   const flag = String(process.env.DB_SSL || '').toLowerCase();
   if (flag === 'false' || flag === '0' || flag === 'no') return false;
   if (flag === 'true' || flag === '1' || flag === 'yes') {
-    return { rejectUnauthorized: false };
+    return { rejectUnauthorized: isProduction };
   }
   if (String(host || '').includes('rds.amazonaws.com')) {
-    return { rejectUnauthorized: false };
+    return { rejectUnauthorized: isProduction };
   }
   return false;
 };

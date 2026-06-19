@@ -3,6 +3,7 @@
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const sharp = require('sharp');
 const appConfig = require('../../config');
 const models = {
   Productos: require('../models/compras/productos'),
@@ -165,7 +166,13 @@ module.exports = {
       const absolutePath = path.join(uploadsDir, filename);
       const relativeUrl = `/uploads/productos/${filename}`;
 
-      fs.writeFileSync(absolutePath, req.file.buffer);
+      // Optimizar imagen con Sharp
+      const optimizedBuffer = await sharp(req.file.buffer)
+        .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 80, progressive: true })
+        .toBuffer();
+
+      fs.writeFileSync(absolutePath, optimizedBuffer);
 
       await models.Productos.update(req.params.id, {
         nombre: producto.nombre,
