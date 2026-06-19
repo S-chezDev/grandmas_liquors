@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:grandmas_liquors_movil/core/utils/role_utils.dart';
 import 'package:grandmas_liquors_movil/presentation/providers/auth_provider.dart';
 import 'package:grandmas_liquors_movil/presentation/styles/app_colors.dart';
 import 'package:grandmas_liquors_movil/presentation/widgets/app_logo.dart';
@@ -34,9 +35,12 @@ class _SplashPageState extends ConsumerState<SplashPage>
 
   void _navigateToNextPage() {
     final isAuthenticated = ref.read(isAuthenticatedProvider);
-    Navigator.of(context).pushReplacementNamed(
-      isAuthenticated ? '/home' : '/login',
-    );
+    if (!isAuthenticated) {
+      Navigator.of(context).pushReplacementNamed('/login');
+      return;
+    }
+    final user = ref.read(currentUserProvider);
+    Navigator.of(context).pushReplacementNamed(homeRouteForUser(user));
   }
 
   @override

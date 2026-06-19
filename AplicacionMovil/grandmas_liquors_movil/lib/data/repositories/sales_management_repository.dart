@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:grandmas_liquors_movil/data/datasources/remote/api_service.dart';
 import 'package:grandmas_liquors_movil/data/models/auth/auth_models.dart';
 import 'package:grandmas_liquors_movil/data/models/sales/sales_management_models.dart';
@@ -485,6 +486,64 @@ class SalesManagementRepository {
       'estado': 'Pendiente',
       'metodo_pago': _metodoToApi(metodoPago),
       'esquema_abono': esquemaAbono,
+      'productos': productos.map((p) => p.toApiJson()).toList(),
+    };
+    final dir = (direccion ?? '').trim();
+    final tel = (telefono ?? '').replaceAll(RegExp(r'\D'), '');
+    final det = (detalles ?? '').trim();
+    if (dir.length >= 5) payload['direccion'] = dir;
+    if (tel.isNotEmpty) payload['telefono'] = tel;
+    if (det.length >= 5) payload['detalles'] = det;
+    await _api.post('/api/pedidos', data: payload);
+  }
+
+  Future<String> uploadComprobante(String filePath) async {
+    final formData = FormData.fromMap({
+      'comprobante': await MultipartFile.fromFile(filePath),
+    });
+    return _uploadComprobanteFormData(formData);
+  }
+
+  Future<String> uploadComprobanteBytes(
+    List<int> bytes, {
+    required String filename,
+  }) async {
+    final formData = FormData.fromMap({
+      'comprobante': MultipartFile.fromBytes(bytes, filename: filename),
+    });
+    return _uploadComprobanteFormData(formData);
+  }
+
+  Future<String> _uploadComprobanteFormData(FormData formData) async {
+    final response = await _api.postMultipart(
+      '/api/pedidos/comprobante',
+      data: formData,
+    );
+    final data = response['data'] is Map<String, dynamic>
+        ? response['data'] as Map<String, dynamic>
+        : response;
+    final url = (data['comprobante_url'] ?? '').toString().trim();
+    if (url.isEmpty) throw Exception('No se recibió la URL del comprobante');
+    return url;
+  }
+
+  Future<void> createPedidoCliente({
+    required String esquemaAbono,
+    required String fechaEntrega,
+    required List<ProductLineInput> productos,
+    required String comprobanteUrl,
+    String? direccion,
+    String? telefono,
+    String? detalles,
+  }) async {
+    final total = productos.fold<double>(0, (s, p) => s + p.subtotal);
+    final payload = <String, dynamic>{
+      'fecha_entrega': fechaEntrega,
+      'total': total,
+      'estado': 'Pendiente',
+      'metodo_pago': 'Transferencia',
+      'esquema_abono': esquemaAbono,
+      'comprobante_url': comprobanteUrl,
       'productos': productos.map((p) => p.toApiJson()).toList(),
     };
     final dir = (direccion ?? '').trim();

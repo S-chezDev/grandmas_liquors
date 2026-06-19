@@ -1,16 +1,32 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:grandmas_liquors_movil/core/utils/role_utils.dart';
 import '../../providers/auth_provider.dart';
 import '../../widgets/app_page_scaffold.dart';
 import '../../widgets/app_logo.dart';
 import '../../styles/app_colors.dart';
 
-class HomePage extends ConsumerWidget {
+class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends ConsumerState<HomePage> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (isCliente(ref.read(currentUserProvider)) && mounted) {
+        Navigator.of(context).pushReplacementNamed('/client/catalog');
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final user = ref.watch(currentUserProvider);
 
     return AppPageScaffold(

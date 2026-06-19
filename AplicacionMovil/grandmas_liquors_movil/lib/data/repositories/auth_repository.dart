@@ -121,6 +121,11 @@ class AuthRepository {
 
   Future<List<String>> getAccessibleModules() async {
     try {
+      final user = await getCurrentUser();
+      if ((user?.rol ?? '').toLowerCase() == 'cliente') {
+        return const ['client'];
+      }
+
       final permissions = await getPermissionNames();
       final modules = <String>{};
 
@@ -207,5 +212,33 @@ class AuthRepository {
     final eqIdx = firstPair.indexOf('=');
     if (eqIdx <= 0 || eqIdx >= firstPair.length - 1) return null;
     return firstPair.substring(eqIdx + 1).trim();
+  }
+
+  Future<void> registerCliente(RegisterRequest request) async {
+    await _apiService.post(
+      AppConstants.registerClienteEndpoint,
+      data: request.toJson(),
+    );
+  }
+
+  Future<RegisterAvailability> checkRegisterAvailability({
+    String? documento,
+    String? email,
+  }) async {
+    final params = <String, dynamic>{};
+    if (documento != null && documento.isNotEmpty) {
+      params['documento'] = documento.replaceAll(RegExp(r'\D'), '');
+    }
+    if (email != null && email.isNotEmpty) {
+      params['email'] = email.trim().toLowerCase();
+    }
+    final response = await _apiService.get(
+      AppConstants.registerAvailabilityEndpoint,
+      queryParameters: params,
+    );
+    final data = response['data'] is Map<String, dynamic>
+        ? response['data'] as Map<String, dynamic>
+        : response;
+    return RegisterAvailability.fromJson(data);
   }
 }

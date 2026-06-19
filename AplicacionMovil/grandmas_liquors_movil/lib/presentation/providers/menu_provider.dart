@@ -19,15 +19,44 @@ class MenuItemModel {
   });
 }
 
-/// Menú dinámico de la aplicación móvil.
-///
-/// Por requerimiento del cliente, esta app móvil expone solo el módulo de
-/// **Ventas** (Ventas, Abonos, Pedidos, Domicilios). Los demás módulos de
-/// la plataforma se gestionan desde la aplicación web.
+/// Menú según rol: clientes ven tienda; staff ve módulo de ventas.
 final dynamicMenuProvider = Provider<List<MenuItemModel>>((ref) {
   final permisos = ref.watch(userPermissionsProvider);
   final user = ref.watch(currentUserProvider);
   final role = user?.rol ?? '';
+
+  if (role == 'Cliente') {
+    return [
+      MenuItemModel(
+        id: 'catalog',
+        title: 'Tienda',
+        route: '/client/catalog',
+        moduloKey: 'client',
+      ),
+      MenuItemModel(
+        id: 'my-orders',
+        title: 'Mis Pedidos',
+        route: '/client/pedidos',
+        moduloKey: 'client',
+      ),
+      MenuItemModel(
+        id: 'my-profile',
+        title: 'Mi Perfil',
+        route: '/client/profile',
+        moduloKey: 'client',
+      ),
+      MenuItemModel(
+        id: 'contacto',
+        title: 'Contacto',
+        moduloKey: 'client',
+      ),
+      MenuItemModel(
+        id: 'nosotros',
+        title: 'Nosotros',
+        moduloKey: 'client',
+      ),
+    ];
+  }
 
   bool hasAny(List<String> required) {
     if (role == 'Administrador') return true;
@@ -36,7 +65,6 @@ final dynamicMenuProvider = Provider<List<MenuItemModel>>((ref) {
 
   final menuItems = <MenuItemModel>[];
 
-  // Ventas (Ventas, Abonos, Pedidos, Domicilios)
   if (hasAny(const [
         'Ver Ventas',
         'Ver Abonos',
@@ -44,7 +72,6 @@ final dynamicMenuProvider = Provider<List<MenuItemModel>>((ref) {
         'Ver Domicilios',
       ]) ||
       role == 'Administrador' ||
-      role == 'Cliente' ||
       role == 'Repartidor') {
     final salesSubmenu = <MenuItemModel>[];
 
@@ -52,52 +79,29 @@ final dynamicMenuProvider = Provider<List<MenuItemModel>>((ref) {
         role == 'Administrador' ||
         role == 'Asesor') {
       salesSubmenu.add(
-        MenuItemModel(
-          id: 'ventas',
-          title: 'Ventas',
-          icon: 'assets/icons/sales.svg',
-          route: '/sales/ventas',
-        ),
+        MenuItemModel(id: 'ventas', title: 'Ventas', route: '/sales/ventas'),
       );
     }
 
     if (hasAny(const ['Ver Abonos']) || role == 'Administrador') {
       salesSubmenu.add(
-        MenuItemModel(
-          id: 'abonos',
-          title: 'Abonos',
-          icon: 'assets/icons/payments.svg',
-          route: '/sales/abonos',
-        ),
+        MenuItemModel(id: 'abonos', title: 'Abonos', route: '/sales/abonos'),
       );
     }
 
-    if (hasAny(const ['Ver Pedidos', 'Ver Mis Pedidos']) ||
-        role == 'Administrador' ||
-        role == 'Cliente') {
+    if (hasAny(const ['Ver Pedidos']) || role == 'Administrador') {
       salesSubmenu.add(
-        MenuItemModel(
-          id: 'pedidos',
-          title: 'Pedidos',
-          icon: 'assets/icons/orders.svg',
-          route: '/sales/pedidos',
-        ),
+        MenuItemModel(id: 'pedidos', title: 'Pedidos', route: '/sales/pedidos'),
       );
     }
 
-    if (hasAny(const [
-          'Ver Domicilios',
-          'Gestionar Domicilios',
-          'Ver Mis Domicilios',
-        ]) ||
+    if (hasAny(const ['Ver Domicilios', 'Gestionar Domicilios']) ||
         role == 'Administrador' ||
-        role == 'Repartidor' ||
-        role == 'Cliente') {
+        role == 'Repartidor') {
       salesSubmenu.add(
         MenuItemModel(
           id: 'domicilios',
           title: 'Domicilios',
-          icon: 'assets/icons/delivery.svg',
           route: '/sales/domicilios',
         ),
       );
@@ -108,7 +112,6 @@ final dynamicMenuProvider = Provider<List<MenuItemModel>>((ref) {
         MenuItemModel(
           id: 'sales',
           title: 'Ventas',
-          icon: 'assets/icons/sales.svg',
           submenu: salesSubmenu,
           moduloKey: 'sales',
         ),

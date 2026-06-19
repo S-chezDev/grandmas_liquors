@@ -4,6 +4,11 @@ import 'package:grandmas_liquors_movil/presentation/styles/app_colors.dart';
 
 String todayIso() => DateTime.now().toIso8601String().split('T').first;
 
+String tomorrowIso() {
+  final tomorrow = DateTime.now().add(const Duration(days: 1));
+  return tomorrow.toIso8601String().split('T').first;
+}
+
 String minDateIso() => todayIso();
 
 double parseMoney(String? raw) {
@@ -26,6 +31,54 @@ String? validateRequired(String? v, String label) {
 String? validateTelefono10(String? v) {
   final digits = (v ?? '').replaceAll(RegExp(r'\D'), '');
   if (digits.length != 10) return 'El teléfono debe tener 10 dígitos';
+  return null;
+}
+
+String? validatePasswordPolicy(String? v) {
+  final value = (v ?? '').trim();
+  if (value.isEmpty) return 'La contraseña es obligatoria';
+  if (value.length < 8) return 'Mínimo 8 caracteres';
+  if (!RegExp(r'[A-Z]').hasMatch(value)) {
+    return 'Debe incluir al menos una mayúscula';
+  }
+  if (!RegExp(r'[a-z]').hasMatch(value)) {
+    return 'Debe incluir al menos una minúscula';
+  }
+  if (!RegExp(r'\d').hasMatch(value)) {
+    return 'Debe incluir al menos un número';
+  }
+  return null;
+}
+
+String? validateDocumento(String? v) {
+  final digits = (v ?? '').replaceAll(RegExp(r'\D'), '');
+  if (digits.isEmpty) return 'El documento es obligatorio';
+  if (digits.length < 6 || digits.length > 12) {
+    return 'El documento debe tener entre 6 y 12 dígitos';
+  }
+  return null;
+}
+
+String? validateDireccion(String? v) {
+  final text = (v ?? '').trim();
+  if (text.isEmpty) return 'La dirección es obligatoria';
+  if (text.length < 5) return 'Ingresa una dirección más completa';
+  return null;
+}
+
+String? validateName(String? v, String label) {
+  final text = (v ?? '').trim();
+  if (text.isEmpty) return '$label es obligatorio';
+  if (text.length < 2) return '$label debe tener al menos 2 caracteres';
+  return null;
+}
+
+String? validateEmail(String? v) {
+  final text = (v ?? '').trim();
+  if (text.isEmpty) return 'El correo es obligatorio';
+  if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(text)) {
+    return 'Ingresa un correo electrónico válido';
+  }
   return null;
 }
 
