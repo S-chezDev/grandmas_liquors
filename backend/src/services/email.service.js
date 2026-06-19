@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const puppeteer = require('puppeteer');
 const config = require('../../config');
+const logger = require('../utils/logger');
 
 let cachedTransporter = null;
 let cachedTransporterMode = null;
@@ -60,14 +61,14 @@ const getLogoDataUri = () => {
       const fallbackBuf = fs.readFileSync(logoPath);
       if (!fallbackBuf.length || !isValidPngBuffer(fallbackBuf)) continue;
       cachedLogoDataUri = `data:image/png;base64,${fallbackBuf.toString('base64')}`;
-      console.log(`[mail] Logo de correo cargado: ${logoPath} (${fallbackBuf.length} bytes)`);
+      logger.info(`[mail] Logo de correo cargado: ${logoPath} (${fallbackBuf.length} bytes)`);
       return cachedLogoDataUri;
     } catch (err) {
-      console.warn(`[mail] No se pudo leer logo en ${logoPath}:`, err.message);
+      logger.warn(`[mail] No se pudo leer logo en ${logoPath}: ${err.message}`);
     }
   }
-  console.warn(
-    '[mail] Logo no encontrado. Incluya assets/brand/logo.png en el ZIP de despliegue. Rutas probadas:',
+  logger.warn(
+    '[mail] Logo no encontrado. Incluya assets/brand/logo.png en el ZIP de despliegue. Rutas probadas: ' +
     candidates.join(' | ')
   );
   cachedLogoDataUri = buildFallbackLogoDataUri();
@@ -91,15 +92,15 @@ const readLogoPngBuffer = () => {
       if (!fs.existsSync(logoPath) || !fs.statSync(logoPath).isFile()) continue;
       const buf = fs.readFileSync(logoPath);
       if (!isValidPngBuffer(buf)) {
-        console.warn(`[mail] Archivo no es PNG valido: ${logoPath}`);
+        logger.warn(`[mail] Archivo no es PNG valido: ${logoPath}`);
         continue;
       }
       cachedLogoBuffer = buf;
       cachedLogoFilePath = logoPath;
-      console.log(`[mail] Logo PNG listo para correo: ${logoPath} (${buf.length} bytes)`);
+      logger.info(`[mail] Logo PNG listo para correo: ${logoPath} (${buf.length} bytes)`);
       return cachedLogoBuffer;
     } catch (err) {
-      console.warn(`[mail] No se pudo leer logo en ${logoPath}:`, err.message);
+      logger.warn(`[mail] No se pudo leer logo en ${logoPath}: ${err.message}`);
     }
   }
   cachedLogoBuffer = false;
@@ -162,7 +163,7 @@ const createTransporter = () => {
       },
     });
     cachedTransporterMode = 'smtp';
-    console.log(
+    logger.info(
       `[mail] SMTP configurado -> host=${config.mail.host} port=${config.mail.port} secure=${config.mail.secure} user=${config.mail.user} from=${config.mail.from}`
     );
     return cachedTransporter;
@@ -170,7 +171,7 @@ const createTransporter = () => {
 
   cachedTransporter = nodemailer.createTransport({ jsonTransport: true });
   cachedTransporterMode = 'json';
-  console.warn(
+  logger.warn(
     '[mail] AVISO: No hay credenciales SMTP en .env (MAIL_HOST/MAIL_USER/MAIL_PASSWORD). ' +
       'Los correos NO se entregaran a los destinatarios; solo se imprimiran en consola. ' +
       'Configura las variables MAIL_* en backend/.env y reinicia el backend.'
@@ -200,18 +201,18 @@ const sendWithLogging = async (message, label) => {
   try {
     const result = await transporter.sendMail(prioritizedMessage);
     if (cachedTransporterMode === 'json') {
-      console.warn(
+      logger.warn(
         `[mail] (${label}) NO ENVIADO (jsonTransport activo). Destinatario: ${prioritizedMessage.to}. ` +
           'Configura MAIL_* en backend/.env para entregar correos reales.'
       );
     } else {
-      console.log(
+      logger.info(
         `[mail] (${label}) Enviado a ${prioritizedMessage.to} (messageId=${result?.messageId || 'n/d'})`
       );
     }
     return result;
   } catch (error) {
-    console.error(
+    logger.error(
       `[mail] (${label}) Fallo al enviar a ${prioritizedMessage.to}: ${error?.message || error}`
     );
     throw error;
@@ -1046,7 +1047,7 @@ const sendPedidoCreatedEmail = async ({
       montoAbonado: montoAbonadoNum,
     });
   } catch (pdfError) {
-    console.error('[mail] No se pudo generar PDF de pedido para correo:', pdfError?.message || pdfError);
+    logger.error('[mail] No se pudo generar PDF de pedido para correo: ' + (pdfError?.message || pdfError));
     throw new Error('No se pudo generar el comprobante PDF del pedido para el correo de confirmación.');
   }
 
@@ -1078,7 +1079,7 @@ const sendPedidoCreatedEmail = async ({
         contentType: 'application/pdf',
       });
     } catch (pdfError) {
-      console.error('[mail] No se pudo generar PDF de abono para correo:', pdfError?.message || pdfError);
+      logger.error('[mail] No se pudo generar PDF de abono para correo: ' + (pdfError?.message || pdfError));
       throw new Error('No se pudo generar el comprobante PDF del abono para el correo de confirmación.');
     }
   }

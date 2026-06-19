@@ -95,9 +95,35 @@ if (config.server.env === 'production') {
 const corsOptions = {
   credentials: true,
   origin: (origin, callback) => {
-    // En producción sin restricciones de CORS: permitir todos los orígenes
-    // Los clientes pueden venir de cualquier dirección (web, mobile, etc.)
-    if (config.auth.corsOrigins.includes('*') || !config.auth.corsOrigins.length) {
+    const isProduction = config.server.env === 'production';
+
+    // En producción, nunca permitir '*' y siempre validar que corsOrigins tenga al menos un origen
+    if (isProduction) {
+      if (!config.auth.corsOrigins.length) {
+        console.error('CORS: No hay orígenes configurados en producción. Configure CORS_ORIGINS en .env.production');
+        return callback(new Error('Configuración de CORS inválida: No hay orígenes permitidos'));
+      }
+
+      // Apps móviles nativas (Flutter) suelen omitir Origin; permitir sin bloquear la API.
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      // Allow explicit configured origins
+      if (config.auth.corsOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      console.warn(`CORS: rejected origin ${origin}. Allowed: ${config.auth.corsOrigins.join(', ')}`);
+      return callback(new Error(`Origen no permitido por CORS: ${origin}`));
+    }
+
+    // En desarrollo, permitir localhost y orígenes configurados
+    if (config.auth.corsOrigins.includes('*')) {
+      return callback(null, true);
+    }
+
+    if (!config.auth.corsOrigins.length) {
       return callback(null, true);
     }
 

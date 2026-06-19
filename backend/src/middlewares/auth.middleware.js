@@ -3,6 +3,7 @@ const config = require('../../config');
 const pool = require('../../db');
 const { roleGrantsPermission } = require('../models/shared/auditoria');
 const { getLatestUserStatusReason } = require('../models/shared/auditoria');
+const logger = require('../utils/logger');
 
 // ============================================================
 // VALIDADORES CENTRALIZADOS DE ENTRADA
@@ -245,7 +246,7 @@ const authorizePermissions = (...requiredPermissions) => async (req, res, next) 
 
     return next();
   } catch (error) {
-    console.error('Error en authorizePermissions:', error);
+    logger.error('Error en authorizePermissions: ' + error);
     return res.status(500).json({ success: false, message: 'Error al validar permisos' });
   }
 };

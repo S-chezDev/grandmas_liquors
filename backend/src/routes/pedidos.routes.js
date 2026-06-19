@@ -7,6 +7,7 @@ const { authorizePermissions, simpleRateLimit } = require('../middlewares/auth.m
 const { denyRoles } = require('../middlewares/scopeAccess');
 const { validate } = require('../middlewares/validate.middleware');
 const { idParam, clienteIdParam } = require('../validators/params.schema');
+const logger = require('../utils/logger');
 const {
   createPedidoBody,
   updatePedidoBody,
@@ -33,7 +34,7 @@ const uploadComprobante = multer({
     }
     
     // Log para debugging
-    console.warn(`[Upload] Comprobante rechazado - Nombre: ${file.originalname}, MIME: ${file.mimetype}, Ext: ${extension}`);
+    logger.warn(`[Upload] Comprobante rechazado - Nombre: ${file.originalname}, MIME: ${file.mimetype}, Ext: ${extension}`);
     return cb(new Error('Formato de imagen no permitido. Usa JPG, PNG o WEBP.'));
   },
 });
@@ -44,7 +45,7 @@ const uploadComprobanteHandler = (req, res, next) => {
     if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
       return res.status(400).json({ success: false, message: 'La imagen no puede superar 2MB.' });
     }
-    console.error('[Upload Error]', error?.message || error);
+    logger.error('[Upload Error]', error?.message || error);
     return res.status(400).json({ success: false, message: error.message || 'No fue posible procesar la imagen.' });
   });
 };

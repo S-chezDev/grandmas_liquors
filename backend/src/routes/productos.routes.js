@@ -8,6 +8,7 @@ const { denyRoles } = require('../middlewares/scopeAccess');
 const { validate } = require('../middlewares/validate.middleware');
 const { OPERATIONAL_DENY_ROLES } = require('../middlewares/operationalRoles');
 const { idParam } = require('../validators/params.schema');
+const logger = require('../utils/logger');
 const { createProductoBody, updateProductoBody, updateProductoEstadoBody } = require('../validators/catalog.schema');
 
 const router = express.Router();
@@ -31,7 +32,7 @@ const uploadProductoImagen = multer({
     }
     
     // Log para debugging
-    console.warn(`[Upload] Imagen producto rechazada - Nombre: ${file.originalname}, MIME: ${file.mimetype}, Ext: ${extension}`);
+    logger.warn(`[Upload] Imagen producto rechazada - Nombre: ${file.originalname}, MIME: ${file.mimetype}, Ext: ${extension}`);
     return cb(new Error('Formato de imagen no permitido. Usa JPG, PNG o WEBP.'));
   },
 });
@@ -42,7 +43,7 @@ const uploadProductoImagenHandler = (req, res, next) => {
       return res.status(400).json({ success: false, message: 'La imagen no puede superar 2MB.' });
     }
     if (error) {
-      console.error('[Upload Error]', error?.message || error);
+      logger.error('[Upload Error]', error?.message || error);
       return res.status(400).json({ success: false, message: error.message || 'No fue posible procesar la imagen.' });
     }
     return next();

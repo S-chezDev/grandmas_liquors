@@ -8,6 +8,7 @@
 const pool = require('../../../db');
 const { parseMoneyCO } = require('../../controllers/normalizador-http');
 const { ensureMotivoEstado, reserveEntityIdAndCode } = require('../shared/auditoria');
+const logger = require('../../utils/logger');
 const Produccion = require('../produccion/produccion');
 
 const Pedidos = {
@@ -335,7 +336,7 @@ const Pedidos = {
       }
 
       if (verificacion.rows[0].estado !== estado) {
-        console.warn(`Discrepancia en estado: esperado ${estado}, obtenido ${verificacion.rows[0].estado}`);
+        logger.warn(`Discrepancia en estado: esperado ${estado}, obtenido ${verificacion.rows[0].estado}`);
       }
 
       return true;

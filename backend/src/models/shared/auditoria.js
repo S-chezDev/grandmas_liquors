@@ -6,6 +6,7 @@
  * lo importa. La fuente activa es este archivo modular.
  */
 const pool = require('../../../db');
+const logger = require('../../utils/logger');
 
 // ------- Bloque inicial: helpers globales (ensure*, sync*, normalize*, etc.) -------
 let ventasMoneyColumnsReady = null;
@@ -346,7 +347,7 @@ const registerProductoAudit = async ({ productoId, accion, usuarioId = null, cam
     );
   } catch (err) {
     // La auditoría nunca debe romper la operación principal
-    console.warn('⚠️  No se pudo registrar auditoría de producto:', err.message);
+    logger.warn('⚠️  No se pudo registrar auditoría de producto: ' + err.message);
   }
 };
 
@@ -374,7 +375,7 @@ const registerCategoriaAudit = async ({ categoriaId, accion, usuarioId = null, c
       [categoriaId, accion, usuarioId, JSON.stringify(cambios || {})]
     );
   } catch (err) {
-    console.warn('⚠️  No se pudo registrar auditoría de categoría:', err.message);
+    logger.warn('⚠️  No se pudo registrar auditoría de categoría: ' + err.message);
   }
 };
 
@@ -402,7 +403,7 @@ const registerClienteAudit = async ({ clienteId, accion, usuarioId = null, cambi
       [clienteId, accion, usuarioId, JSON.stringify(cambios || {})]
     );
   } catch (err) {
-    console.warn('⚠️  No se pudo registrar auditoría de cliente:', err.message);
+    logger.warn('⚠️  No se pudo registrar auditoría de cliente: ' + err.message);
   }
 };
 
@@ -942,7 +943,7 @@ const registerUserAudit = async ({ usuarioId, accion, actorId, cambios }) => {
       [usuarioId, accion, actorId, JSON.stringify(cambios)]
     );
   } catch (error) {
-    console.error('Error registering user audit:', error.message);
+    logger.error('Error registering user audit: ' + error.message);
     // No throw - audit failure shouldn't block the main operation
   }
 };

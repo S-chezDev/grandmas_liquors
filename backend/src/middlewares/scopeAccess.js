@@ -5,6 +5,7 @@
 
 const pool = require('../../db');
 const { roleGrantsPermission } = require('../models/shared/auditoria');
+const logger = require('../utils/logger');
 
 const FORBIDDEN = { success: false, message: 'No autorizado' };
 
@@ -66,7 +67,7 @@ const repartidorDomiciliosGuard = async (req, res, next) => {
       message: 'El repartidor solo puede consultar domicilios asignados y actualizar su estado',
     });
   } catch (error) {
-    console.error('Error en repartidorDomiciliosGuard:', error);
+    logger.error('Error en repartidorDomiciliosGuard: ' + error);
     return res.status(500).json({ success: false, message: 'Error al validar permisos' });
   }
 };
@@ -95,7 +96,7 @@ const productorProduccionGuard = async (req, res, next) => {
         'El productor solo puede consultar sus órdenes, registrar nuevas órdenes propias y actualizar su estado',
     });
   } catch (error) {
-    console.error('Error en productorProduccionGuard:', error);
+    logger.error('Error en productorProduccionGuard: ' + error);
     return res.status(500).json({ success: false, message: 'Error al validar permisos' });
   }
 };
@@ -115,7 +116,7 @@ const productorEntregasGuard = async (req, res, next) => {
       message: 'El productor solo puede consultar sus entregas de insumos',
     });
   } catch (error) {
-    console.error('Error en productorEntregasGuard:', error);
+    logger.error('Error en productorEntregasGuard: ' + error);
     return res.status(500).json({ success: false, message: 'Error al validar permisos' });
   }
 };
