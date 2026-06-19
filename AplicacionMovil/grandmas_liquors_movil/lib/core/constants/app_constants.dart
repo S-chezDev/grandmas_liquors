@@ -1,5 +1,3 @@
-import 'package:flutter/foundation.dart';
-
 class AppConstants {
   // API Configuration
   static final String apiBaseUrl = _resolveApiBaseUrl();
@@ -16,6 +14,10 @@ class AppConstants {
   static const String logoutEndpoint = '/api/auth/logout';
   static const String refreshTokenEndpoint = '/api/auth/refresh';
   static const String meEndpoint = '/api/auth/me';
+  static const String registerClienteEndpoint = '/api/auth/register-cliente';
+  static const String registerAvailabilityEndpoint =
+      '/api/auth/register-cliente/disponibilidad';
+  static const String publicCatalogEndpoint = '/api/public/catalogo';
 
   // Modules
   static const String moduleConfiguration = 'configuration';
@@ -38,7 +40,7 @@ class AppConstants {
   static const String appName = 'Grandmas Liquors';
   static const String appVersion = '1.0.0';
 
-  /// Backend en AWS Elastic Beanstalk (mismo que el frontend React).
+  /// Backend en AWS Elastic Beanstalk (mismo entorno que el frontend React).
   static const String productionApiBaseUrl =
       'http://aplicationgl-env-1.eba-jyti25ie.us-east-2.elasticbeanstalk.com';
 
@@ -49,10 +51,6 @@ class AppConstants {
     const configuredUrl = String.fromEnvironment('API_BASE_URL');
     if (configuredUrl.isNotEmpty) {
       return _normalizeBaseUrl(configuredUrl);
-    }
-
-    if (kIsWeb) {
-      return webDevProxyBaseUrl;
     }
 
     return productionApiBaseUrl;

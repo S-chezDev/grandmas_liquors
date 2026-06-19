@@ -184,6 +184,22 @@ class ApiService {
     }
   }
 
+  Future<Map<String, dynamic>> postMultipart(
+    String endpoint, {
+    required FormData data,
+  }) async {
+    try {
+      final response = await _dio.post(
+        endpoint,
+        data: data,
+        options: Options(contentType: 'multipart/form-data'),
+      );
+      return _handleResponse(response);
+    } on DioException catch (e) {
+      throw _handleError(e);
+    }
+  }
+
   // PUT Request
   Future<Map<String, dynamic>> put(
     String endpoint, {

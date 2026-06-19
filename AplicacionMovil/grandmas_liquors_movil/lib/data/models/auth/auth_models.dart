@@ -97,3 +97,52 @@ class UsuarioModel {
     );
   }
 }
+
+class RegisterRequest {
+  final String tipoDocumento;
+  final String numeroDocumento;
+  final String nombre;
+  final String apellido;
+  final String direccion;
+  final String telefono;
+  final String email;
+  final String password;
+
+  RegisterRequest({
+    required this.tipoDocumento,
+    required this.numeroDocumento,
+    required this.nombre,
+    required this.apellido,
+    required this.direccion,
+    required this.telefono,
+    required this.email,
+    required this.password,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'tipoDocumento': tipoDocumento,
+    'numeroDocumento': numeroDocumento,
+    'nombre': nombre,
+    'apellido': apellido,
+    'direccion': direccion,
+    'telefono': telefono,
+    'email': email.trim().toLowerCase(),
+    'password': password,
+  };
+}
+
+class RegisterAvailability {
+  final bool documentoExists;
+  final bool emailExists;
+
+  RegisterAvailability({
+    required this.documentoExists,
+    required this.emailExists,
+  });
+
+  factory RegisterAvailability.fromJson(Map<String, dynamic> json) =>
+      RegisterAvailability(
+        documentoExists: json['documentoExists'] == true,
+        emailExists: json['emailExists'] == true,
+      );
+}

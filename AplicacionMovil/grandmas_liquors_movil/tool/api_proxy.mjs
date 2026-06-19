@@ -5,7 +5,8 @@
  */
 import http from 'http';
 
-const TARGET_HOST = 'apigrandmasliquors.us-east-1.elasticbeanstalk.com';
+const TARGET_HOST =
+  'aplicationgl-env-1.eba-jyti25ie.us-east-2.elasticbeanstalk.com';
 const TARGET_PORT = 80;
 const LISTEN_PORT = Number(process.env.API_PROXY_PORT || 3002);
 

@@ -2,7 +2,9 @@
 <network-security-config>
     <!-- Producción -->
     <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">apigrandmasliquors.us-east-1.elasticbeanstalk.com</domain>
+        <domain includeSubdomains="true">aplicationgl-env-1.eba-jyti25ie.us-east-2.elasticbeanstalk.com</domain>
+        <domain includeSubdomains="true">grandmas-api.us-east-2.elasticbeanstalk.com</domain>
+        <domain includeSubdomains="true">grandmas-api.us-east-1.elasticbeanstalk.com</domain>
     </domain-config>
     <!-- Dev: proxy Vite (npm run dev) en localhost / emulador / LAN -->
     <domain-config cleartextTrafficPermitted="true">

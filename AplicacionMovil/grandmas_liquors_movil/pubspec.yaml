@@ -54,6 +54,9 @@ dependencies:
   # Icons
   lucide_icons_flutter: ^3.1.13
 
+  # Comprobante de pago en pedidos
+  image_picker: ^1.1.2
+
   # JSON Serialization (optional, for better serialization)
   json_annotation: ^4.8.1
 

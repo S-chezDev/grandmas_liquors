@@ -251,6 +251,16 @@ class AppDrawer extends ConsumerWidget {
 
   IconData _getIconForItem(String id) {
     switch (id) {
+      case 'catalog':
+        return LucideIcons.store;
+      case 'my-orders':
+        return LucideIcons.clipboardList;
+      case 'my-profile':
+        return LucideIcons.user;
+      case 'contacto':
+        return LucideIcons.phone;
+      case 'nosotros':
+        return LucideIcons.info;
       case 'configuration':
         return LucideIcons.settings;
       case 'access':

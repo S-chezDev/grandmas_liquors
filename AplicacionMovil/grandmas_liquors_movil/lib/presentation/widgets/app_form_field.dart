@@ -17,6 +17,8 @@ class AppFormField extends StatelessWidget {
   final void Function(String)? onFieldSubmitted;
   final bool enabled;
   final int? maxLines;
+  final bool readOnly;
+  final VoidCallback? onTap;
 
   const AppFormField({
     super.key,
@@ -34,6 +36,8 @@ class AppFormField extends StatelessWidget {
     this.onFieldSubmitted,
     this.enabled = true,
     this.maxLines = 1,
+    this.readOnly = false,
+    this.onTap,
   });
 
   @override
@@ -59,6 +63,8 @@ class AppFormField extends StatelessWidget {
           focusNode: focusNode,
           onFieldSubmitted: onFieldSubmitted,
           enabled: enabled,
+          readOnly: readOnly,
+          onTap: onTap,
           maxLines: maxLines,
           decoration: InputDecoration(
             hintText: hint,

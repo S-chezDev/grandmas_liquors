@@ -130,6 +130,40 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
+  Future<void> register(RegisterRequest request) async {
+    state = state.copyWith(isLoading: true, errorMessage: null);
+    try {
+      await _authRepository.registerCliente(request);
+      final response = await _authRepository.login(
+        email: request.email,
+        password: request.password,
+      );
+      final modulos = await _authRepository.getAccessibleModules();
+      state = state.copyWith(
+        isLoading: false,
+        isAuthenticated: true,
+        usuario: response.usuario,
+        permisos: response.usuario.permisos,
+        modulos: modulos,
+        errorMessage: null,
+      );
+    } on AppException catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        isAuthenticated: false,
+        errorMessage: e.message,
+      );
+      rethrow;
+    } catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        isAuthenticated: false,
+        errorMessage: 'Error al registrarse',
+      );
+      rethrow;
+    }
+  }
+
   Future<void> logout() async {
     state = state.copyWith(isLoading: true);
     try {

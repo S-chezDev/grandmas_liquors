@@ -30,7 +30,17 @@
 	<dict>
 		<key>NSExceptionDomains</key>
 		<dict>
-			<key>apigrandmasliquors.us-east-1.elasticbeanstalk.com</key>
+			<key>aplicationgl-env-1.eba-jyti25ie.us-east-2.elasticbeanstalk.com</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+			<key>grandmas-api.us-east-2.elasticbeanstalk.com</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+			<key>grandmas-api.us-east-1.elasticbeanstalk.com</key>
 			<dict>
 				<key>NSExceptionAllowsInsecureHTTPLoads</key>
 				<true/>
