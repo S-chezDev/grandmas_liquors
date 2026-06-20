@@ -112,6 +112,7 @@ CHECK (tipo_producto IN ('terminado','preparacion','insumo'))
 
 let productoTipoColumnReady = null;
 let productoTipoPrecioColumnReady = null;
+let productoFichaTecnicaColumnReady = null;
 const ensureProductoTipoColumn = async () => {
   if (!productoTipoColumnReady) {
     productoTipoColumnReady = (async () => {
@@ -134,6 +135,16 @@ const ensureProductoTipoColumn = async () => {
     await productoTipoPrecioColumnReady;
   } catch (_e) {
     productoTipoPrecioColumnReady = null;
+  }
+  if (!productoFichaTecnicaColumnReady) {
+    productoFichaTecnicaColumnReady = pool.query(
+      `ALTER TABLE productos ADD COLUMN IF NOT EXISTS ficha_tecnica JSONB`
+    );
+  }
+  try {
+    await productoFichaTecnicaColumnReady;
+  } catch (_e) {
+    productoFichaTecnicaColumnReady = null;
   }
   await ensureProductoTipoCheckAllowsInsumo();
 };

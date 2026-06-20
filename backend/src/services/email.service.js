@@ -129,19 +129,12 @@ const getLogoAttachments = () => {
 };
 
 const buildEmailLogoHtml = () => {
-  if (readLogoPngBuffer()) {
-    return (
-      '<div style="margin:0 0 20px 0;text-align:center">' +
-      '<img src="cid:brand-logo@grandmas" alt="Grandma\'s Liquors" width="140" style="display:block;margin:0 auto;max-width:140px;width:140px;height:auto;border:0;outline:none;text-decoration:none" />' +
-      '</div>'
-    );
-  }
   const dataUri = getLogoDataUri();
   return (
     '<div style="margin:0 0 20px 0;text-align:center">' +
     '<img src="' +
     dataUri +
-    '" alt="Grandma\'s Liquors" width="120" style="display:block;margin:0 auto;max-width:120px;height:auto;border-radius:10px" />' +
+    '" alt="Grandma\'s Liquors" width="140" style="display:block;margin:0 auto;max-width:140px;height:auto;border:0;outline:none;text-decoration:none" />' +
     '</div>'
   );
 };
@@ -551,7 +544,25 @@ const formatEntityCode = (prefix, value) => {
 const formatDateOnly = (value) => {
   const raw = String(value || '').trim();
   if (!raw) return '';
-  return raw.split('T')[0] || raw;
+
+  // Si ya está en formato ISO (YYYY-MM-DD), retornarlo
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return raw;
+  }
+
+  // Si está en formato "Fri Jun 19 2026 00:00:00 GMT", convertir a YYYY-MM-DD
+  const dateObj = new Date(raw);
+  if (isNaN(dateObj.getTime())) {
+    return raw; // Retornar original si no es fecha válida
+  }
+
+  const year = dateObj.getFullYear();
+  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const day = String(dateObj.getDate()).padStart(2, '0');
+  const hours = String(dateObj.getHours()).padStart(2, '0');
+  const minutes = String(dateObj.getMinutes()).padStart(2, '0');
+
+  return `${year}-${month}-${day} (${hours}:${minutes})`;
 };
 
 const metodoPagoUi = (value) => {

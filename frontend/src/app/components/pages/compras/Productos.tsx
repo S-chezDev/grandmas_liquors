@@ -1,11 +1,11 @@
-﻿import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { DataTable, Column } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
 import { Plus, Eye, Edit, Trash2 } from 'lucide-react';
 import { api } from '../../../services/api';
-import type { Producto, Categoria } from '../../../services/types';
+import type { Producto, Categoria, FichaTecnicaInsumo } from '../../../services/types';
 import { INSUMO_UNIDADES_API } from '../../../services/types';
 import { formatMoneyInput, parseMoneyInput, MAX_MONEY_DIGITS } from '../../../services/mappers';
 import { toast } from '../../AlertDialog';
@@ -64,6 +64,14 @@ export function Productos() {
   const [filtroCategoria, setFiltroCategoria] = useState<string>('Todos');
   const [filtroEstado, setFiltroEstado] = useState<string>('Todos');
   const [filtroTipo, setFiltroTipo] = useState<string>('Todos');
+
+  const [fichaTecnicaInsumos, setFichaTecnicaInsumos] = useState<FichaTecnicaInsumo[]>([]);
+  const [detailFichaTecnica, setDetailFichaTecnica] = useState<FichaTecnicaInsumo[]>([]);
+  const [loadingFicha, setLoadingFicha] = useState(false);
+
+  const insumosDisponibles = useMemo(() => {
+    return productos.filter(p => p.typo === 'insumo' && p.estado === 'activo');
+  }, [productos]);
 
   useEffect(() => {
     cargarDatos();
@@ -184,7 +192,7 @@ export function Productos() {
               ? 'bg-blue-100 text-blue-700'
               : typo === 'insumo'
                 ? 'bg-amber-100 text-amber-800'
-                : 'bg-purple-100 text-purple-700'
+                : 'bg-emerald-100 text-emerald-700'
           }`}
         >
           {typo === 'terminado' ? 'Terminado' : typo === 'insumo' ? 'Insumo' : 'De Preparación'}
@@ -277,6 +285,7 @@ export function Productos() {
     setNombreErrorApi(undefined);
     setImagenArchivo(null);
     setImagenPreview(null);
+    setFichaTecnicaInsumos([]);
   };
 
   const handleImagenChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -319,10 +328,11 @@ export function Productos() {
     setNombreErrorApi(undefined);
     setImagenArchivo(null);
     setImagenPreview(null);
+    setFichaTecnicaInsumos([]);
     setIsModalOpen(true);
   };
 
-  const handleEdit = (producto: Producto) => {
+  const handleEdit = async (producto: Producto) => {
     if (producto.estado === 'inactivo') {
       toast.warning('Producto inactivo', {
         description: 'No se puede editar un producto inactivo. Reactivelo primero.',
@@ -354,6 +364,32 @@ export function Productos() {
     setNombreErrorApi(undefined);
     setImagenArchivo(null);
     setImagenPreview(producto.imagenUrl || null);
+    setFichaTecnicaInsumos([]);
+
+    if (producto.typo === 'de preparacion') {
+      try {
+        setLoadingFicha(true);
+        const res = await api.productos.getFichaTecnica(producto.id);
+        if (res && res.data && Array.isArray(res.data.insumos)) {
+          setFichaTecnicaInsumos(res.data.insumos.map((i: any) => {
+            const idInsumo = Number(i.producto_catalogo_id || i.insumo_id);
+            const catalogProduct = productos.find(p => p.id === idInsumo);
+            return {
+              producto_catalogo_id: idInsumo,
+              insumo_nombre: catalogProduct?.nombre || i.insumo_nombre || '',
+              cantidad: Number(i.cantidad) || 0,
+              unidad: catalogProduct?.insumoUnidadMedida || i.unidad || 'Unidades',
+            };
+          }));
+        }
+      } catch (error) {
+        console.error('Error al obtener ficha técnica:', error);
+        toast.error('Error al cargar la receta', { description: 'No se pudo cargar la receta del producto.' });
+      } finally {
+        setLoadingFicha(false);
+      }
+    }
+
     setIsModalOpen(true);
   };
 
@@ -393,9 +429,23 @@ export function Productos() {
     }
   };
 
-  const handleView = (producto: Producto) => {
+  const handleView = async (producto: Producto) => {
     setSelectedProducto(producto);
     setIsDetailModalOpen(true);
+    setDetailFichaTecnica([]);
+    if (producto.typo === 'de preparacion') {
+      try {
+        setLoadingFicha(true);
+        const res = await api.productos.getFichaTecnica(producto.id);
+        if (res && res.data && Array.isArray(res.data.insumos)) {
+          setDetailFichaTecnica(res.data.insumos);
+        }
+      } catch (error) {
+        console.error('Error al obtener la ficha técnica para ver:', error);
+      } finally {
+        setLoadingFicha(false);
+      }
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -472,6 +522,25 @@ export function Productos() {
       }
     }
 
+    // Validación de ficha técnica para productos de preparación
+    if (formData.typo === 'de preparacion') {
+      const insumosValidos = fichaTecnicaInsumos.filter(i => i.producto_catalogo_id && Number(i.cantidad) > 0);
+      if (insumosValidos.length === 0) {
+        toast.error('Receta requerida', {
+          description: 'Debe agregar al menos un insumo con cantidad válida a la receta del producto de preparación.',
+        });
+        return;
+      }
+      const ids = insumosValidos.map(i => i.producto_catalogo_id);
+      const hayDuplicados = ids.some((id, idx) => ids.indexOf(id) !== idx);
+      if (hayDuplicados) {
+        toast.error('Insumos duplicados', {
+          description: 'La receta contiene el mismo insumo más de una vez. Por favor, elimine los duplicados.',
+        });
+        return;
+      }
+    }
+
     try {
       let productoId: number | undefined;
       if (productoFormularioModo === 'editar' && selectedProducto) {
@@ -512,6 +581,20 @@ export function Productos() {
           cerrarModalProductoFormulario();
           cargarDatos();
           return;
+        }
+      }
+
+      // Guardar ficha técnica para productos de preparación
+      if (formData.typo === 'de preparacion' && productoId) {
+        const insumosValidos = fichaTecnicaInsumos.filter(i => i.producto_catalogo_id && Number(i.cantidad) > 0);
+        try {
+          await api.productos.saveFichaTecnica(productoId, { insumos: insumosValidos });
+        } catch (fichaError: unknown) {
+          const fichaMsg = fichaError instanceof Error ? fichaError.message : 'No se pudo guardar la receta.';
+          toast.error('Receta no guardada', { description: fichaMsg });
+          if (import.meta.env.DEV) {
+            console.error('Error al guardar ficha técnica', fichaError);
+          }
         }
       }
 
@@ -879,6 +962,134 @@ export function Productos() {
             </p>
           )}
 
+          {/* ── Ficha Técnica ── solo para productos de preparación */}
+          {formData.typo === 'de preparacion' && (
+            <div className="space-y-3 border border-border rounded-xl p-4 bg-accent/30">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-semibold text-sm text-foreground flex items-center gap-1">
+                    Ficha Técnica
+                  </h4>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Define los insumos necesarios para producir una unidad de este producto.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setFichaTecnicaInsumos(prev => [
+                      ...prev,
+                      { producto_catalogo_id: undefined as any, insumo_nombre: '', cantidad: 0, unidad: 'Unidades' },
+                    ])
+                  }
+                  className="flex items-center gap-1 text-xs px-3 py-1.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+                >
+                  <Plus className="w-3 h-3" /> Agregar insumo
+                </button>
+              </div>
+
+              {loadingFicha && (
+                <p className="text-xs text-muted-foreground text-center py-2">Cargando receta...</p>
+              )}
+
+              {!loadingFicha && fichaTecnicaInsumos.length === 0 && (
+                <p className="text-xs text-muted-foreground text-center py-3 border border-dashed border-border rounded-lg">
+                  No hay insumos en la receta. Haz clic en "Agregar insumo" para comenzar.
+                </p>
+              )}
+
+              {!loadingFicha && fichaTecnicaInsumos.length > 0 && (
+                <div className="space-y-2">
+                  {/* Header */}
+                  <div className="grid grid-cols-12 gap-2 text-xs font-medium text-muted-foreground px-1">
+                    <span className="col-span-6">Insumo</span>
+                    <span className="col-span-3">Cantidad</span>
+                    <span className="col-span-2">Unidad</span>
+                    <span className="col-span-1"></span>
+                  </div>
+                  {fichaTecnicaInsumos.map((fila, idx) => {
+                    const insumoSeleccionado = productos.find(
+                      p => p.id === Number(fila.producto_catalogo_id)
+                    );
+                    const unidadLabel = insumoSeleccionado?.insumoUnidadMedida || fila.unidad || 'Unidades';
+                    return (
+                      <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                        {/* Selector de insumo */}
+                        <div className="col-span-6">
+                          <select
+                            value={fila.producto_catalogo_id ?? ''}
+                            onChange={e => {
+                              const pid = Number(e.target.value);
+                              const prod = insumosDisponibles.find(p => p.id === pid);
+                              setFichaTecnicaInsumos(prev =>
+                                prev.map((r, i) =>
+                                  i === idx
+                                    ? {
+                                        ...r,
+                                        producto_catalogo_id: pid || undefined,
+                                        insumo_nombre: prod?.nombre || '',
+                                        unidad: prod?.insumoUnidadMedida || 'Unidades',
+                                      }
+                                    : r
+                                )
+                              );
+                            }}
+                            className="w-full text-sm px-2 py-1.5 border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+                            required
+                          >
+                            <option value="">Seleccione un insumo</option>
+                            {insumosDisponibles.map(p => (
+                              <option key={p.id} value={p.id}>
+                                {p.nombre}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        {/* Cantidad */}
+                        <div className="col-span-3">
+                          <input
+                            type="number"
+                            min={0.001}
+                            step={0.001}
+                            value={fila.cantidad || ''}
+                            onChange={e => {
+                              const val = parseFloat(e.target.value) || 0;
+                              setFichaTecnicaInsumos(prev =>
+                                prev.map((r, i) => (i === idx ? { ...r, cantidad: val } : r))
+                              );
+                            }}
+                            placeholder="0"
+                            className="w-full text-sm px-2 py-1.5 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
+                            required
+                          />
+                        </div>
+                        {/* Unidad */}
+                        <div className="col-span-2">
+                          <span className="text-xs text-muted-foreground bg-gray-100 rounded px-2 py-1.5 block text-center truncate">
+                            {unidadLabel}
+                          </span>
+                        </div>
+                        {/* Eliminar */}
+                        <div className="col-span-1 flex justify-center">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setFichaTecnicaInsumos(prev => prev.filter((_, i) => i !== idx))
+                            }
+                            className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded transition-colors"
+                            title="Eliminar insumo"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           <FormField
             label="Estado"
             name="estado"
@@ -902,6 +1113,7 @@ export function Productos() {
           </FormActions>
         </Form>
       </Modal>
+
 
       {/* Modal Detalle */}
       <Modal
@@ -938,7 +1150,7 @@ export function Productos() {
                       ? 'bg-blue-100 text-blue-700'
                       : selectedProducto.typo === 'insumo'
                         ? 'bg-amber-100 text-amber-800'
-                        : 'bg-purple-100 text-purple-700'
+                        : 'bg-emerald-100 text-emerald-700'
                   }`}
                 >
                   {selectedProducto.typo === 'terminado'
@@ -995,6 +1207,42 @@ export function Productos() {
                 </span>
               </div>
             </div>
+
+            {/* Ficha Técnica en detalle — solo para productos de preparación */}
+            {selectedProducto.typo === 'de preparacion' && (
+              <div className="border border-border rounded-xl p-4 bg-accent/30">
+                <h4 className="font-semibold text-sm text-foreground mb-3 flex items-center gap-1">
+                  Ficha Técnica
+                </h4>
+                {loadingFicha ? (
+                  <p className="text-xs text-muted-foreground text-center py-2">Cargando receta...</p>
+                ) : detailFichaTecnica.length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-2 italic">
+                    No hay receta configurada para este producto.
+                  </p>
+                ) : (
+                  <div className="space-y-1">
+                    <div className="grid grid-cols-12 gap-2 text-xs font-medium text-muted-foreground mb-1 px-1">
+                      <span className="col-span-6">Insumo</span>
+                      <span className="col-span-3">Cantidad</span>
+                      <span className="col-span-3">Unidad</span>
+                    </div>
+                    {detailFichaTecnica.map((ins, idx) => {
+                      const idInsumo = ins.producto_catalogo_id || ins.insumo_id;
+                      const catalogProduct = productos.find(p => p.id === Number(idInsumo));
+                      const unidadLabel = catalogProduct?.insumoUnidadMedida || ins.unidad || 'Unidades';
+                      return (
+                        <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-white rounded-lg px-3 py-2 border border-border text-sm">
+                          <span className="col-span-6 font-medium truncate">{ins.insumo_nombre || '—'}</span>
+                          <span className="col-span-3 text-muted-foreground">{ins.cantidad}</span>
+                          <span className="col-span-3 text-muted-foreground capitalize">{unidadLabel}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Historial de cambios */}
             {selectedProducto.historialCambios && selectedProducto.historialCambios.length > 0 && (

@@ -124,6 +124,13 @@ export function Produccion() {
   const [insumosSeleccionados, setInsumosSeleccionados] = useState<
     { clave: string; insumo_nombre: string; cantidad: number; unidad: string }[]
   >([]);
+  const [insumosSugeridos, setInsumosSugeridos] = useState<
+    { clave: string; insumo_nombre: string; cantidad: number; unidad: string }[]
+  >([]);
+  const [insumosFaltantes, setInsumosFaltantes] = useState<
+    { clave: string; insumo_nombre: string; requerido: number; disponible: number; falta: number; unidad: string }[]
+  >([]);
+  const [loadingSugerido, setLoadingSugerido] = useState(false);
 
   const toggleInsumoSeleccionado = (insumo: any, cantidad: number) => {
     const existente = insumosSeleccionados.find(i => i.clave === insumo.clave);
@@ -178,30 +185,82 @@ export function Produccion() {
     if (!isModalOpen || !formData.productorId) {
       setInsumosResumenProductor([]);
       setInsumosSeleccionados([]);
+      setInsumosSugeridos([]);
+      setInsumosFaltantes([]);
       return;
     }
     let cancelled = false;
     void (async () => {
       try {
-        console.log(`[Produccion] Fetching insumos para productorId=${formData.productorId}`);
-        const rows = await api.produccion.getInsumosResumenProductor(formData.productorId);
-        console.log(`[Produccion] Insumos obtenidos:`, rows);
-        if (!cancelled) {
-          const enriched = (Array.isArray(rows) ? rows : []).map((row) => ({
-            ...row,
-            unidad: etiquetaUnidadInsumo(row, insumosCatalogo),
-          }));
-          setInsumosResumenProductor(enriched);
+        setLoadingSugerido(true);
+        if (formData.pedidoId) {
+          console.log(`[Produccion] Fetching sugerencias para pedidoId=${formData.pedidoId}, productorId=${formData.productorId}`);
+          const res = await api.produccion.sugerirConsumo(formData.pedidoId, formData.productorId);
+          console.log(`[Produccion] Sugerencia de consumo obtenida:`, res);
+          if (!cancelled) {
+            const enrichedDisp = (Array.isArray(res.disponible) ? res.disponible : []).map((row) => ({
+              ...row,
+              unidad: etiquetaUnidadInsumo(row, insumosCatalogo),
+            }));
+            setInsumosResumenProductor(enrichedDisp);
+
+            const enrichedSug = (Array.isArray(res.sugerido) ? res.sugerido : []).map((row) => ({
+              clave: row.clave,
+              insumo_nombre: row.insumo_nombre || 'Insumo',
+              cantidad: Number(row.cantidad) || 0,
+              unidad: etiquetaUnidadInsumo(row, insumosCatalogo),
+            }));
+            setInsumosSugeridos(enrichedSug);
+
+            const enrichedFalt = (Array.isArray(res.faltantes) ? res.faltantes : []).map((row) => ({
+              clave: row.clave,
+              insumo_nombre: row.insumo_nombre || 'Insumo',
+              requerido: Number(row.requerido) || 0,
+              disponible: Number(row.disponible) || 0,
+              falta: Number(row.falta) || 0,
+              unidad: etiquetaUnidadInsumo(row, insumosCatalogo),
+            }));
+            setInsumosFaltantes(enrichedFalt);
+
+            const preseleccionados = enrichedSug.map((sug) => ({
+              clave: sug.clave,
+              insumo_nombre: sug.insumo_nombre,
+              cantidad: sug.cantidad,
+              unidad: sug.unidad,
+            }));
+            setInsumosSeleccionados(preseleccionados);
+          }
+        } else {
+          console.log(`[Produccion] Fetching insumos para productorId=${formData.productorId}`);
+          const rows = await api.produccion.getInsumosResumenProductor(formData.productorId);
+          console.log(`[Produccion] Insumos obtenidos:`, rows);
+          if (!cancelled) {
+            const enriched = (Array.isArray(rows) ? rows : []).map((row) => ({
+              ...row,
+              unidad: etiquetaUnidadInsumo(row, insumosCatalogo),
+            }));
+            setInsumosResumenProductor(enriched);
+            setInsumosSugeridos([]);
+            setInsumosFaltantes([]);
+            setInsumosSeleccionados([]);
+          }
         }
       } catch (error) {
-        console.error(`[Produccion] Error al obtener insumos:`, error);
-        if (!cancelled) setInsumosResumenProductor([]);
+        console.error(`[Produccion] Error al obtener insumos/sugerencia:`, error);
+        if (!cancelled) {
+          setInsumosResumenProductor([]);
+          setInsumosSugeridos([]);
+          setInsumosFaltantes([]);
+          setInsumosSeleccionados([]);
+        }
+      } finally {
+        if (!cancelled) setLoadingSugerido(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [isModalOpen, formData.productorId, insumosCatalogo]);
+  }, [isModalOpen, formData.productorId, formData.pedidoId, insumosCatalogo]);
 
   // Cerrar listas desplegables al hacer clic fuera
   useEffect(() => {
@@ -984,8 +1043,30 @@ export function Produccion() {
               )}
             </div>
 
+
             <div className="col-span-2 rounded-lg border border-border p-4 space-y-3">
               <label className="block text-sm font-medium">Insumos entregados al productor</label>
+              
+              {insumosFaltantes.length > 0 && (
+                <div className="p-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg text-red-800 dark:text-red-300 text-xs space-y-1">
+                  <span className="font-bold flex items-center gap-1">
+                    ⚠️ Alerta: Insuficientes insumos entregados al productor
+                  </span>
+                  <p>El productor no cuenta con saldo suficiente de los siguientes insumos requeridos por la receta:</p>
+                  <ul className="list-disc pl-4 space-y-0.5 font-medium">
+                    {insumosFaltantes.map(f => (
+                      <li key={f.clave}>
+                        <strong>{f.insumo_nombre}</strong>: requiere {formatoCantidadInsumo(f.requerido, f.unidad)} {f.unidad}, pero solo tiene {formatoCantidadInsumo(f.disponible, f.unidad)} {f.unidad} (falta {formatoCantidadInsumo(f.falta, f.unidad)} {f.unidad}).
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {loadingSugerido && (
+                <p className="text-xs text-muted-foreground text-center py-2">Calculando insumos requeridos...</p>
+              )}
+
               {!formData.productorId ? (
                 <p className="text-sm text-muted-foreground">Asigne un productor para ver su inventario de insumos.</p>
               ) : insumosResumenProductor.length === 0 ? (
@@ -1000,10 +1081,22 @@ export function Produccion() {
                     const unidadLbl = etiquetaUnidadInsumo(row, insumosCatalogo);
                     const disponible = disponibleMostrar(row, insumosCatalogo);
                     const quedaría = Math.max(0, disponible - cantidad);
+                    
+                    const sugeridoItem = insumosSugeridos.find(s => s.clave === row.clave);
+                    const requerido = sugeridoItem ? sugeridoItem.cantidad : 0;
+                    
+                    const columnsCount = 1 + (requerido > 0 ? 1 : 0) + (seleccionado ? 2 : 0);
+
                     return (
                       <div
                         key={row.clave}
-                        className="border border-border/40 rounded-lg p-3 space-y-2 hover:bg-muted/20 transition"
+                        className={`border rounded-lg p-3 space-y-2 hover:bg-muted/20 transition ${
+                          requerido > disponible 
+                            ? 'border-red-200 bg-red-50/20' 
+                            : requerido > 0 
+                              ? 'border-blue-200 bg-blue-50/10' 
+                              : 'border-border/40'
+                        }`}
                       >
                         <div className="flex items-start gap-3">
                           <input
@@ -1013,12 +1106,38 @@ export function Produccion() {
                             className="w-4 h-4 accent-primary mt-1 flex-shrink-0"
                           />
                           <div className="flex-1 min-w-0">
-                            <span className="font-semibold block text-foreground">{row.insumo_nombre || 'Insumo'}</span>
-                            <div className="grid grid-cols-3 gap-2 mt-2 text-xs">
+                            <div className="flex items-center justify-between">
+                              <span className="font-semibold block text-foreground">{row.insumo_nombre || 'Insumo'}</span>
+                              {requerido > disponible && (
+                                <span className="text-xs font-bold text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-950/40 px-2 py-0.5 rounded">
+                                  ⚠️ Falta stock
+                                </span>
+                              )}
+                              {requerido > 0 && requerido <= disponible && (
+                                <span className="text-xs font-semibold text-green-700 bg-green-100 dark:bg-green-950/40 px-2 py-0.5 rounded">
+                                  ✓ Stock suficiente
+                                </span>
+                              )}
+                            </div>
+                            <div className={`grid gap-2 mt-2 text-xs ${
+                              columnsCount === 4 ? 'grid-cols-2 sm:grid-cols-4' :
+                              columnsCount === 3 ? 'grid-cols-3' :
+                              columnsCount === 2 ? 'grid-cols-2' : 'grid-cols-1'
+                            }`}>
                               <div className="bg-muted/30 p-2 rounded">
                                 <div className="text-muted-foreground">Disponible</div>
-                                <div className="font-mono font-semibold text-foreground">{formatoCantidadInsumo(disponible, unidadLbl)} {unidadLbl}</div>
+                                <div className="font-mono font-semibold text-foreground">
+                                  {formatoCantidadInsumo(disponible, unidadLbl)} {unidadLbl}
+                                </div>
                               </div>
+                              {requerido > 0 && (
+                                <div className="bg-amber-50/80 dark:bg-amber-950/30 p-2 rounded border border-amber-200 dark:border-amber-900">
+                                  <div className="text-muted-foreground">Ficha Técnica</div>
+                                  <div className="font-mono font-semibold text-amber-700 dark:text-amber-400">
+                                    {formatoCantidadInsumo(requerido, unidadLbl)} {unidadLbl}
+                                  </div>
+                                </div>
+                              )}
                               {seleccionado && (
                                 <>
                                   <div className="bg-blue-50 dark:bg-blue-950 p-2 rounded border border-blue-200 dark:border-blue-800">

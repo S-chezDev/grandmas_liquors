@@ -229,3 +229,52 @@ exports.debugInsumosByProductor = asyncHandler(async (req, res) => {
     insumos_resumido: agregados
   });
 });
+
+// -----------------------------------------------------------
+// Endpoints para Fichas Técnicas
+// -----------------------------------------------------------
+
+exports.getFichaTecnica = asyncHandler(async (req, res) => {
+  const productoId = Number(req.params.productoId);
+  if (!Number.isFinite(productoId) || productoId <= 0) {
+    throw AppError.badRequest('productoId inválido');
+  }
+  const data = await models.Produccion.getFichaTecnica(productoId);
+  res.json({ success: true, data });
+});
+
+exports.saveFichaTecnica = asyncHandler(async (req, res) => {
+  throwIfProductorForbidden(req);
+  const productoId = Number(req.params.productoId);
+  if (!Number.isFinite(productoId) || productoId <= 0) {
+    throw AppError.badRequest('productoId inválido');
+  }
+  const fichaTecnica = req.body;
+  try {
+    models.Produccion.validarFichaTecnica(fichaTecnica);
+  } catch (error) {
+    throw AppError.badRequest(error.message);
+  }
+  const data = await models.Produccion.saveFichaTecnica(productoId, fichaTecnica);
+  res.json({ success: true, data });
+});
+
+exports.calcularInsumosNecesarios = asyncHandler(async (req, res) => {
+  const productoId = Number(req.params.productoId);
+  const cantidadProduccion = Number(req.query.cantidad) || 1;
+  if (!Number.isFinite(productoId) || productoId <= 0) {
+    throw AppError.badRequest('productoId inválido');
+  }
+  const data = await models.Produccion.calcularInsumosNecesariosParaProduccion(productoId, cantidadProduccion);
+  res.json({ success: true, data });
+});
+
+exports.verificarDisponibilidadInsumos = asyncHandler(async (req, res) => {
+  const productoId = Number(req.params.productoId);
+  const cantidadProduccion = Number(req.query.cantidad) || 1;
+  if (!Number.isFinite(productoId) || productoId <= 0) {
+    throw AppError.badRequest('productoId inválido');
+  }
+  const data = await models.Produccion.verificarDisponibilidadInsumosParaFicha(productoId, cantidadProduccion);
+  res.json({ success: true, data });
+});

@@ -16,9 +16,14 @@ const productorIdParam = z.object({
   productorId: z.coerce.number().int().positive(),
 });
 
+const productoIdParam = z.object({
+  productoId: z.coerce.number().int().positive(),
+});
+
 module.exports = {
   idParam,
   pedidoIdParam,
   clienteIdParam,
   productorIdParam,
+  productoIdParam,
 };

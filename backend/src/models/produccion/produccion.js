@@ -349,24 +349,43 @@ const normalizeConsumoInput = (rawList, catalogo) => {
  * Necesidad total por insumo según recetas (producto_insumos) y cantidades de preparación del pedido.
  * Unifica catálogo (id virtual BASE + producto) y legacy; si hay producto catálogo con el mismo nombre que el insumo legacy, agrupa en `c:`.
  */
-const buildPedidoInsumoNeedMap = async (client, detallePreparacion) => {
+const buildPedidoInsumoNeedMap = async (client, detallePreparacion, catalogo) => {
   const need = new Map();
+  let usoFichaTecnica = false;
+  
   for (const line of detallePreparacion) {
     const pid = Number(line.producto_id);
     const prepQty = Number(line.cantidad);
     if (!Number.isFinite(pid) || pid <= 0 || !Number.isFinite(prepQty) || prepQty <= 0) continue;
-    const rec = await client.query(
-      `SELECT insumo_id, cantidad_requerida FROM producto_insumos WHERE producto_id = $1`,
-      [pid]
-    );
-    for (const r of rec.rows) {
-      const rawId = Number(r.insumo_id);
-      const req = Number(r.cantidad_requerida);
-      if (!Number.isFinite(rawId) || rawId <= 0 || !Number.isFinite(req) || req <= 0) continue;
-      const key =
-        rawId >= INSUMO_ID_VIRTUAL_BASE ? `c:${rawId - INSUMO_ID_VIRTUAL_BASE}` : `l:${rawId}`;
-      const add = req * prepQty;
-      need.set(key, (need.get(key) || 0) + add);
+    
+    const fichaTecnica = await getFichaTecnica(pid);
+    if (fichaTecnica && fichaTecnica.insumos && fichaTecnica.insumos.length > 0) {
+      usoFichaTecnica = true;
+      for (const insumo of fichaTecnica.insumos) {
+        const key = insumo.insumo_id ? `l:${insumo.insumo_id}` : `c:${insumo.producto_catalogo_id}`;
+        let req = Number(insumo.cantidad);
+        if (!Number.isFinite(req) || req <= 0) continue;
+        
+        if (catalogo) {
+          req = consumoCantidadAUnidadesAlmacen({ clave: key, cantidad: req, unidad: insumo.unidad }, catalogo);
+        }
+        
+        const add = req * prepQty;
+        need.set(key, (need.get(key) || 0) + add);
+      }
+    } else {
+      const rec = await client.query(
+        `SELECT insumo_id, cantidad_requerida FROM producto_insumos WHERE producto_id = $1`,
+        [pid]
+      );
+      for (const r of rec.rows) {
+        const rawId = Number(r.insumo_id);
+        const req = Number(r.cantidad_requerida);
+        if (!Number.isFinite(rawId) || rawId <= 0 || !Number.isFinite(req) || req <= 0) continue;
+        const key = rawId >= INSUMO_ID_VIRTUAL_BASE ? `c:${rawId - INSUMO_ID_VIRTUAL_BASE}` : `l:${rawId}`;
+        const add = req * prepQty;
+        need.set(key, (need.get(key) || 0) + add);
+      }
     }
   }
   for (const [k, v] of [...need.entries()]) {
@@ -386,7 +405,7 @@ const buildPedidoInsumoNeedMap = async (client, detallePreparacion) => {
       need.delete(k);
     }
   }
-  return need;
+  return { need, usoFichaTecnica };
 };
 
 /** Convierte necesidad de receta (unidades almacén) a lista de consumo para la UI. */
@@ -444,10 +463,14 @@ const sugerirConsumoInsumos = async (pedidoId, productorId) => {
     throw err;
   }
 
-  const need = await buildPedidoInsumoNeedMap(pool, preparaciones);
+  // Integración con Fichas Técnicas: Usar fichas técnicas si están disponibles
+  const { need, usoFichaTecnica } = await buildPedidoInsumoNeedMap(pool, preparaciones, catalogo);
+
   if (!need.size) {
     const err = new Error(
-      'No hay recetas de insumos configuradas para los productos de preparación del pedido. Configure producto-insumos en el catálogo.'
+      usoFichaTecnica
+        ? 'No hay fichas técnicas configuradas para los productos de preparación del pedido. Configure las fichas técnicas en cada producto.'
+        : 'No hay recetas de insumos configuradas para los productos de preparación del pedido. Configure producto-insumos en el catálogo.'
     );
     err.statusCode = 409;
     throw err;
@@ -462,6 +485,7 @@ const sugerirConsumoInsumos = async (pedidoId, productorId) => {
     disponible,
     sugerido,
     faltantes,
+    uso_ficha_tecnica: usoFichaTecnica,
     receta_origen: 'recetas_catalogo',
   };
 };
@@ -765,10 +789,74 @@ const Produccion = {
     const cantidadTotal = detallePreparacion.reduce((sum, line) => sum + line.cantidad, 0);
 
     const catalogo = await buildCatalogoInsumosContext();
-    const consumoList = normalizeConsumoInput(data.consumo_insumos, catalogo);
+
+    // Integración con Fichas Técnicas: Usar fichas técnicas si están disponibles
+    let consumoList = normalizeConsumoInput(data.consumo_insumos, catalogo);
+    const { need: needMap, usoFichaTecnica } = await buildPedidoInsumoNeedMap(pool, detallePreparacion, catalogo);
+    
+    // Convertir needMap a lista de consumo (en unidades de almacén)
+    const insumosNecesariosNormalizados = [];
+    for (const [clave, cantidad] of needMap.entries()) {
+      let insumo_nombre = 'Insumo';
+      let unidad = 'Unidades';
+      const hit = catalogo.find((c) => c.clave === clave);
+      if (hit) {
+        insumo_nombre = hit.nombre;
+        unidad = hit.unidad || 'Unidades';
+      }
+      insumosNecesariosNormalizados.push({
+        clave,
+        insumo_nombre,
+        cantidad, // Ya está normalizado a Unidades de Almacén por buildPedidoInsumoNeedMap
+        unidad, // Unidad de catálogo
+      });
+    }
+
+    if (!consumoList.length) {
+      consumoList = insumosNecesariosNormalizados;
+    } else {
+      const insumosFichaMap = new Map(insumosNecesariosNormalizados.map((i) => [i.clave, i]));
+      for (const consumo of consumoList) {
+        const fichaItem = insumosFichaMap.get(consumo.clave);
+        if (fichaItem) {
+          if (Number(consumo.cantidad) > Number(fichaItem.cantidad) + 0.0001) {
+            const origUser = (Array.isArray(data.consumo_insumos) ? data.consumo_insumos : []).find(ui => {
+              let uiClave = String(ui.clave || '').trim();
+              if (!uiClave) {
+                const pid = Number(ui.producto_catalogo_id);
+                if (Number.isFinite(pid) && pid > 0) uiClave = `c:${pid}`;
+              }
+              if (!uiClave) {
+                const resolved = resolveClaveFromAiItem(ui, catalogo);
+                if (resolved) uiClave = resolved.clave;
+              }
+              return uiClave === consumo.clave;
+            });
+            
+            const hit = catalogo.find((c) => c.clave === consumo.clave);
+            const ml = mlPorUnidadFromCatalogHit(hit);
+            
+            const userQtyDesc = origUser 
+              ? `${origUser.cantidad} ${origUser.unidad || 'Unidades'}`
+              : `${consumo.cantidad} ${consumo.unidad || 'Unidades'}`;
+              
+            const fichaQtyDesc = ml
+              ? `${Number((fichaItem.cantidad * ml).toFixed(4))} Mililitros`
+              : `${Number(fichaItem.cantidad.toFixed(4))} ${fichaItem.unidad || 'Unidades'}`;
+
+            const err = new Error(
+              `La cantidad del insumo «${consumo.insumo_nombre}» (${userQtyDesc}) excede la cantidad especificada en la receta/ficha técnica (${fichaQtyDesc}) para la producción.`
+            );
+            err.statusCode = 400;
+            throw err;
+          }
+        }
+      }
+    }
+
     if (!consumoList.length) {
       const err = new Error(
-        'El consumo de insumos no es válido. Seleccione insumos con cantidad mayor a cero antes de crear la orden.'
+        'El consumo de insumos no es válido. Seleccione insumos con cantidad mayor a cero antes de crear la orden, o asegúrese de que los productos tengan recetas configuradas.'
       );
       err.statusCode = 400;
       throw err;
@@ -1052,5 +1140,107 @@ const Produccion = {
 };
 
 Produccion.repairPedidosConOrdenProduccionCompletada = repairPedidosConOrdenProduccionCompletada;
+
+// -----------------------------------------------------------
+// Fichas Técnicas para Productos de Tipo Preparación
+// -----------------------------------------------------------
+
+async function ensureFichaTecnicaColumn() {
+  const { ensureProductoTipoColumn } = require('../shared/auditoria');
+  await ensureProductoTipoColumn();
+}
+
+async function getFichaTecnica(productoId) {
+  await ensureFichaTecnicaColumn();
+  const result = await pool.query(
+    'SELECT ficha_tecnica FROM productos WHERE id = $1',
+    [productoId]
+  );
+  if (result.rows.length === 0) return null;
+  const ficha = result.rows[0].ficha_tecnica;
+  if (!ficha) return null;
+  if (typeof ficha === 'object') return ficha;
+  try {
+    return JSON.parse(ficha);
+  } catch (_e) {
+    return null;
+  }
+}
+
+async function saveFichaTecnica(productoId, fichaTecnica) {
+  await ensureFichaTecnicaColumn();
+  const fichaJson = typeof fichaTecnica === 'string' ? fichaTecnica : JSON.stringify(fichaTecnica);
+  await pool.query(
+    'UPDATE productos SET ficha_tecnica = $1::jsonb WHERE id = $2',
+    [fichaJson, productoId]
+  );
+  return await getFichaTecnica(productoId);
+}
+
+function validarFichaTecnica(ficha) {
+  if (!ficha || typeof ficha !== 'object') {
+    const err = new Error('La ficha técnica debe ser un objeto JSON válido');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (!Array.isArray(ficha.insumos) || ficha.insumos.length === 0) {
+    const err = new Error('La ficha técnica debe contener al menos un insumo');
+    err.statusCode = 400;
+    throw err;
+  }
+  for (const insumo of ficha.insumos) {
+    if (!insumo.insumo_id && !insumo.producto_catalogo_id) {
+      const err = new Error('Cada insumo debe tener insumo_id o producto_catalogo_id');
+      err.statusCode = 400;
+      throw err;
+    }
+    if (!insumo.cantidad || Number(insumo.cantidad) <= 0) {
+      const err = new Error('Cada insumo debe tener una cantidad válida mayor a 0');
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+  return true;
+}
+
+async function calcularInsumosNecesariosParaProduccion(productoId, cantidadProduccion) {
+  const ficha = await getFichaTecnica(productoId);
+  if (!ficha || !ficha.insumos) {
+    return [];
+  }
+  const cantidad = Number(cantidadProduccion) || 1;
+  return ficha.insumos.map((insumo) => ({
+    insumo_id: insumo.insumo_id || null,
+    producto_catalogo_id: insumo.producto_catalogo_id || null,
+    insumo_nombre: insumo.insumo_nombre || 'Insumo',
+    cantidad_necesaria: Number(insumo.cantidad) * cantidad,
+    unidad: insumo.unidad || 'Unidades',
+  }));
+}
+
+async function verificarDisponibilidadInsumosParaFicha(productoId, cantidadProduccion) {
+  const insumosNecesarios = await calcularInsumosNecesariosParaProduccion(productoId, cantidadProduccion);
+  const insumosDisponibles = await getInsumosAgregadosByProductor(null);
+  const resultados = [];
+  for (const necesario of insumosNecesarios) {
+    const disponible = insumosDisponibles.find((disp) => {
+      if (necesario.insumo_id && disp.insumo_id === necesario.insumo_id) return true;
+      if (necesario.producto_catalogo_id && disp.producto_catalogo_id === necesario.producto_catalogo_id) return true;
+      return false;
+    });
+    resultados.push({
+      ...necesario,
+      disponible: disponible ? disponible.disponible : 0,
+      suficiente: disponible ? disponible.disponible >= necesario.cantidad_necesaria : false,
+    });
+  }
+  return resultados;
+}
+
+Produccion.getFichaTecnica = getFichaTecnica;
+Produccion.saveFichaTecnica = saveFichaTecnica;
+Produccion.validarFichaTecnica = validarFichaTecnica;
+Produccion.calcularInsumosNecesariosParaProduccion = calcularInsumosNecesariosParaProduccion;
+Produccion.verificarDisponibilidadInsumosParaFicha = verificarDisponibilidadInsumosParaFicha;
 
 module.exports = Produccion;

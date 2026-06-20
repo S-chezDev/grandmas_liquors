@@ -1,10 +1,10 @@
-﻿const express = require('express');
+const express = require('express');
 const { wrapController } = require('../utils/wrapController');
 const controller = wrapController(require('../controllers/produccion.controllers'));
 const { authorizePermissions } = require('../middlewares/auth.middleware');
 const { productorProduccionGuard } = require('../middlewares/scopeAccess');
 const { validate } = require('../middlewares/validate.middleware');
-const { idParam, productorIdParam } = require('../validators/params.schema');
+const { idParam, productorIdParam, productoIdParam } = require('../validators/params.schema');
 const {
   createProduccionBody,
   updateProduccionEstadoBody,
@@ -51,6 +51,33 @@ router.post(
   validate(sugerirConsumoBody),
   controller.sugerirConsumo
 );
+
+// Rutas para Fichas Técnicas — deben ir ANTES de /:id para que Express no las capture
+router.get(
+  '/ficha-tecnica/:productoId',
+  authorizePermissions('Ver Producción'),
+  validate(productoIdParam, 'params'),
+  controller.getFichaTecnica
+);
+router.post(
+  '/ficha-tecnica/:productoId',
+  authorizePermissions('Registrar Producción'),
+  validate(productoIdParam, 'params'),
+  controller.saveFichaTecnica
+);
+router.get(
+  '/ficha-tecnica/:productoId/calcular-insumos',
+  authorizePermissions('Ver Producción', 'Registrar Producción'),
+  validate(productoIdParam, 'params'),
+  controller.calcularInsumosNecesarios
+);
+router.get(
+  '/ficha-tecnica/:productoId/verificar-disponibilidad',
+  authorizePermissions('Ver Producción', 'Registrar Producción'),
+  validate(productoIdParam, 'params'),
+  controller.verificarDisponibilidadInsumos
+);
+
 router.get('/:id', authorizePermissions('Ver Producción'), validate(idParam, 'params'), controller.getById);
 router.post(
   '/',

@@ -20,6 +20,8 @@ const {
   registerProductoAudit,
 } = require('../shared/auditoria');
 
+const ProduccionModel = require('../produccion/produccion');
+
 /** Mensaje legible cuando PostgreSQL bloquea DELETE por FK en entregas_insumos. */
 const productoDeleteBlockedByFk = (err, producto) => {
   if (err?.code !== '23503') return null;
@@ -202,11 +204,24 @@ const Productos = {
               ? Number(data.stock_minimo ?? data.stockMinimo)
               : 10;
 
+      // Validar y procesar ficha técnica para productos de tipo preparación
+      let fichaTecnicaJson = null;
+      if (tipoProducto === 'preparacion' && data.ficha_tecnica) {
+        try {
+          ProduccionModel.validarFichaTecnica(data.ficha_tecnica);
+          fichaTecnicaJson = JSON.stringify(data.ficha_tecnica);
+        } catch (error) {
+          await client.query('ROLLBACK');
+          client.release();
+          throw error;
+        }
+      }
+
       const result = await client.query(
         `INSERT INTO productos (
            nombre, categoria_id, descripcion, precio, stock, stock_minimo, imagen_url, estado, tipo_producto,
-           insumo_unidad_medida, insumo_cantidad_medida
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+           insumo_unidad_medida, insumo_cantidad_medida, ficha_tecnica
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb) RETURNING id`,
         [
           nombre,
           data.categoria_id,
@@ -219,6 +234,7 @@ const Productos = {
           tipoProducto,
           insumoUnidad,
           insumoCantidad,
+          fichaTecnicaJson,
         ]
       );
       await syncCategoriaProductCount(data.categoria_id);
@@ -282,6 +298,8 @@ const Productos = {
       const stockActual = previous.rows[0]?.stock ?? 0;
       const currentTipo = normalizeProductoTipoValue(previous.rows[0]?.tipo_producto);
 
+      const newTipo = normalizeProductoTipoValue(data?.tipo_producto ?? data?.tipo ?? previous.rows[0]?.tipo_producto);
+
       const duplicate = await client.query(
         `SELECT id
          FROM productos
@@ -289,7 +307,7 @@ const Productos = {
            AND COALESCE(tipo_producto, 'terminado') = $2
            AND id <> $3
          LIMIT 1`,
-        [nombre, currentTipo, id]
+        [nombre, newTipo, id]
       );
       if (duplicate.rows[0]) {
         await client.query('ROLLBACK');
@@ -300,7 +318,6 @@ const Productos = {
       }
       const prevStockMinimo = Number(previous.rows[0]?.stock_minimo ?? 10);
 
-      const newTipo = currentTipo;
       const prevRow = previous.rows[0];
       const mergedData = {
         ...data,
@@ -327,6 +344,28 @@ const Productos = {
                 ? Number(data.stockMinimo)
                 : prevStockMinimo;
 
+      // Validar y procesar ficha técnica para productos de tipo preparación
+      let fichaTecnicaJson = null;
+      if (newTipo === 'preparacion') {
+        if (data.ficha_tecnica !== undefined && data.ficha_tecnica !== null) {
+          try {
+            ProduccionModel.validarFichaTecnica(data.ficha_tecnica);
+            fichaTecnicaJson = JSON.stringify(data.ficha_tecnica);
+          } catch (error) {
+            await client.query('ROLLBACK');
+            client.release();
+            throw error;
+          }
+        } else {
+          // Mantener la ficha técnica existente si no se proporciona una nueva
+          const currentFicha = await client.query('SELECT ficha_tecnica FROM productos WHERE id = $1', [id]);
+          fichaTecnicaJson = currentFicha.rows[0]?.ficha_tecnica;
+        }
+      } else {
+        // Eliminar ficha técnica si el producto ya no es de tipo preparación
+        fichaTecnicaJson = null;
+      }
+
       await client.query(
         `UPDATE productos
          SET nombre = $1,
@@ -339,8 +378,9 @@ const Productos = {
              tipo_producto = $8,
              insumo_unidad_medida = $9,
              insumo_cantidad_medida = $10,
+             ficha_tecnica = $11::jsonb,
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = $11`,
+         WHERE id = $12`,
         [
           nombre,
           data.categoria_id,
@@ -352,6 +392,7 @@ const Productos = {
           newTipo,
           insumoUnidad,
           insumoCantidad,
+          fichaTecnicaJson,
           id,
         ]
       );

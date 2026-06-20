@@ -186,6 +186,19 @@ export interface ProductoInsumoRecetaLine {
   stock_minimo?: number;
 }
 
+export interface FichaTecnicaInsumo {
+  insumo_id?: number | null;
+  producto_catalogo_id?: number | null;
+  insumo_nombre: string;
+  cantidad: number;
+  unidad?: string;
+}
+
+export interface FichaTecnica {
+  insumos: FichaTecnicaInsumo[];
+}
+
+
 export interface Cliente {
   id: number;
   nombre: string;

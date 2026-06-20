@@ -1,5 +1,5 @@
 import { apiFetch, apiFetchData } from '../http';
-import type { Usuario, Categoria, Producto, Proveedor, Compra, OrdenProduccion, EntregaInsumo, Cliente, Pedido, Venta, Abono, Domicilio } from '../types';
+import type { Usuario, Categoria, Producto, Proveedor, Compra, OrdenProduccion, EntregaInsumo, Cliente, Pedido, Venta, Abono, Domicilio, FichaTecnica } from '../types';
 import {
   pedidoEstadoUi, pedidoEstadoDb, domicilioEstadoUi, domicilioEstadoDb, prodEstadoUi, compraEstadoUi,
   ventaEstadoUi, ventaEstadoDb, abonoEstadoUi, abonoEstadoDb, metodoPagoUi, metodoPagoDb,
@@ -193,6 +193,15 @@ export const catalogApi = {
     incrementStock: async (_id: number, _cantidad: number) => {
       /* stock lo gestiona el backend al recibir compras */
     },
+    getFichaTecnica: async (productoId: number) => {
+      return apiFetch<FichaTecnica>(`/api/produccion/ficha-tecnica/${productoId}`);
+    },
+    saveFichaTecnica: async (productoId: number, data: FichaTecnica) => {
+      return apiFetch<FichaTecnica>(`/api/produccion/ficha-tecnica/${productoId}`, {
+        method: 'POST',
+        json: data,
+      });
+    },
   },
 
   proveedores: {
@@ -356,7 +365,16 @@ export const catalogApi = {
     sugerirConsumo: async (pedidoId: number, productorId: number) => {
       return apiFetchData<{
         sugerido: Array<{ clave: string; insumo_nombre?: string; cantidad: number; unidad?: string }>;
-        faltantes?: Array<{ insumo_nombre?: string; falta: number; unidad?: string }>;
+        faltantes?: Array<{
+          clave: string;
+          insumo_nombre?: string;
+          requerido?: number;
+          disponible?: number;
+          falta: number;
+          unidad?: string;
+        }>;
+        uso_ficha_tecnica?: boolean;
+        disponible?: any[];
       }>('/api/produccion/sugerir-consumo', {
         method: 'POST',
         json: { pedido_id: pedidoId, productor_id: productorId },

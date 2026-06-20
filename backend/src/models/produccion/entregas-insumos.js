@@ -103,25 +103,16 @@ const EntregasInsumos = {
     return result.rows[0];
   },
   create: async (data) => {
-    const cantidad = Number(data?.cantidad) || 0;
-    if (cantidad <= 0) {
-      const error = new Error('La cantidad debe ser un valor positivo');
+    // Soporte para múltiples insumos en una sola entrega
+    const insumos = Array.isArray(data.insumos) ? data.insumos : [data];
+    
+    if (insumos.length === 0) {
+      const error = new Error('Debe seleccionar al menos un insumo para la entrega');
       error.statusCode = 400;
       throw error;
     }
-    const delta = cantidadStockDelta(cantidad);
-    if (delta <= 0) {
-      const error = new Error('La cantidad debe ser un valor positivo');
-      error.statusCode = 400;
-      throw error;
-    }
-    const unidad = String(data?.unidad || '').trim();
-    const unidadesValidas = ['Litros', 'Kilogramos', 'Gramos', 'Unidades', 'Cajas', 'Botellas', 'Mililitros'];
-    if (!unidad || !unidadesValidas.includes(unidad)) {
-      const error = new Error(`Unidad inválida. Valores permitidos: ${unidadesValidas.join(', ')}`);
-      error.statusCode = 400;
-      throw error;
-    }
+
+    // Validaciones comunes
     if (!data.operario_id || data.operario_id <= 0) {
       const error = new Error('El productor es obligatorio');
       error.statusCode = 400;
@@ -133,78 +124,169 @@ const EntregasInsumos = {
       throw error;
     }
 
-    await ensureEntregasInsumoProductoCatalogo();
-    const target = resolveEntregaTargetFromPayload(data);
-    if (!target.kind) {
-      const error = new Error('Debe indicar un insumo del catálogo (producto tipo insumo) o un insumo legacy válido');
-      error.statusCode = 400;
-      throw error;
+    const unidadesValidas = ['Litros', 'Kilogramos', 'Gramos', 'Unidades', 'Cajas', 'Botellas', 'Mililitros'];
+    
+    // Validaciones específicas por tipo de unidad
+    const validarUnidadCantidad = (cantidad, unidad) => {
+      const cant = Number(cantidad);
+      if (cant <= 0) return false;
+      
+      // Validaciones específicas para líquidos
+      if (unidad === 'Mililitros') {
+        return cant >= 1 && Number.isInteger(cant); // Mínimo 1 ml, entero
+      }
+      if (unidad === 'Litros') {
+        return cant >= 0.1 && cant <= 1000; // Entre 0.1L y 1000L
+      }
+      
+      // Validaciones específicas para peso
+      if (unidad === 'Gramos') {
+        return cant >= 1 && Number.isInteger(cant); // Mínimo 1g, entero
+      }
+      if (unidad === 'Kilogramos') {
+        return cant >= 0.1 && cant <= 1000; // Entre 0.1kg y 1000kg
+      }
+      
+      // Validaciones para unidades discretas
+      if (unidad === 'Unidades' || unidad === 'Cajas' || unidad === 'Botellas') {
+        return cant >= 1 && Number.isInteger(cant); // Mínimo 1, entero
+      }
+      
+      return true;
+    };
+
+    // Validar cada insumo individualmente
+    for (const insumo of insumos) {
+      const cantidad = Number(insumo?.cantidad) || 0;
+      if (cantidad <= 0) {
+        const error = new Error('La cantidad debe ser un valor positivo para todos los insumos');
+        error.statusCode = 400;
+        throw error;
+      }
+      const delta = cantidadStockDelta(cantidad);
+      if (delta <= 0) {
+        const error = new Error('La cantidad debe ser un valor positivo para todos los insumos');
+        error.statusCode = 400;
+        throw error;
+      }
+      const unidad = String(insumo?.unidad || '').trim();
+      if (!unidad || !unidadesValidas.includes(unidad)) {
+        const error = new Error(`Unidad inválida. Valores permitidos: ${unidadesValidas.join(', ')}`);
+        error.statusCode = 400;
+        throw error;
+      }
+      
+      // Validar que la cantidad sea correcta según la unidad
+      if (!validarUnidadCantidad(cantidad, unidad)) {
+        const error = new Error(
+          `La cantidad ${cantidad} no es válida para la unidad ${unidad}. ` +
+          `Mililitros y Gramos: mínimo 1, valor entero. ` +
+          `Litros y Kilogramos: entre 0.1 y 1000. ` +
+          `Unidades, Cajas, Botellas: mínimo 1, valor entero.`
+        );
+        error.statusCode = 400;
+        throw error;
+      }
+      
+      const target = resolveEntregaTargetFromPayload(insumo);
+      if (!target.kind) {
+        const error = new Error('Debe indicar un insumo del catálogo (producto tipo insumo) o un insumo legacy válido para todos los insumos');
+        error.statusCode = 400;
+        throw error;
+      }
     }
 
+    await ensureEntregasInsumoProductoCatalogo();
     const client = await pool.connect();
+    
     try {
       await client.query('BEGIN');
-      const reserved = await reserveEntityIdAndCode(client, 'public.entregas_insumos', 'E');
+      
+      // Crear múltiples entregas con el mismo número de entrega
+      const entregaIds = [];
+      let numeroEntregaComun = null;
+      
+      for (const insumo of insumos) {
+        const cantidad = Number(insumo?.cantidad);
+        const delta = cantidadStockDelta(cantidad);
+        const unidad = String(insumo?.unidad).trim();
+        const target = resolveEntregaTargetFromPayload(insumo);
+        
+        // Reservar ID y código para cada entrega
+        const reserved = await reserveEntityIdAndCode(client, 'public.entregas_insumos', 'E');
+        
+        // Usar el mismo número de entrega para todas las filas de esta entrega múltiple
+        if (!numeroEntregaComun) {
+          numeroEntregaComun = reserved.code;
+        } else {
+          // Para entregas posteriores, usar el mismo número de entrega
+          reserved.code = numeroEntregaComun;
+        }
 
-      if (target.kind === 'producto') {
-        await assertProductoInsumoActivo(client, target.id);
-        const st = await client.query(`SELECT stock FROM productos WHERE id = $1 FOR UPDATE`, [target.id]);
-        const have = Number(st.rows[0]?.stock ?? 0);
-        if (have < delta) {
-          const err = new Error(
-            `Stock insuficiente en almacén para esta entrega (disponible ${have}, solicitado ${delta})`
+        if (target.kind === 'producto') {
+          await assertProductoInsumoActivo(client, target.id);
+          const st = await client.query(`SELECT stock FROM productos WHERE id = $1 FOR UPDATE`, [target.id]);
+          const have = Number(st.rows[0]?.stock ?? 0);
+          if (have < delta) {
+            const err = new Error(
+              `Stock insuficiente en almacén para el insumo (disponible ${have}, solicitado ${delta})`
+            );
+            err.statusCode = 409;
+            throw err;
+          }
+          const result = await client.query(
+            `INSERT INTO entregas_insumos (id, numero_entrega, insumo_id, producto_catalogo_id, cantidad, unidad, operario_id, fecha, hora)
+             VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8) RETURNING id`,
+            [
+              reserved.id,
+              reserved.code,
+              target.id,
+              cantidad,
+              unidad,
+              data.operario_id,
+              data.fecha,
+              data.hora || null,
+            ]
           );
-          err.statusCode = 409;
-          throw err;
+          const up = await client.query(
+            `UPDATE productos SET stock = COALESCE(stock, 0) - $1, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $2 AND COALESCE(stock, 0) >= $1 RETURNING id`,
+            [delta, target.id]
+          );
+          if (up.rowCount === 0) {
+            const err = new Error('Stock insuficiente para registrar la entrega');
+            err.statusCode = 409;
+            throw err;
+          }
+          entregaIds.push(result.rows[0].id);
+        } else {
+          const insumoId = target.id;
+          const sti = await client.query(`SELECT cantidad FROM insumos WHERE id = $1 FOR UPDATE`, [insumoId]);
+          const haveI = Number(sti.rows[0]?.cantidad ?? 0);
+          if (haveI < delta) {
+            const err = new Error(
+              `Stock insuficiente en almacén para el insumo (disponible ${haveI}, solicitado ${delta})`
+            );
+            err.statusCode = 409;
+            throw err;
+          }
+          const result = await client.query(
+            'INSERT INTO entregas_insumos (id, numero_entrega, insumo_id, producto_catalogo_id, cantidad, unidad, operario_id, fecha, hora) VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, $8) RETURNING id',
+            [reserved.id, reserved.code, insumoId, cantidad, unidad, data.operario_id, data.fecha, data.hora || null]
+          );
+          await client.query(
+            'UPDATE insumos SET cantidad = COALESCE(cantidad, 0) - $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND COALESCE(cantidad, 0) >= $1',
+            [delta, insumoId]
+          );
+          entregaIds.push(result.rows[0].id);
         }
-        const result = await client.query(
-          `INSERT INTO entregas_insumos (id, numero_entrega, insumo_id, producto_catalogo_id, cantidad, unidad, operario_id, fecha, hora)
-           VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8) RETURNING id`,
-          [
-            reserved.id,
-            reserved.code,
-            target.id,
-            cantidad,
-            unidad,
-            data.operario_id,
-            data.fecha,
-            data.hora || null,
-          ]
-        );
-        const up = await client.query(
-          `UPDATE productos SET stock = COALESCE(stock, 0) - $1, updated_at = CURRENT_TIMESTAMP
-           WHERE id = $2 AND COALESCE(stock, 0) >= $1 RETURNING id`,
-          [delta, target.id]
-        );
-        if (up.rowCount === 0) {
-          const err = new Error('Stock insuficiente para registrar la entrega');
-          err.statusCode = 409;
-          throw err;
-        }
-        await client.query('COMMIT');
-        return result.rows[0].id;
       }
 
-      const insumoId = target.id;
-      const sti = await client.query(`SELECT cantidad FROM insumos WHERE id = $1 FOR UPDATE`, [insumoId]);
-      const haveI = Number(sti.rows[0]?.cantidad ?? 0);
-      if (haveI < delta) {
-        const err = new Error(
-          `Stock insuficiente en almacén para esta entrega (disponible ${haveI}, solicitado ${delta})`
-        );
-        err.statusCode = 409;
-        throw err;
-      }
-      const result = await client.query(
-        'INSERT INTO entregas_insumos (id, numero_entrega, insumo_id, producto_catalogo_id, cantidad, unidad, operario_id, fecha, hora) VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, $8) RETURNING id',
-        [reserved.id, reserved.code, insumoId, cantidad, unidad, data.operario_id, data.fecha, data.hora || null]
-      );
-      await client.query(
-        'UPDATE insumos SET cantidad = COALESCE(cantidad, 0) - $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND COALESCE(cantidad, 0) >= $1',
-        [delta, insumoId]
-      );
       await client.query('COMMIT');
-      return result.rows[0].id;
+      
+      // Retornar el primer ID (para compatibilidad con el frontend existente)
+      // o el array de IDs si se envían múltiples insumos
+      return insumos.length > 1 ? entregaIds : entregaIds[0];
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
