@@ -138,7 +138,7 @@ export const salesApi = {
         method: 'PUT',
         json: {
           numero_pedido: updates.id ? undefined : undefined,
-          fecha: updates.fechaPedido,
+          fecha_pedido: updates.fechaPedido,
           fecha_entrega: updates.fechaEntrega,
           direccion: updates.direccion,
           telefono: updates.telefono,

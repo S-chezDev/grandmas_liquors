@@ -5,9 +5,10 @@ import react from '@vitejs/plugin-react'
 
 /**
  * API Configuration:
- * - Production/Development: proxy hacia Elastic Beanstalk
- * - URL API: http://aplicationgl-env-1.eba-jyti25ie.us-east-2.elasticbeanstalk.com/
+ * - Development: proxy hacia backend local (http://localhost:3002)
+ * - Production: usa VITE_API_BASE_URL para llamadas directas a Elastic Beanstalk
  * - Para apuntar al backend local: VITE_API_PROXY_TARGET=http://localhost:3002
+ * - Para producción AWS: configurar VITE_API_BASE_URL en .env.production
  */
 const DEFAULT_API_PROXY_TARGET = 'http://localhost:3002'
 const DEFAULT_API_BASE_URL = 'http://localhost:3002'

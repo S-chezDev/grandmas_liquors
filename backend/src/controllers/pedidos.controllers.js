@@ -35,7 +35,7 @@ const canTransitionPedido = (fromEstado, toEstado) =>
 
 const buildPedidoUpdatePayload = (currentPedido, body = {}) => ({
   numero_pedido: currentPedido.numero_pedido,
-  fecha: body.fecha !== undefined ? body.fecha : currentPedido.fecha,
+  fecha: body.fecha_pedido !== undefined ? body.fecha_pedido : (body.fecha !== undefined ? body.fecha : currentPedido.fecha),
   fecha_entrega: body.fecha_entrega !== undefined ? body.fecha_entrega : currentPedido.fecha_entrega,
   detalles: body.detalles !== undefined ? body.detalles : currentPedido.detalles,
   direccion: body.direccion !== undefined ? body.direccion : currentPedido.direccion,
@@ -97,6 +97,7 @@ const validarFechaEntrega = (fechaEntrega, fechaPedido) => {
     return 'La fecha de entrega no puede ser una fecha pasada';
   }
   const fp = String(fechaPedido || hoy).trim().split('T')[0];
+  // Permitir que la fecha de entrega sea igual o mayor a la fecha del pedido (incluye entrega el mismo día)
   if (fe < fp) {
     return 'La fecha de entrega debe ser mayor o igual a la fecha del pedido';
   }
@@ -412,7 +413,7 @@ module.exports = {
         if (allowed.fecha_entrega !== undefined) {
           const fechaEntregaError = validarFechaEntrega(
             allowed.fecha_entrega,
-            pedido.fecha || fechaHoyColombia()
+            req.body.fecha_pedido || req.body.fecha || pedido.fecha || fechaHoyColombia()
           );
           if (fechaEntregaError) {
             return res.status(400).json({ success: false, message: fechaEntregaError });
@@ -488,7 +489,7 @@ module.exports = {
       if (updateBody.fecha_entrega !== undefined) {
         const fechaEntregaError = validarFechaEntrega(
           updateBody.fecha_entrega,
-          pedido.fecha || fechaHoyColombia()
+          updateBody.fecha_pedido || updateBody.fecha || pedido.fecha || fechaHoyColombia()
         );
         if (fechaEntregaError) {
           return res.status(400).json({ success: false, message: fechaEntregaError });

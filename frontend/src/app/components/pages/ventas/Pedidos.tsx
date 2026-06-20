@@ -553,7 +553,8 @@ export function Pedidos() {
       return;
     }
 
-    if (new Date(formData.fechaEntrega) < new Date(formData.fechaPedido)) {
+    // Permitir que la fecha de entrega sea igual o mayor a la fecha del pedido (incluye entrega el mismo día)
+    if (formData.fechaEntrega < formData.fechaPedido) {
       toast.error('La fecha de entrega debe ser mayor o igual a la fecha del pedido');
       return;
     }
@@ -888,7 +889,7 @@ export function Pedidos() {
             </div>
 
             <FormField
-              label="Fecha Entrega * (solo fechas futuras)"
+              label="Fecha Entrega *"
               name="fechaEntrega"
               type="date"
               value={formData.fechaEntrega}
@@ -904,7 +905,7 @@ export function Pedidos() {
                 }
                 setFormData({ ...formData, fechaEntrega: fechaEnt });
               }}
-              min={new Date().toISOString().split('T')[0]}
+              allowPastDates={true}
               required
             />
 
