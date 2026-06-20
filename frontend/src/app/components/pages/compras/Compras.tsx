@@ -247,6 +247,7 @@ export function Compras() {
             className="px-3 py-1 rounded-full text-xs border-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ backgroundColor: bg, color: fg }}
             onClick={(e) => e.stopPropagation()}
+            disabled={row.estado === 'recibida' || row.estado === 'cancelada'}
           >
             {opts.map((o) => (
               <option key={o.v} value={o.v}>

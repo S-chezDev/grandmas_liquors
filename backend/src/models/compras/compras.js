@@ -395,6 +395,13 @@ const Compras = {
         return compra;
       }
 
+      // Validar que no se pueda cambiar el estado si ya es Recibida o Cancelada
+      if (previousStatus === 'Recibida' || previousStatus === 'Cancelada') {
+        const error = new Error(`No se puede modificar el estado de una compra que ya está ${previousStatus}`);
+        error.statusCode = 409;
+        throw error;
+      }
+
       const motivoCancelacion = typeof data.motivo_cancelacion === 'string'
         ? data.motivo_cancelacion.trim()
         : (typeof data.motivo === 'string' ? data.motivo.trim() : '');
