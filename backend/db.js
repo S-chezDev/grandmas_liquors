@@ -11,7 +11,7 @@ const pool = new Pool({
   user: config.db.user,
   password: dbPassword,
   database: config.db.database,
-  ssl: config.db.ssl,
+  ssl: config.db.ssl ? { rejectUnauthorized: false } : false,
   max: 50,
   min: 5,
   idleTimeoutMillis: 30000,

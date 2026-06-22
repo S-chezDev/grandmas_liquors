@@ -152,8 +152,8 @@ const corsOptions = {
   },
 };
 
-// Middleware
-app.use(cors(corsOptions));
+// Middleware y manejo de diversas rutas para guardar la imagen
+app.options('*', cors(corsOptions));
 app.use(cookieParser());
 
 const getTokenFromRequest = (req) => {
@@ -232,7 +232,7 @@ app.use((req, res, next) => {
 // ===== RUTAS =====
 // Ruta de health check
 app.get('/api/health', (req, res) => {
-  res.json({ 
+  res.json({
     success: true,
     message: 'Backend funcionando correctamente',
     timestamp: new Date().toISOString()
@@ -254,7 +254,7 @@ app.use((req, res) => {
 // Manejador de errores global (mejorado)
 app.use((err, req, res, next) => {
   const isDevelopment = config.server.env === 'development';
-  
+
   // Log del error
   console.error('❌ Error:', {
     message: err.message,

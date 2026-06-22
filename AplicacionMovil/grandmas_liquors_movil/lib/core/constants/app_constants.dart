@@ -42,7 +42,7 @@ class AppConstants {
 
   /// Backend en AWS Elastic Beanstalk (mismo entorno que el frontend React).
   static const String productionApiBaseUrl =
-      'http://aplicationgl-env-1.eba-jyti25ie.us-east-2.elasticbeanstalk.com';
+      'http://api-grandmasliquors.us-east-2.elasticbeanstalk.com';
 
   /// Proxy local (tool/api_proxy.mjs) para Flutter web + cookies de sesión.
   static const String webDevProxyBaseUrl = 'http://localhost:3002';
