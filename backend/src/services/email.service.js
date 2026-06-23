@@ -129,11 +129,12 @@ const getLogoAttachments = () => {
 };
 
 const buildEmailLogoHtml = () => {
-  const dataUri = getLogoDataUri();
+  const hasLogo = Boolean(readLogoPngBuffer());
+  const src = hasLogo ? 'cid:brand-logo@grandmas' : getLogoDataUri();
   return (
     '<div style="margin:0 0 20px 0;text-align:center">' +
     '<img src="' +
-    dataUri +
+    src +
     '" alt="Grandma\'s Liquors" width="140" style="display:block;margin:0 auto;max-width:140px;height:auto;border:0;outline:none;text-decoration:none" />' +
     '</div>'
   );

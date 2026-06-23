@@ -14,9 +14,12 @@ const hasRealTextShape = (value) => {
   const normalized = collapseSpaces(value).toLowerCase();
   if (!normalized) return false;
   const letters = normalized.match(/[a-záéíóúñ]/g) || [];
-  if (letters.length < 3) return false;
-  const vowels = normalized.match(/[aeiouáéíóú]/g) || [];
-  return vowels.length / letters.length >= 0.2;
+  if (letters.length < 2) return false;
+  const vowels = normalized.match(/[aeiouáéíóúy]/g) || [];
+  if (letters.length <= 3) {
+    return vowels.length >= 1;
+  }
+  return vowels.length / letters.length >= 0.15;
 };
 
 const humanNameString = z

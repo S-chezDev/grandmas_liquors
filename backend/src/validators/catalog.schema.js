@@ -111,14 +111,20 @@ const updateCompraEstadoBody = z.object({
   motivo_cancelacion: z.string().trim().optional(),
 });
 
-const addProductoCompraBody = z.object({
-  compraId: z.coerce.number().int().positive().optional(),
-  compra_id: z.coerce.number().int().positive().optional(),
-  productoId: z.coerce.number().int().positive().optional(),
-  producto_id: z.coerce.number().int().positive().optional(),
-  cantidad: stockInt.refine((n) => n > 0, 'La cantidad debe ser mayor a 0'),
-  precioUnitario: moneyNumber.optional(),
-});
+const addProductoCompraBody = z
+  .object({
+    compraId: z.coerce.number().int().positive().optional(),
+    compra_id: z.coerce.number().int().positive().optional(),
+    productoId: z.coerce.number().int().positive().optional(),
+    producto_id: z.coerce.number().int().positive().optional(),
+    cantidad: stockInt.refine((n) => n > 0, 'La cantidad debe ser mayor a 0'),
+    precioUnitario: moneyNumber.optional(),
+    porcentajeGanancia: z.coerce.number().min(0).max(1000).optional(),
+    porcentaje_ganancia: z.coerce.number().min(0).max(1000).optional(),
+    permisoExtraordinario: z.boolean().optional(),
+    motivoPermiso: z.string().optional(),
+  })
+  .passthrough();
 
 const createInsumoBody = z
   .object({

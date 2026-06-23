@@ -340,9 +340,10 @@ const Compras = {
           `UPDATE productos
              SET stock = CASE WHEN $4 THEN 0 ELSE COALESCE(stock, 0) + $1 END,
                  precio = $2,
+                 porcentaje_ganancia = $5,
                  updated_at = CURRENT_TIMESTAMP
            WHERE id = $3`,
-          [Number(row.cantidad || 0), precioVenta, row.producto_id, esPreparacion]
+          [Number(row.cantidad || 0), precioVenta, row.producto_id, esPreparacion, pct]
         );
       }
     };

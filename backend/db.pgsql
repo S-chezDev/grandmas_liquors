@@ -128,6 +128,7 @@ CREATE TABLE productos (
     insumo_unidad_medida VARCHAR(30), -- presentacion: texto libre; UI catalogo insumo usa Unidades/Mililitros
     insumo_cantidad_medida NUMERIC(12,4), -- volumen/unidad: factor de receta en produccion (no afecta el descuento de stock al entregar al productor)
     ficha_tecnica JSONB,
+    porcentaje_ganancia NUMERIC(12,2) DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

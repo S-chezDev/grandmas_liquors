@@ -110,7 +110,7 @@ const Productos = {
     const result = await pool.query(`
       SELECT p.*, c.nombre as categoria,
              ultima_compra.precio_unitario AS precio_compra,
-             ultima_compra.porcentaje_ganancia AS ganancia
+             COALESCE(p.porcentaje_ganancia, 0) AS ganancia
       FROM productos p 
       JOIN categorias c ON p.categoria_id = c.id 
       ${ULTIMA_COMPRA_PRODUCTO_JOIN}
@@ -125,7 +125,7 @@ const Productos = {
     const result = await pool.query(`
       SELECT p.*, c.nombre as categoria,
              ultima_compra.precio_unitario AS precio_compra,
-             ultima_compra.porcentaje_ganancia AS ganancia
+             COALESCE(p.porcentaje_ganancia, 0) AS ganancia
       FROM productos p 
       JOIN categorias c ON p.categoria_id = c.id 
       ${ULTIMA_COMPRA_PRODUCTO_JOIN}
@@ -220,8 +220,8 @@ const Productos = {
       const result = await client.query(
         `INSERT INTO productos (
            nombre, categoria_id, descripcion, precio, stock, stock_minimo, imagen_url, estado, tipo_producto,
-           insumo_unidad_medida, insumo_cantidad_medida, ficha_tecnica
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb) RETURNING id`,
+           insumo_unidad_medida, insumo_cantidad_medida, ficha_tecnica, porcentaje_ganancia
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13) RETURNING id`,
         [
           nombre,
           data.categoria_id,
@@ -235,6 +235,7 @@ const Productos = {
           insumoUnidad,
           insumoCantidad,
           fichaTecnicaJson,
+          0, // porcentaje_ganancia
         ]
       );
       await syncCategoriaProductCount(data.categoria_id);

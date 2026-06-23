@@ -147,6 +147,12 @@ export function FormField({
     maxLength === undefined &&
     !inputDigitRule &&
     isEmailLikeField;
+  const isDireccionField = normalizedName.includes('direccion');
+  const autoCapAtTwoFiftyFive =
+    maxLength === undefined &&
+    !inputDigitRule &&
+    (type === 'text' || type === 'textarea') &&
+    isDireccionField;
   const autoCapAtThirty =
     maxLength === undefined &&
     !inputDigitRule &&
@@ -154,7 +160,6 @@ export function FormField({
     (
       normalizedName.includes('nombre') ||
       normalizedName.includes('apellido') ||
-      normalizedName.includes('direccion') ||
       normalizedName.includes('razonsocial')
     );
   const autoCapAtDefault =
@@ -162,7 +167,7 @@ export function FormField({
     !inputDigitRule &&
     (type === 'text' || type === 'textarea' || type === 'email' || type === 'password');
   const effectiveMaxLength =
-    autoCapAtSixty ? 60 : autoCapAtThirty ? 30 : autoCapAtDefault ? 60 : maxLength;
+    autoCapAtTwoFiftyFive ? 255 : autoCapAtSixty ? 60 : autoCapAtThirty ? 30 : autoCapAtDefault ? 60 : maxLength;
   // Los identificadores flexibles no muestran error parcial mientras se escribe; sólo tras blur/submit.
   const showDigitPartial = Boolean(
     inputDigitRule &&

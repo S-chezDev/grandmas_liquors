@@ -146,6 +146,11 @@ const ensureProductoTipoColumn = async () => {
   } catch (_e) {
     productoFichaTecnicaColumnReady = null;
   }
+  try {
+    await pool.query(
+      `ALTER TABLE productos ADD COLUMN IF NOT EXISTS porcentaje_ganancia NUMERIC(12,2) DEFAULT 0`
+    );
+  } catch (_e) {}
   await ensureProductoTipoCheckAllowsInsumo();
 };
 

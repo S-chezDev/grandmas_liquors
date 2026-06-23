@@ -176,6 +176,14 @@ async function runMigrations() {
         `);
       }
 
+      try {
+        await client.query(`
+          ALTER TABLE productos ADD COLUMN IF NOT EXISTS porcentaje_ganancia NUMERIC(12,2) DEFAULT 0
+        `);
+      } catch (err) {
+        console.warn('   (aviso) no se pudo aplicar alter table porcentaje_ganancia:', err.message);
+      }
+
       await client.query(`
         UPDATE productos
            SET stock = 0

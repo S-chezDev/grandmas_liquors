@@ -148,15 +148,28 @@ export function MiPerfil() {
     e.preventDefault();
     try {
       if (!user?.id) throw new Error('Sesión no disponible');
-      await api.usuarios.update(Number(user.id), {
-        nombre: formData.nombre,
-        apellido: formData.apellido,
-        tipoDocumento: formData.tipoDocumento,
-        numeroDocumento: formData.numeroDocumento,
-        direccion: formData.direccion,
-        email: formData.email,
-        telefono: formData.telefono,
-      } as any);
+      if (user.rol === 'Cliente') {
+        if (!user.clienteId) throw new Error('ID de cliente no disponible');
+        await api.clientes.update(Number(user.clienteId), {
+          nombre: formData.nombre,
+          apellido: formData.apellido,
+          tipoDocumento: formData.tipoDocumento,
+          numeroDocumento: formData.numeroDocumento,
+          direccion: formData.direccion,
+          email: formData.email,
+          telefono: formData.telefono,
+        });
+      } else {
+        await api.usuarios.update(Number(user.id), {
+          nombre: formData.nombre,
+          apellido: formData.apellido,
+          tipoDocumento: formData.tipoDocumento,
+          numeroDocumento: formData.numeroDocumento,
+          direccion: formData.direccion,
+          email: formData.email,
+          telefono: formData.telefono,
+        } as any);
+      }
 
       let nextFoto = perfil.foto;
       if (fotoArchivo) {

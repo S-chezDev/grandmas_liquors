@@ -312,6 +312,10 @@ export function LandingPage({
         user={user}
         onClose={closeProfile}
         onOpenChangePassword={openChangePassword}
+        onProfileUpdated={() => {
+          // Force AuthContext to refresh user data immediately
+          window.dispatchEvent(new Event('focus'));
+        }}
       />
 
       <ChangePasswordModal
