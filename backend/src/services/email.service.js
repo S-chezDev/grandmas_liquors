@@ -115,22 +115,14 @@ const resolveLogoFilePath = () => {
 };
 
 const getLogoAttachments = () => {
-  const buf = readLogoPngBuffer();
-  if (!buf) return [];
-  return [
-    {
-      filename: 'grandmas-liquors-logo.png',
-      content: buf,
-      contentType: 'image/png',
-      cid: 'brand-logo@grandmas',
-      contentDisposition: 'inline',
-    },
-  ];
+  // Retornamos un arreglo vacío para evitar enviar el logo como archivo adjunto (CID),
+  // y en su lugar usamos Base64 directamente en el HTML.
+  return [];
 };
 
 const buildEmailLogoHtml = () => {
-  const hasLogo = Boolean(readLogoPngBuffer());
-  const src = hasLogo ? 'cid:brand-logo@grandmas' : getLogoDataUri();
+  // Forzamos el uso de Base64 directamente (getLogoDataUri) para no depender de un CID adjunto
+  const src = getLogoDataUri();
   return (
     '<div style="margin:0 0 20px 0;text-align:center">' +
     '<img src="' +
@@ -372,6 +364,8 @@ const sendWelcomeEmail = async ({ to, name, email, password = null, emailCredent
     'Le confirmamos que su cuenta fue creada correctamente.',
     credentialsTextBlock,
     '',
+    'Puede acceder a la plataforma en: https://d1ovjdpg649de2.cloudfront.net',
+    '',
     'Si no reconoce esta actividad, responda a este correo o contacte a soporte.',
     '',
     'Atentamente,',
@@ -409,6 +403,9 @@ const sendWelcomeEmail = async ({ to, name, email, password = null, emailCredent
       Es un gusto darle la bienvenida a <strong>Grandma's Liquors</strong>. Su registro quedó registrado en nuestro sistema.
     </p>
     ${credentialsHtmlBlock}
+    <p style="margin:18px 0 0 0;color:#475569;font-size:14px">
+      Puede acceder a la plataforma desde el siguiente enlace: <a href="https://d1ovjdpg649de2.cloudfront.net" style="color:#2563eb;text-decoration:none">https://d1ovjdpg649de2.cloudfront.net</a>
+    </p>
     <p style="margin:18px 0 0 0;color:#475569;font-size:14px">
       Ante cualquier duda, nuestro equipo está a su disposición.
     </p>
@@ -1008,6 +1005,9 @@ const sendPedidoCreatedEmail = async ({
         ${productosHtml}
       </tbody>
     </table>
+    <p style="margin:18px 0 0 0;color:#475569;font-size:14px">
+      Puede acceder a la plataforma desde el siguiente enlace: <a href="https://d1ovjdpg649de2.cloudfront.net" style="color:#2563eb;text-decoration:none">https://d1ovjdpg649de2.cloudfront.net</a>
+    </p>
   `;
 
   const text = [
@@ -1027,6 +1027,8 @@ const sendPedidoCreatedEmail = async ({
     `Dirección de entrega: ${safeDireccion}`,
     `Teléfono de contacto: ${safeTelefono}`,
     safeDetalles ? `Observaciones: ${safeDetalles}` : null,
+    '',
+    'Puede acceder a la plataforma en: https://d1ovjdpg649de2.cloudfront.net',
     '',
     'Adjuntos: comprobante PDF del pedido (y del abono si aplica), idéntico al de la acción «Ver PDF» en el sistema.',
     '',

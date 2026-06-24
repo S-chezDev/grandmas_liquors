@@ -69,6 +69,7 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
   const [activeTab, setActiveTab] = useState<'login' | 'register'>(initialTab);
   const [isResetPasswordOpen, setIsResetPasswordOpen] = useState(false);
   const [resetEmail, setResetEmail] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   
   // Estados para alertas
   const [alertState, setAlertState] = useState({
@@ -181,9 +182,11 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading) return;
     setTouched((prev) => ({ ...prev, loginEmail: true, loginPassword: true }));
     if (loginEmailErr || loginPasswordErr) return;
 
+    setIsLoading(true);
     try {
       await onLogin(loginData.email, loginData.password);
 
@@ -252,11 +255,14 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
         type: 'danger',
         onConfirm: () => {}
       });
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading) return;
     setTouched({
       regTipoDocumento: true,
       regNumeroDocumento: true,
@@ -281,6 +287,7 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
     ].filter(Boolean);
     if (regErrors.length > 0) return;
 
+    setIsLoading(true);
     try {
       await register(registerData);
 
@@ -303,14 +310,18 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
         type: 'danger',
         onConfirm: () => {}
       });
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading) return;
     setTouched((prev) => ({ ...prev, resetEmail: true }));
     if (validateEmail(resetEmail)) return;
 
+    setIsLoading(true);
     try {
       await api.auth.requestPasswordReset(resetEmail);
       setAlertState({
@@ -331,6 +342,8 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
         type: 'danger',
         onConfirm: () => {}
       });
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -447,9 +460,9 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
                     type="submit"
                     className="w-full"
                     icon={<LogIn className="w-5 h-5" />}
-                    disabled={Boolean(loginEmailErr || loginPasswordErr)}
+                    disabled={isLoading || Boolean(loginEmailErr || loginPasswordErr)}
                   >
-                    Iniciar Sesión
+                    {isLoading ? 'Iniciando sesión...' : 'Iniciar Sesión'}
                   </Button>
                 </FormActions>
               </Form>
@@ -620,7 +633,7 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
                       type="submit"
                       className="w-full"
                       icon={<UserPlus className="w-5 h-5" />}
-                      disabled={Boolean(
+                      disabled={isLoading || Boolean(
                         registerDocumentoDuplicate ||
                         registerEmailDuplicate ||
                         validateDocumento(registerData.numeroDocumento) ||
@@ -633,7 +646,7 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
                         registerConfirmErr
                       )}
                     >
-                      Crear Cuenta
+                      {isLoading ? 'Creando cuenta...' : 'Crear Cuenta'}
                     </Button>
                   </FormActions>
                 </div>
@@ -695,9 +708,9 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
             <Button
               type="submit"
               icon={<KeyRound className="w-5 h-5" />}
-              disabled={Boolean(validateEmail(resetEmail))}
+              disabled={isLoading || Boolean(validateEmail(resetEmail))}
             >
-              Enviar Enlace
+              {isLoading ? 'Enviando...' : 'Enviar Enlace'}
             </Button>
           </FormActions>
         </Form>
