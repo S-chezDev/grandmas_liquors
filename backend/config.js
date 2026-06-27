@@ -12,6 +12,7 @@ const parseCsv = (value) => {
     .filter(Boolean);
 };
 //andres no trabaja
+//comentario
 const isProduction = (process.env.NODE_ENV || 'development') === 'production';
 
 if (isProduction && !process.env.JWT_SECRET) {
