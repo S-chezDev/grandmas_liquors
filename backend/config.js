@@ -11,7 +11,7 @@ const parseCsv = (value) => {
     .map((item) => item.trim())
     .filter(Boolean);
 };
-
+//andres no trabaja
 const isProduction = (process.env.NODE_ENV || 'development') === 'production';
 
 if (isProduction && !process.env.JWT_SECRET) {
@@ -20,14 +20,14 @@ if (isProduction && !process.env.JWT_SECRET) {
 
 const defaultCorsOrigins = isProduction
   ? [
-      process.env.CORS_CLOUDFRONT_URL ,
-      process.env.CORS_CUSTOM_DOMAIN ,
-    ].filter(Boolean)
+    process.env.CORS_CLOUDFRONT_URL,
+    process.env.CORS_CUSTOM_DOMAIN,
+  ].filter(Boolean)
   : [
-      process.env.CORS_CLOUDFRONT_URL,
-      process.env.CORS_CUSTOM_DOMAIN ,
-      'http://localhost:3000',
-    ].filter(Boolean);
+    process.env.CORS_CLOUDFRONT_URL,
+    process.env.CORS_CUSTOM_DOMAIN,
+    'http://localhost:3000',
+  ].filter(Boolean);
 
 const configuredCorsOrigins = parseCsv(process.env.CORS_ORIGINS);
 
