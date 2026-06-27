@@ -58,7 +58,7 @@ export function LandingPage({
     productos,
   });
 
-  const { showMisPedidos, setShowMisPedidos, pedidos, misPedidosLoading, refreshPedidos } = useOrders(
+  const { showMisPedidos, setShowMisPedidos, pedidos, misPedidosLoading, refreshPedidos, cancelarPedido } = useOrders(
     user
   );
 
@@ -305,6 +305,7 @@ export function LandingPage({
         pedidos={pedidos}
         misPedidosLoading={misPedidosLoading}
         onClose={() => setShowMisPedidos(false)}
+        onCancelPedido={cancelarPedido}
       />
 
       <ProfileModal

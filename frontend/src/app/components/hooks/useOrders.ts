@@ -21,6 +21,17 @@ export function useOrders(user?: UserData) {
     }
   };
 
+  const cancelarPedido = async (id: number) => {
+    try {
+      await api.pedidos.update(id, { estado: 'cancelado' as any });
+      void refreshPedidos();
+      return true;
+    } catch (err) {
+      console.error(err);
+      return false;
+    }
+  };
+
   useEffect(() => {
     if (!user) {
       setPedidos([]);
@@ -69,5 +80,6 @@ export function useOrders(user?: UserData) {
     pedidos,
     misPedidosLoading,
     refreshPedidos,
+    cancelarPedido,
   };
 }

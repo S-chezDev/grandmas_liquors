@@ -12,6 +12,7 @@ import type {
   Abono,
   Domicilio,
 } from './types';
+import { resolveApiPath } from './resolve';
 
 export const uiAct = (s?: string | null) => (String(s || '').trim().toLowerCase() === 'activo' ? 'activo' : 'inactivo');
 export const dbAct = (s: 'activo' | 'inactivo') => (s === 'activo' ? 'Activo' : 'Inactivo');
@@ -335,7 +336,7 @@ export function mapProducto(r: any): Producto {
       r.insumo_cantidad_medida != null && r.insumo_cantidad_medida !== ''
         ? Number(r.insumo_cantidad_medida)
         : null,
-    imagenUrl: r.imagen_url != null && String(r.imagen_url).trim() !== '' ? String(r.imagen_url) : null,
+    imagenUrl: r.imagen_url != null && String(r.imagen_url).trim() !== '' ? resolveApiPath(String(r.imagen_url)) : null,
   } as Producto;
 }
 
@@ -515,7 +516,7 @@ export function mapAbono(r: any): Abono {
     detalle: r.detalle ? String(r.detalle) : undefined,
     comprobanteUrl:
       r.comprobante_url != null && String(r.comprobante_url).trim() !== ''
-        ? String(r.comprobante_url)
+        ? resolveApiPath(String(r.comprobante_url))
         : undefined,
     createdAt: r.created_at || '',
     updatedAt: r.updated_at || '',

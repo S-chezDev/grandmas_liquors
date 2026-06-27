@@ -26,9 +26,7 @@ dist-ssr/
 *.local
 frontend/dist/
 
-# Uploads
-backend/uploads/
-**/uploads/
+
 
 # Editor directories and files
 .vscode/*
