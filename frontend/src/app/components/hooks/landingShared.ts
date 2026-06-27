@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { resolveApiPath } from '../../services/resolve';
 
 export const LOGO_URL = '/favicon/apple-touch-icon.png';
 
@@ -203,7 +204,7 @@ export const mapCatalogProduct = (product: {
     tipo: tipoRaw === 'preparacion' || tipoRaw.includes('prepar') ? 'de preparacion' : 'terminado',
     precio: Number(product.precio ?? 0),
     stock: Number(product.stock ?? 0),
-    imagen: imagenUrl || imagenProductoFallback,
+    imagen: resolveApiPath(imagenUrl || imagenProductoFallback),
     descripcion: product.descripcion || '',
   };
 };
