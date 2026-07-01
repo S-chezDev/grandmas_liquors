@@ -266,19 +266,6 @@ export function MyOrdersModal({
                       </div>
                       
                       <div className="mt-4 pt-3 border-t border-border flex justify-end gap-2 flex-wrap">
-                        {onCancelPedido && (String(pedido.estado).toLowerCase() === 'pendiente' || String(pedido.estado).toLowerCase() === 'procesando') && (
-                          <Button 
-                            onClick={() => {
-                              if (window.confirm('¿Está seguro de que desea cancelar este pedido?')) {
-                                onCancelPedido(pedido.id);
-                              }
-                            }} 
-                            variant="outline" 
-                            className="w-full sm:w-auto text-xs py-1.5 h-auto text-destructive border-destructive hover:bg-destructive hover:text-white"
-                          >
-                            Cancelar Pedido
-                          </Button>
-                        )}
                         <Button onClick={() => handleDownloadPdf(pedido)} variant="outline" className="w-full sm:w-auto text-xs py-1.5 h-auto">
                           <Download className="w-4 h-4 mr-2" />
                           Descargar PDF

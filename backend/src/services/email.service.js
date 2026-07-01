@@ -115,14 +115,20 @@ const resolveLogoFilePath = () => {
 };
 
 const getLogoAttachments = () => {
-  // Retornamos un arreglo vacío para evitar enviar el logo como archivo adjunto (CID),
-  // y en su lugar usamos Base64 directamente en el HTML.
-  return [];
+  const filePath = resolveLogoFilePath();
+  if (!filePath) return [];
+  return [
+    {
+      filename: 'logo.png',
+      path: filePath,
+      cid: 'logo@grandmasliquors'
+    }
+  ];
 };
 
 const buildEmailLogoHtml = () => {
-  // Forzamos el uso de Base64 directamente (getLogoDataUri) para no depender de un CID adjunto
-  const src = getLogoDataUri();
+  const hasFile = !!resolveLogoFilePath();
+  const src = hasFile ? 'cid:logo@grandmasliquors' : buildFallbackLogoDataUri();
   return (
     '<div style="margin:0 0 20px 0;text-align:center">' +
     '<img src="' +
