@@ -11,7 +11,9 @@ const parseCsv = (value) => {
     .map((item) => item.trim())
     .filter(Boolean);
 };
-
+//andres no trabaja
+//comentario
+//otro comentario
 const isProduction = (process.env.NODE_ENV || 'development') === 'production';
 
 if (isProduction && !process.env.JWT_SECRET) {
@@ -20,14 +22,14 @@ if (isProduction && !process.env.JWT_SECRET) {
 
 const defaultCorsOrigins = isProduction
   ? [
-      process.env.CORS_CLOUDFRONT_URL ,
-      process.env.CORS_CUSTOM_DOMAIN ,
-    ].filter(Boolean)
+    process.env.CORS_CLOUDFRONT_URL,
+    process.env.CORS_CUSTOM_DOMAIN,
+  ].filter(Boolean)
   : [
-      process.env.CORS_CLOUDFRONT_URL,
-      process.env.CORS_CUSTOM_DOMAIN ,
-      'http://localhost:3000',
-    ].filter(Boolean);
+    process.env.CORS_CLOUDFRONT_URL,
+    process.env.CORS_CUSTOM_DOMAIN,
+    'http://localhost:3000',
+  ].filter(Boolean);
 
 const configuredCorsOrigins = parseCsv(process.env.CORS_ORIGINS);
 
@@ -70,6 +72,12 @@ const config = {
     comprobantesDir: path.join(uploadsRoot, 'comprobantes'),
     perfilesDir: path.join(uploadsRoot, 'perfiles'),
     productosDir: path.join(uploadsRoot, 'productos'),
+    productosPreparacionDir: process.env.UPLOADS_PRODUCTOS_PREPARACION 
+      ? path.resolve(process.env.UPLOADS_PRODUCTOS_PREPARACION)
+      : path.join(uploadsRoot, 'Productos', 'de preparacion'),
+    productosTerminadosDir: process.env.UPLOADS_PRODUCTOS_TERMINADOS
+      ? path.resolve(process.env.UPLOADS_PRODUCTOS_TERMINADOS)
+      : path.join(uploadsRoot, 'Productos', 'terminados'),
   },
   auth: {
     jwtSecret: process.env.JWT_SECRET || (isProduction ? '' : 'dev_only_change_me'),

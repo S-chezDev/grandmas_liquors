@@ -198,7 +198,6 @@ module.exports = {
             name: `${normalizedNombre} ${normalizedApellido}`.trim(),
             email: normalizedEmail,
             password: welcomePassword,
-            emailCredentialExpiresHours: 2,
           });
         } catch (error) {
           console.error('Error enviando correo de bienvenida al cliente:', error);
@@ -316,6 +315,12 @@ module.exports = {
         nextEmail &&
         nextEmail.toLowerCase() !== prevEmail;
       if (emailChanged) {
+        void sendEmailChangeNotification({
+          to: currentCliente.email,
+          name: `${nextNombre} ${nextApellido}`.trim(),
+          previousEmail: currentCliente.email,
+          currentEmail: nextEmail,
+        });
         void sendEmailChangeNotification({
           to: nextEmail,
           name: `${nextNombre} ${nextApellido}`.trim(),

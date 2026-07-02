@@ -1,4 +1,5 @@
 import { formatOutgoingTextPayload } from './mappers';
+import { resolveApiPath } from './resolve';
 
 export type ApiEnvelope<T = unknown> = {
   success?: boolean;
@@ -17,30 +18,6 @@ const AUTH_EVENT_EXCLUDED_PATHS = new Set([
   '/api/auth/register-cliente',
   '/api/auth/password-reset-request',
 ]);
-
-/**
- * Resolver URL de API según el contexto:
- * - Development: /api (proxy de Vite redirige a backend)
- * - Production (S3/CloudFront): usa import.meta.env.VITE_API_BASE_URL
- */
-function resolveApiPath(path: string): string {
-  // Si es una URL absoluta, úsala tal cual
-  if (path.startsWith('http://') || path.startsWith('https://')) {
-    return path;
-  }
-
-  // En producción o si VITE_API_BASE_URL está definida, úsala
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
-  if (apiBaseUrl) {
-    // Si el path comienza con /api o /uploads, úsalo con la URL base
-    if (path.startsWith('/api') || path.startsWith('/uploads')) {
-      return `${apiBaseUrl}${path}`;
-    }
-  }
-
-  // En desarrollo o si es una ruta relativa, devuélvela tal cual
-  return path;
-}
 
 export async function apiFetch<T = unknown>(
   path: string,

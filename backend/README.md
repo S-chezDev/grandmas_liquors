@@ -94,6 +94,8 @@ CORS_ORIGINS=http://localhost:3000,http://localhost:3002
 
 # Uploads
 UPLOADS_ROOT=./uploads
+UPLOADS_PRODUCTOS_PREPARACION=./uploads/Productos/de preparacion
+UPLOADS_PRODUCTOS_TERMINADOS=./uploads/Productos/terminados
 
 # Authentication
 JWT_SECRET=dev_only_change_me_in_production
@@ -144,6 +146,8 @@ CORS_ORIGINS=https://aplicationgl-env-1.eba-jyti25ie.us-east-2.elasticbeanstalk.
 
 # Uploads
 UPLOADS_ROOT=/var/app/current/uploads
+UPLOADS_PRODUCTOS_PREPARACION=/var/app/current/uploads/Productos/de preparacion
+UPLOADS_PRODUCTOS_TERMINADOS=/var/app/current/uploads/Productos/terminados
 
 # Authentication
 # Generar JWT_SECRET seguro con: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"

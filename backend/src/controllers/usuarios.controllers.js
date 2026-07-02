@@ -288,12 +288,20 @@ module.exports = {
       const userName = `${normalized.data.nombre || currentUsuario.nombre || ''} ${normalized.data.apellido || currentUsuario.apellido || ''}`.trim();
 
       if (emailChanged) {
-        void sendEmailChangeNotification({
-          to: normalized.data.email.trim(),
-          name: userName,
-          previousEmail,
-          currentEmail: normalized.data.email,
-        }).catch((error) => {
+        void Promise.all([
+          sendEmailChangeNotification({
+            to: previousEmail,
+            name: userName,
+            previousEmail: previousEmail,
+            currentEmail: normalized.data.email,
+          }),
+          sendEmailChangeNotification({
+            to: normalized.data.email,
+            name: userName,
+            previousEmail: previousEmail,
+            currentEmail: normalized.data.email,
+          })
+        ]).catch((error) => {
           console.error('Error notificando cambio de correo:', error);
         });
       }

@@ -6,7 +6,9 @@
     "scripts": {
         "build": "vite build",
         "dev": "vite",
-        "tunnel": "npx --yes localtunnel --port 3000"
+        "tunnel": "npx --yes localtunnel --port 3000",
+        "test:e2e": "playwright test",
+        "test:e2e:ui": "playwright test --ui"
     },
     "dependencies": {
         "@radix-ui/react-accordion": "1.2.3",
@@ -56,6 +58,7 @@
         "vaul": "1.1.2"
     },
     "devDependencies": {
+        "@playwright/test": "^1.61.1",
         "@tailwindcss/vite": "4.1.12",
         "@types/dompurify": "^3.0.5",
         "@types/node": "^25.9.2",
