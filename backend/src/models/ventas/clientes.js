@@ -12,6 +12,9 @@ const {
   ensureMotivoEstado,
   checkInactivacionDependencias,
   registerClienteAudit,
+  getActiveUserSessionCount,
+  revokeAllUserSessions,
+  registerUserAudit,
 } = require('../shared/auditoria');
 
 /**
@@ -61,8 +64,48 @@ const buildClienteBloqueoMensaje = (work, accion) => {
   return `No se puede ${accion} el cliente porque tiene ${detalle}. Finalice o cancele esos registros antes de continuar.`;
 };
 
+const getClienteRecentTransactions = async (clienteId, days = 30) => {
+  const id = Number(clienteId);
+  const safeDays = Number.isFinite(Number(days)) ? Math.max(1, Number(days)) : 30;
+  if (!Number.isFinite(id) || id <= 0) {
+    return { pedidos: 0, ventas: 0, abonos: 0, domicilios: 0, total: 0, days: safeDays };
+  }
+
+  const result = await pool.query(
+    `SELECT
+       (SELECT COUNT(*) FROM pedidos
+         WHERE cliente_id = $1
+           AND COALESCE(created_at, fecha::timestamp) >= CURRENT_TIMESTAMP - ($2 * INTERVAL '1 day'))::int AS pedidos,
+       (SELECT COUNT(*) FROM ventas
+         WHERE cliente_id = $1
+           AND COALESCE(created_at, fecha::timestamp) >= CURRENT_TIMESTAMP - ($2 * INTERVAL '1 day'))::int AS ventas,
+       (SELECT COUNT(*) FROM abonos
+         WHERE cliente_id = $1
+           AND COALESCE(created_at, fecha::timestamp) >= CURRENT_TIMESTAMP - ($2 * INTERVAL '1 day'))::int AS abonos,
+       (SELECT COUNT(*) FROM domicilios
+         WHERE cliente_id = $1
+           AND COALESCE(created_at, fecha::timestamp) >= CURRENT_TIMESTAMP - ($2 * INTERVAL '1 day'))::int AS domicilios`,
+    [id, safeDays]
+  );
+
+  const row = result.rows[0] || {};
+  const pedidos = Number(row.pedidos || 0);
+  const ventas = Number(row.ventas || 0);
+  const abonos = Number(row.abonos || 0);
+  const domicilios = Number(row.domicilios || 0);
+  return {
+    pedidos,
+    ventas,
+    abonos,
+    domicilios,
+    total: pedidos + ventas + abonos + domicilios,
+    days: safeDays,
+  };
+};
+
 const Clientes = {
   getPendingWork: getClientePendingWork,
+  getRecentTransactions: getClienteRecentTransactions,
   buildBloqueoMensaje: buildClienteBloqueoMensaje,
   getAll: async () => {
     const result = await pool.query(
@@ -240,12 +283,23 @@ const Clientes = {
     }
 
     ensureMotivoEstado(data?.motivo);
+    const motivo = typeof data?.motivo === 'string' ? data.motivo.trim() : null;
 
     if (current.estado === estado) {
       return current;
     }
 
+    let activeSessions = 0;
+    let revokedSessions = 0;
+    let currentUser = null;
+
     if (current.estado !== 'Inactivo' && estado === 'Inactivo') {
+      if (current.usuario_id) {
+        activeSessions = await getActiveUserSessionCount(current.usuario_id);
+        const userResult = await pool.query('SELECT * FROM usuarios WHERE id = $1 LIMIT 1', [current.usuario_id]);
+        currentUser = userResult.rows[0] || null;
+      }
+
       const work = await getClientePendingWork(id);
       if (work.total > 0) {
         const error = new Error(buildClienteBloqueoMensaje(work, 'inactivar'));
@@ -271,6 +325,28 @@ const Clientes = {
          WHERE id = $2`,
         [estado, current.usuario_id]
       );
+
+      if (estado === 'Inactivo' && activeSessions > 0) {
+        revokedSessions = await revokeAllUserSessions(current.usuario_id);
+      }
+
+      const updatedUserResult = await pool.query('SELECT * FROM usuarios WHERE id = $1 LIMIT 1', [current.usuario_id]);
+      const updatedUser = updatedUserResult.rows[0] || null;
+
+      await registerUserAudit({
+        usuarioId: Number(current.usuario_id),
+        accion: 'UPDATE',
+        actorId: data?.actor_id ?? null,
+        cambios: {
+          before: currentUser ? { estado: currentUser.estado } : { estado: current.estado },
+          after: updatedUser ? { estado: updatedUser.estado } : { estado },
+          reason: motivo,
+          statusChange: true,
+          activeSessions,
+          revokedSessions,
+          synchronizedFromClienteId: Number(id),
+        },
+      });
     }
 
     await registerClienteAudit({
@@ -280,8 +356,10 @@ const Clientes = {
       cambios: {
         before: { estado: current.estado },
         after: { estado },
-        motivo: typeof data?.motivo === 'string' ? data.motivo.trim() : null,
+        motivo,
         usuario_id_sincronizado: current.usuario_id || null,
+        activeSessions,
+        revokedSessions,
       },
     });
 

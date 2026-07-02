@@ -7,7 +7,7 @@
  */
 const pool = require('../../../db');
 const { parseMoneyCO } = require('../../controllers/normalizador-http');
-const { groupRowsBy } = require('../shared/auditoria');
+const { groupRowsBy, reserveEntityIdAndCode } = require('../shared/auditoria');
 
 const ensureComprasSchema = async () => {
   await pool.query(`
@@ -59,7 +59,12 @@ const getProveedorActivo = async (proveedorId) => {
 };
 
 const getProductoById = async (productoId) => {
-  const result = await pool.query('SELECT id, nombre, precio, stock, estado FROM productos WHERE id = $1', [productoId]);
+  const result = await pool.query(
+    `SELECT id, nombre, precio, stock, estado,
+            COALESCE(tipo_producto, 'terminado') AS tipo_producto
+     FROM productos WHERE id = $1`,
+    [productoId]
+  );
   return result.rows[0] || null;
 };
 
@@ -129,6 +134,7 @@ const Compras = {
   },
   create: async (data, options = {}) => {
     await ensureComprasSchema();
+    const reserved = await reserveEntityIdAndCode(pool, 'public.compras', 'C');
 
     if (!data.proveedor_id) {
       const error = new Error('El proveedor es obligatorio para crear la compra');
@@ -160,10 +166,11 @@ const Compras = {
 
     const result = await pool.query(
       `INSERT INTO compras (
-         numero_compra, proveedor_id, fecha, fecha_creacion, subtotal, iva, total, estado, observaciones, requiere_aprobacion, aprobacion_extraordinaria, motivo_aprobacion
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
+         id, numero_compra, proveedor_id, fecha, fecha_creacion, subtotal, iva, total, estado, observaciones, requiere_aprobacion, aprobacion_extraordinaria, motivo_aprobacion
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
       [
-        data.numero_compra,
+        reserved.id,
+        reserved.code,
         data.proveedor_id,
         data.fecha,
         data.fecha_creacion || data.fecha || new Date().toISOString().split('T')[0],
@@ -235,9 +242,18 @@ const Compras = {
       throw error;
     }
 
+    const tipoProd = String(producto.tipo_producto || '').toLowerCase();
+    if (tipoProd === 'preparacion' || tipoProd.includes('prepar')) {
+      const error = new Error('No se pueden registrar compras de productos tipo preparación');
+      error.statusCode = 400;
+      throw error;
+    }
+
     const pctRaw = options?.porcentajeGanancia;
-    const parsedPct = pctRaw === undefined || pctRaw === null || pctRaw === '' ? 0 : Number(pctRaw);
-    if (!Number.isFinite(parsedPct) || parsedPct < 0 || parsedPct > 1000) {
+    let parsedPct = pctRaw === undefined || pctRaw === null || pctRaw === '' ? 0 : Number(pctRaw);
+    if (String(producto.tipo_producto || '').toLowerCase() === 'insumo') {
+      parsedPct = 0;
+    } else if (!Number.isFinite(parsedPct) || parsedPct < 0 || parsedPct > 1000) {
       const error = new Error('El porcentaje de ganancia debe ser un número entre 0 y 1000');
       error.statusCode = 400;
       throw error;
@@ -277,8 +293,8 @@ const Compras = {
   update: async (id, data) => {
     await ensureComprasSchema();
     await pool.query(
-      'UPDATE compras SET numero_compra = $1, proveedor_id = $2, fecha = $3, subtotal = $4, iva = $5, total = $6, estado = $7, observaciones = $8, aprobacion_extraordinaria = $9, motivo_aprobacion = $10 WHERE id = $11',
-      [data.numero_compra, data.proveedor_id, data.fecha, data.subtotal, data.iva, data.total, data.estado, data.observaciones ?? null, data.aprobacion_extraordinaria ?? false, data.motivo_aprobacion ?? null, id]
+      'UPDATE compras SET proveedor_id = $1, fecha = $2, subtotal = $3, iva = $4, total = $5, estado = $6, observaciones = $7, aprobacion_extraordinaria = $8, motivo_aprobacion = $9 WHERE id = $10',
+      [data.proveedor_id, data.fecha, data.subtotal, data.iva, data.total, data.estado, data.observaciones ?? null, data.aprobacion_extraordinaria ?? false, data.motivo_aprobacion ?? null, id]
     );
     return true;
   },
@@ -297,10 +313,15 @@ const Compras = {
 
     const applyReceiptStock = async (compraId) => {
       const detalleResult = await client.query(
-        `SELECT producto_id, cantidad, precio_unitario, COALESCE(porcentaje_ganancia, 0)::numeric AS pct
-         FROM detalle_compras
-         WHERE compra_id = $1
-         ORDER BY id ASC`,
+        `SELECT dc.producto_id,
+                dc.cantidad,
+                dc.precio_unitario,
+                COALESCE(dc.porcentaje_ganancia, 0)::numeric AS pct,
+                COALESCE(p.tipo_producto, 'terminado') AS tipo_producto
+         FROM detalle_compras dc
+         JOIN productos p ON p.id = dc.producto_id
+         WHERE dc.compra_id = $1
+         ORDER BY dc.id ASC`,
         [compraId]
       );
 
@@ -314,9 +335,40 @@ const Compras = {
         const costo = Number(row.precio_unitario);
         const pct = Number(row.pct);
         const precioVenta = Math.round(costo * (1 + (Number.isFinite(pct) ? pct : 0) / 100));
+        const esPreparacion = String(row.tipo_producto || '').toLowerCase() === 'preparacion';
         await client.query(
-          'UPDATE productos SET stock = COALESCE(stock, 0) + $1, precio = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3',
-          [Number(row.cantidad || 0), precioVenta, row.producto_id]
+          `UPDATE productos
+             SET stock = CASE WHEN $4 THEN 0 ELSE COALESCE(stock, 0) + $1 END,
+                 precio = $2,
+                 porcentaje_ganancia = $5,
+                 updated_at = CURRENT_TIMESTAMP
+           WHERE id = $3`,
+          [Number(row.cantidad || 0), precioVenta, row.producto_id, esPreparacion, pct]
+        );
+      }
+    };
+
+    const revertReceiptStock = async (compraId) => {
+      const detalleResult = await client.query(
+        `SELECT dc.producto_id,
+                dc.cantidad
+         FROM detalle_compras dc
+         WHERE dc.compra_id = $1
+         ORDER BY dc.id ASC`,
+        [compraId]
+      );
+
+      if (!detalleResult.rows.length) {
+        return;
+      }
+
+      for (const row of detalleResult.rows) {
+        await client.query(
+          `UPDATE productos
+             SET stock = GREATEST(0, COALESCE(stock, 0) - $1),
+                 updated_at = CURRENT_TIMESTAMP
+           WHERE id = $2`,
+          [Number(row.cantidad || 0), row.producto_id]
         );
       }
     };
@@ -339,19 +391,21 @@ const Compras = {
         throw error;
       }
 
-      if (normalizeStatus(compra.estado) === 'Recibida') {
-        const error = new Error('La compra ya fue recibida y no puede modificarse');
+      const previousStatus = normalizeStatus(compra.estado);
+      if (previousStatus === requestedStatus) {
+        return compra;
+      }
+
+      // Validar que no se pueda cambiar el estado si ya es Recibida o Cancelada
+      if (previousStatus === 'Recibida' || previousStatus === 'Cancelada') {
+        const error = new Error(`No se puede modificar el estado de una compra que ya está ${previousStatus}`);
         error.statusCode = 409;
         throw error;
       }
 
-      if (normalizeStatus(compra.estado) === 'Cancelada' && requestedStatus !== 'Cancelada') {
-        const error = new Error('La compra ya fue cancelada y no puede reactivarse');
-        error.statusCode = 409;
-        throw error;
-      }
-
-      const motivoCancelacion = typeof data.motivo_cancelacion === 'string' ? data.motivo_cancelacion.trim() : '';
+      const motivoCancelacion = typeof data.motivo_cancelacion === 'string'
+        ? data.motivo_cancelacion.trim()
+        : (typeof data.motivo === 'string' ? data.motivo.trim() : '');
 
       if (requestedStatus === 'Cancelada' && (!motivoCancelacion || motivoCancelacion.length < 10)) {
         const error = new Error('El motivo de cancelación es obligatorio y debe tener mínimo 10 caracteres');
@@ -367,10 +421,11 @@ const Compras = {
         return previous ? `${previous}\n${entry}` : entry;
       })();
 
-      const previousStatus = normalizeStatus(compra.estado);
-
-      if (requestedStatus === 'Recibida') {
+      if (previousStatus !== 'Recibida' && requestedStatus === 'Recibida') {
         await applyReceiptStock(id);
+      }
+      if (previousStatus === 'Recibida' && requestedStatus !== 'Recibida') {
+        await revertReceiptStock(id);
       }
 
       await client.query(
@@ -409,7 +464,13 @@ const Compras = {
       client.release();
     }
   },
-  delete: async (id) => {
+  delete: async (id, options = {}) => {
+    const reason = typeof options.reason === 'string' ? options.reason.trim() : '';
+    if (!reason || reason.length < 10 || reason.length > 50) {
+      const error = new Error('El motivo de eliminacion es obligatorio y debe tener entre 10 y 50 caracteres');
+      error.statusCode = 400;
+      throw error;
+    }
     await ensureComprasSchema();
     await pool.query('DELETE FROM detalle_compras WHERE compra_id = $1', [id]);
     await pool.query('DELETE FROM compras WHERE id = $1', [id]);

@@ -1,13 +1,20 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DataTable, Column, commonActions, openPrintablePdf } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions, FieldError } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, Trash2, Minus, Search, ShoppingCart, Package } from 'lucide-react';
+import { Plus, Trash2, Minus, Search, ShoppingCart, Package, X } from 'lucide-react';
 import { api } from '../../../services/api';
+import { settledValue } from '../../../services/routePermissions';
+import { formatEntityCode } from '../../../services/mappers';
 import { toast } from '../../AlertDialog';
 import type { Venta, Cliente, Producto, Pedido, PedidoProducto } from '../../../services/types';
 import { AlertDialog } from '../../AlertDialog';
+
+const esProductoPreparacion = (producto?: Producto | null) => {
+  const tipo = String(producto?.typo || '').toLowerCase().replace(/[\s-]+/g, '_');
+  return tipo === 'de_preparacion' || tipo === 'preparacion' || tipo.includes('prepar');
+};
 
 interface VentaView extends Venta {
   clienteNombre?: string;
@@ -46,6 +53,8 @@ export function Ventas() {
   const [mostrarListaClientes, setMostrarListaClientes] = useState(false);
   const [mostrarListaPedidos, setMostrarListaPedidos] = useState(false);
   const [mostrarListaProductos, setMostrarListaProductos] = useState(false);
+  const [mostrarNotaVenta, setMostrarNotaVenta] = useState(true);
+  const [isSubmittingVenta, setIsSubmittingVenta] = useState(false);
   const [formData, setFormData] = useState({
     tipo: 'directa' as 'directa' | 'por pedido',
     clienteId: 0,
@@ -58,6 +67,10 @@ export function Ventas() {
   const validarStockProducto = (productoId: number, cantidad: number): { valido: boolean; stockDisponible: number; stockRestante: number } => {
     const producto = productos.find(p => Number(p.id) === Number(productoId));
     if (!producto) return { valido: false, stockDisponible: 0, stockRestante: 0 };
+
+    if (esProductoPreparacion(producto)) {
+      return { valido: cantidad > 0, stockDisponible: 0, stockRestante: 0 };
+    }
 
     const stockDisponible = Number(producto.stock ?? 0);
     const stockRestante = stockDisponible - cantidad;
@@ -74,28 +87,46 @@ export function Ventas() {
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
-      if (!target.closest('.relative')) {
+      if (!target.closest('.venta-cliente-picker')) {
         setMostrarListaClientes(false);
+      }
+      if (!target.closest('.venta-pedido-picker')) {
         setMostrarListaPedidos(false);
+      }
+      if (!target.closest('.venta-producto-picker')) {
         setMostrarListaProductos(false);
       }
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('mousedown', handleClickOutside, true);
+    return () => document.removeEventListener('mousedown', handleClickOutside, true);
   }, []);
 
   const cargarDatos = async () => {
     try {
-      const [ventasData, clientesData, productosData, pedidosData] = await Promise.all([
+      const [ventasR, clientesR, productosR, pedidosR] = await Promise.allSettled([
         api.ventas.getAll(),
         api.clientes.getAll(),
         api.productos.getAll(),
-        api.pedidos.getAll()
+        api.pedidos.getAll(),
       ]);
 
+      if (ventasR.status === 'rejected') {
+        console.error('[Ventas] Error al cargar ventas:', ventasR.reason);
+        toast.error('Error al cargar datos', {
+          description:
+            ventasR.reason instanceof Error ? ventasR.reason.message : 'No autorizado o error de red',
+        });
+        return;
+      }
+
+      const ventasData = ventasR.value;
+      const clientesData = settledValue(clientesR, [] as Cliente[], 'clientes');
+      const productosData = settledValue(productosR, [] as Producto[], 'productos');
+      const pedidosData = settledValue(pedidosR, [] as Pedido[], 'pedidos');
+
       setClientes(clientesData.filter(c => c.estado === 'activo'));
-      setProductos(productosData.filter(p => p.estado === 'activo'));
+      setProductos(productosData.filter((p) => p.estado === 'activo' && p.typo !== 'insumo'));
       // Solo exponer pedidos completados que ademas no tengan ya una venta no-cancelada.
       // Asi, una vez el pedido se asigna a una "venta por pedido", deja de aparecer
       // en el listado del campo "Pedido *" del formulario de nueva venta.
@@ -116,7 +147,7 @@ export function Ventas() {
         return {
           ...venta,
           clienteNombre: cliente ? `${cliente.nombre} ${cliente.apellido}` : 'Desconocido',
-          pedidoNumero: pedido ? `#${String(pedido.id).padStart(4, '0')}` : undefined
+          pedidoNumero: pedido ? formatEntityCode('P', pedido.id) : undefined
         };
       });
 
@@ -163,7 +194,7 @@ export function Ventas() {
   const handleVerPdfVenta = (venta: VentaView) => {
     const cliente = clientes.find((c) => c.id === venta.clienteId);
     const opened = openPrintablePdf({
-      title: `Venta #${String(venta.id).padStart(4, '0')}`,
+      title: `Venta ${formatEntityCode('V', venta.id)}`,
       subtitle: `Generado el ${new Date().toLocaleString('es-CO')}`,
       sections: [
         {
@@ -228,6 +259,11 @@ export function Ventas() {
   };
 
   const columns: Column[] = [
+    {
+      key: 'id',
+      label: 'ID Venta',
+      render: (value: number) => formatEntityCode('V', value)
+    },
     {
       key: 'tipo',
       label: 'Tipo',
@@ -319,9 +355,10 @@ export function Ventas() {
     setMostrarListaClientes(false);
     setMostrarListaPedidos(false);
     setMostrarListaProductos(false);
+    setMostrarNotaVenta(true);
     try {
       const productosData = await api.productos.getAll();
-      setProductos(productosData.filter((p) => p.estado === 'activo'));
+      setProductos(productosData.filter((p) => p.estado === 'activo' && p.typo !== 'insumo'));
     } catch {
       /* si falla el refetch, se siguen usando los productos ya cargados */
     }
@@ -370,7 +407,7 @@ export function Ventas() {
         const producto = productos.find((prod) => prod.id === p.productoId);
         return {
           productoId: p.productoId,
-          nombre: producto?.nombre || 'Desconocido',
+          nombre: producto?.nombre || p.nombre || 'Desconocido',
           cantidad: p.cantidad,
           precio: p.precio,
           subtotal: p.subtotal,
@@ -380,7 +417,7 @@ export function Ventas() {
       setFormData((prev) => ({
         ...prev,
         clienteId: pedido.clienteId,
-        metodoPago: pedido.metodoPago,
+        metodoPago: 'transferencia',
       }));
     } catch {
       toast.error('No se pudieron cargar los productos del pedido');
@@ -424,7 +461,7 @@ export function Ventas() {
   const seleccionarPedido = (pedido: Pedido) => {
     setFormData((prev) => ({ ...prev, pedidoId: pedido.id }));
     const cliente = clientes.find(c => c.id === pedido.clienteId);
-    setBusquedaPedido(`#${String(pedido.id).padStart(4, '0')} - ${cliente ? `${cliente.nombre} ${cliente.apellido}` : 'Desconocido'}`);
+    setBusquedaPedido(`${formatEntityCode('P', pedido.id)} - ${cliente ? `${cliente.nombre} ${cliente.apellido}` : 'Desconocido'}`);
     setMostrarListaPedidos(false);
     void cargarProductosDePedido(pedido.id);
   };
@@ -461,6 +498,7 @@ export function Ventas() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingVenta) return;
 
     // En venta directa el cliente es obligatorio. En venta por pedido el cliente
     // se hereda automaticamente del pedido seleccionado (no se pide en el form).
@@ -500,6 +538,8 @@ export function Ventas() {
     }
 
     for (const p of productosEnVenta) {
+      const productoCatalogo = productos.find((prod) => Number(prod.id) === Number(p.productoId));
+      if (esProductoPreparacion(productoCatalogo)) continue;
       const v = validarStockProducto(p.productoId, p.cantidad);
       if (!v.valido) {
         toast.error(
@@ -510,6 +550,13 @@ export function Ventas() {
     }
 
     const total = calcularTotal();
+    if (total > 100_000_000) {
+      toast.error('Total de venta demasiado alto', {
+        description:
+          'El total no puede superar $100.000.000 COP. Reduzca cantidades o precios de los productos.',
+      });
+      return;
+    }
     const productosVenta: PedidoProducto[] = productosEnVenta.map(p => ({
       productoId: p.productoId,
       cantidad: p.cantidad,
@@ -518,25 +565,36 @@ export function Ventas() {
     }));
 
     try {
+      setIsSubmittingVenta(true);
       const ventaCreada = await api.ventas.create({
         tipo: formData.tipo,
         clienteId: formData.clienteId,
         pedidoId: formData.pedidoId,
         productos: productosVenta,
         total,
-        metodoPago: formData.metodoPago,
+        metodoPago: formData.tipo === 'por pedido' ? 'transferencia' : formData.metodoPago,
         fecha: formData.fecha,
         estado: formData.tipo === 'directa' ? 'completada' : 'pendiente'
       });
 
-      const ventaId = ventaCreada?.id || 'XXXX';
+      const ventaId = ventaCreada?.id;
       toast.success('Venta registrada exitosamente', {
-        description: `Venta #${String(ventaId).padStart(4, '0')} registrada por ${formatCurrency(total)}. Stock actualizado.`
+        description: `Venta ${formatEntityCode('V', ventaId)} registrada por ${formatCurrency(total)}. Stock actualizado.`
       });
       setIsModalOpen(false);
       cargarDatos();
-    } catch (error: any) {
-      toast.error(error.message || 'Error al crear venta');
+    } catch (error: unknown) {
+      const raw = error instanceof Error ? error.message : String(error ?? '');
+      const msg =
+        /total|999999|100\.?000\.?000|validaci[oó]n|superar|monto/i.test(raw)
+          ? 'El total de la venta supera el máximo permitido ($100.000.000 COP). Revise cantidades y precios.'
+          : raw || 'Error al crear venta';
+      toast.error('No se pudo registrar la venta', { description: msg });
+      if (import.meta.env.DEV) {
+        console.error('Error al crear venta', error);
+      }
+    } finally {
+      setIsSubmittingVenta(false);
     }
   };
 
@@ -573,7 +631,7 @@ export function Ventas() {
               type="text"
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
-              placeholder="Buscar... (mín. 2, máx. 50 caracteres)"
+              placeholder="Buscar ..."
               className="w-full px-4 py-2.5 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
               maxLength={50}
             />
@@ -670,12 +728,23 @@ export function Ventas() {
         size="xl"
       >
         <Form onSubmit={handleSubmit} noValidate>
-          {/* Nota informativa sobre tipos de venta */}
-          <div className="p-4 bg-blue-50 rounded-lg border border-blue-200 mb-4">
-            <p className="text-sm text-blue-700">
-              <strong>Nota:</strong> Las ventas directas descuentan stock inmediatamente. Las ventas por pedido descuentan stock al completar el pedido.
-            </p>
-          </div>
+          {mostrarNotaVenta ? (
+            <div className="p-4 bg-blue-50 rounded-lg border border-blue-200 mb-4">
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-sm text-blue-700">
+                  <strong>Nota:</strong> Las ventas directas descuentan stock inmediatamente. Las ventas por pedido descuentan stock al completar el pedido.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setMostrarNotaVenta(false)}
+                  className="rounded-md p-1 text-blue-700 transition-colors hover:bg-blue-100 hover:text-blue-900"
+                  aria-label="Cerrar nota informativa"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           <div className="grid grid-cols-2 gap-4">
             <FormField
@@ -689,6 +758,7 @@ export function Ventas() {
                   ...formData,
                   tipo: nuevoTipo,
                   pedidoId: undefined,
+                  metodoPago: nuevoTipo === 'por pedido' ? 'transferencia' : formData.metodoPago,
                   // Al cambiar de tipo el cliente se recalcula: en directa se vuelve a elegir,
                   // en por pedido se infiere automaticamente al elegir el pedido.
                   clienteId: 0,
@@ -709,7 +779,7 @@ export function Ventas() {
             {/* Campo Cliente: solo visible para venta directa.
                 En venta por pedido el cliente se infiere del pedido seleccionado. */}
             {formData.tipo === 'directa' && (
-              <div className="relative">
+              <div className="relative venta-cliente-picker">
                 <label className="block text-sm font-medium mb-2">Cliente *</label>
                 <input
                   type="text"
@@ -721,6 +791,7 @@ export function Ventas() {
                   onFocus={() => setMostrarListaClientes(true)}
                   placeholder="Escribe nombre, ID o documento del cliente..."
                   className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                  maxLength={60}
                   required
                 />
                 {mostrarListaClientes && busquedaCliente && (
@@ -745,7 +816,7 @@ export function Ventas() {
             )}
 
             {formData.tipo === 'por pedido' && (
-              <div className="col-span-2 relative">
+              <div className="col-span-2 relative venta-pedido-picker">
                 <label className="block text-sm font-medium mb-2">Pedido *</label>
                 <input
                   type="text"
@@ -757,6 +828,7 @@ export function Ventas() {
                   onFocus={() => setMostrarListaPedidos(true)}
                   placeholder="Escribe ID del pedido o nombre del cliente..."
                   className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                  maxLength={60}
                   required
                 />
                 {mostrarListaPedidos && busquedaPedido && (
@@ -770,7 +842,7 @@ export function Ventas() {
                             onClick={() => seleccionarPedido(p)}
                             className="px-3 py-2 hover:bg-accent cursor-pointer border-b border-border last:border-b-0"
                           >
-                            <div className="font-medium">Pedido #{String(p.id).padStart(4, '0')}</div>
+                            <div className="font-medium">Pedido {formatEntityCode('P', p.id)}</div>
                             <div className="text-sm text-muted-foreground">
                               Cliente: {cliente ? `${cliente.nombre} ${cliente.apellido}` : 'Desconocido'} | Total: {formatCurrency(p.total)}
                             </div>
@@ -793,18 +865,24 @@ export function Ventas() {
               </div>
             )}
 
-            <FormField
-              label="Método de Pago"
-              name="metodoPago"
-              type="select"
-              value={formData.metodoPago}
-              onChange={(value) => setFormData({ ...formData, metodoPago: value as 'efectivo' | 'transferencia' })}
-              options={[
-                { value: 'efectivo', label: 'Efectivo' },
-                { value: 'transferencia', label: 'Transferencia' }
-              ]}
-              required
-            />
+            {formData.tipo === 'directa' ? (
+              <FormField
+                label="Método de Pago"
+                name="metodoPago"
+                type="select"
+                value={formData.metodoPago}
+                onChange={(value) =>
+                  setFormData({ ...formData, metodoPago: value as 'efectivo' | 'transferencia' })
+                }
+                options={[
+                  { value: 'efectivo', label: 'Efectivo' },
+                  { value: 'transferencia', label: 'Transferencia' },
+                ]}
+                required
+              />
+            ) : (
+              <input type="hidden" name="metodoPago" value="transferencia" />
+            )}
 
             <FormField
               label="Fecha"
@@ -819,7 +897,7 @@ export function Ventas() {
           {formData.tipo === 'directa' && (
             <div className="space-y-4">
               {/* Buscador de productos */}
-              <div className="relative">
+              <div className="relative venta-producto-picker">
                 <label className="block text-sm font-medium mb-2 flex items-center gap-2">
                   <ShoppingCart className="w-4 h-4" />
                   Agregar Productos *
@@ -836,6 +914,7 @@ export function Ventas() {
                     onFocus={() => setMostrarListaProductos(true)}
                     placeholder="Busca por nombre o ID, o haz clic para ver todos los productos..."
                     className="w-full pl-10 pr-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-base"
+                    maxLength={60}
                   />
                 </div>
                 {mostrarListaProductos && (
@@ -843,7 +922,7 @@ export function Ventas() {
                     {productosFiltrados.length > 0 ? (
                       <>
                         {/* Encabezado con contador */}
-                        <div className="sticky top-0 bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
+                        <div className="bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
                           {busquedaProducto.trim() === ''
                             ? `Todos los productos (${productosFiltrados.length})`
                             : `${productosFiltrados.length} producto(s) encontrado(s)`
@@ -851,17 +930,19 @@ export function Ventas() {
                         </div>
 
                         {productosFiltrados.map(p => {
+                          const esPrep = esProductoPreparacion(p);
                           const stockDisponible = Number(p.stock ?? 0);
                           const enVenta = productosEnVenta.find(pv => Number(pv.productoId) === Number(p.id));
                           const cantidadEnVenta = enVenta ? enVenta.cantidad : 0;
-                          const stockRestante = stockDisponible - cantidadEnVenta;
+                          const stockRestante = esPrep ? 1 : stockDisponible - cantidadEnVenta;
+                          const puedeAgregar = esPrep || stockRestante > 0;
 
                           return (
                             <div
                               key={p.id}
-                              onClick={() => stockRestante > 0 ? agregarProductoDesdeBusqueda(p) : null}
+                              onClick={() => (puedeAgregar ? agregarProductoDesdeBusqueda(p) : null)}
                               className={`px-4 py-3 border-b border-border last:border-b-0 ${
-                                stockRestante > 0
+                                puedeAgregar
                                   ? 'hover:bg-accent cursor-pointer'
                                   : 'bg-gray-50 cursor-not-allowed opacity-60'
                               }`}
@@ -873,16 +954,27 @@ export function Ventas() {
                                     <span className="font-medium">{p.nombre}</span>
                                   </div>
                                   <div className="text-sm text-muted-foreground mt-1">
-                                    ID: {p.id} | Precio: {formatCurrency(p.precioVenta)} |
-                                    Stock: <span className={stockRestante <= 5 ? 'text-red-600 font-semibold' : 'text-green-600'}>
-                                      {stockRestante} disponibles
-                                    </span>
-                                    {cantidadEnVenta > 0 && (
-                                      <span className="ml-2 text-blue-600">({cantidadEnVenta} en esta venta)</span>
+                                    {esPrep ? (
+                                      <>
+                                        ID: {p.id} | Precio: {formatCurrency(p.precioVenta)}
+                                        {cantidadEnVenta > 0 && (
+                                          <span className="ml-2 text-blue-600">({cantidadEnVenta} en esta venta)</span>
+                                        )}
+                                      </>
+                                    ) : (
+                                      <>
+                                        ID: {p.id} | Precio: {formatCurrency(p.precioVenta)} |
+                                        Stock: <span className={stockRestante <= 5 ? 'text-red-600 font-semibold' : 'text-green-600'}>
+                                          {stockRestante} disponibles
+                                        </span>
+                                        {cantidadEnVenta > 0 && (
+                                          <span className="ml-2 text-blue-600">({cantidadEnVenta} en esta venta)</span>
+                                        )}
+                                      </>
                                     )}
                                   </div>
                                 </div>
-                                {stockRestante > 0 && (
+                                {puedeAgregar && (
                                   <Plus className="w-5 h-5 text-primary" />
                                 )}
                               </div>
@@ -905,10 +997,11 @@ export function Ventas() {
                   </label>
                   {productosEnVenta.map((producto, index) => {
                     const productoData = productos.find(p => Number(p.id) === Number(producto.productoId));
+                    const esPrep = esProductoPreparacion(productoData);
                     const stockDisponible = Number(productoData?.stock ?? 0);
-                    const maxCantidad = Math.max(stockDisponible, producto.cantidad, 1);
+                    const maxCantidad = esPrep ? 9999 : Math.max(stockDisponible, producto.cantidad, 1);
                     const validacionStock = validarStockProducto(producto.productoId, producto.cantidad);
-                    const stockBajo = validacionStock.stockRestante <= 5 && validacionStock.stockRestante >= 0;
+                    const stockBajo = !esPrep && validacionStock.stockRestante <= 5 && validacionStock.stockRestante >= 0;
 
                     return (
                       <div key={index} className="bg-accent/30 border border-border rounded-lg p-4">
@@ -919,35 +1012,29 @@ export function Ventas() {
                               <h4 className="font-medium">{producto.nombre}</h4>
                             </div>
                             <div className="text-sm text-muted-foreground mb-2">
-                              Precio unitario: {formatCurrency(producto.precio)} | Stock disponible: {maxCantidad}
+                              Precio unitario: {formatCurrency(producto.precio)}
+                              {!esPrep && ` | Stock disponible: ${maxCantidad}`}
                             </div>
 
                             {/* Validación visual de stock */}
-                            {!validacionStock.valido && (
+                            {!esPrep && !validacionStock.valido && (
                               <div className="mt-2">
                                 <FieldError>
                                   La cantidad excede el stock disponible ({maxCantidad} unidades).
                                 </FieldError>
                               </div>
                             )}
-                            {validacionStock.valido && validacionStock.stockRestante === 0 && (
+                            {!esPrep && validacionStock.valido && validacionStock.stockRestante === 0 && (
                               <div className="mt-2 p-2 bg-yellow-50 rounded border border-yellow-200">
                                 <p className="text-xs text-yellow-700">
                                   <strong>⚠️ Advertencia:</strong> Esta venta agotará el stock de este producto.
                                 </p>
                               </div>
                             )}
-                            {validacionStock.valido && stockBajo && validacionStock.stockRestante > 0 && (
+                            {!esPrep && validacionStock.valido && stockBajo && validacionStock.stockRestante > 0 && (
                               <div className="mt-2 p-2 bg-yellow-50 rounded border border-yellow-200">
                                 <p className="text-xs text-yellow-700">
                                   <strong>⚠️ Advertencia:</strong> Este producto tiene stock bajo. Quedarán {validacionStock.stockRestante} unidades disponibles.
-                                </p>
-                              </div>
-                            )}
-                            {validacionStock.valido && !stockBajo && validacionStock.stockRestante > 5 && (
-                              <div className="mt-2 p-2 bg-green-50 rounded border border-green-200">
-                                <p className="text-xs text-green-700">
-                                  ✓ Stock disponible. Quedarán {validacionStock.stockRestante} unidades.
                                 </p>
                               </div>
                             )}
@@ -1052,11 +1139,11 @@ export function Ventas() {
           )}
 
           <FormActions>
-            <Button variant="outline" onClick={() => setIsModalOpen(false)}>
+            <Button variant="outline" disabled={isSubmittingVenta} onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
-            <Button type="submit">
-              Crear Venta
+            <Button type="submit" disabled={isSubmittingVenta}>
+              {isSubmittingVenta ? 'Guardando...' : 'Crear Venta'}
             </Button>
           </FormActions>
         </Form>
@@ -1073,7 +1160,7 @@ export function Ventas() {
           <div className="space-y-6">
             <div className="flex items-center justify-between p-4 bg-accent rounded-lg">
               <div>
-                <h3 className="text-lg">Venta #{String(selectedVenta.id).padStart(4, '0')}</h3>
+                <h3 className="text-lg">Venta {formatEntityCode('V', selectedVenta.id)}</h3>
                 <p className="text-sm text-muted-foreground">{selectedVenta.clienteNombre}</p>
               </div>
               <div className="flex gap-2">

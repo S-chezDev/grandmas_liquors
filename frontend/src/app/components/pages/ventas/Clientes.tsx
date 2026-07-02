@@ -34,6 +34,7 @@ export function Clientes() {
     email: '',
     direccion: ''
   });
+  const [isSavingCliente, setIsSavingCliente] = useState(false);
 
   useEffect(() => {
     cargarClientes();
@@ -192,8 +193,9 @@ export function Clientes() {
 
   const handleConfirmCambioEstado = async () => {
     if (!clienteEstadoTarget) return;
+    const motivoTrim = motivoEstado.trim();
 
-    if (motivoEstado.length < 10 || motivoEstado.length > 50) {
+    if (motivoTrim.length < 10 || motivoTrim.length > 50) {
       toast.error('El motivo debe tener entre 10 y 50 caracteres');
       return;
     }
@@ -202,7 +204,7 @@ export function Clientes() {
       await api.clientes.changeEstado(
         clienteEstadoTarget.cliente.id,
         clienteEstadoTarget.nuevoEstado,
-        motivoEstado
+        motivoTrim
       );
       toast.success(`Estado cambiado a ${clienteEstadoTarget.nuevoEstado}`);
       setIsEstadoModalOpen(false);
@@ -241,6 +243,7 @@ export function Clientes() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSavingCliente) return;
 
     if (!formData.nombre.trim() || !formData.apellido.trim()) {
       toast.error('Nombre y apellido son requeridos');
@@ -280,6 +283,7 @@ export function Clientes() {
     }
 
     try {
+      setIsSavingCliente(true);
       if (selectedCliente) {
         await api.clientes.update(selectedCliente.id, {
           ...formData,
@@ -298,22 +302,26 @@ export function Clientes() {
       cargarClientes();
     } catch (error: any) {
       toast.error(error.message || 'Error al guardar cliente');
+    } finally {
+      setIsSavingCliente(false);
     }
   };
 
-  const clientesFiltrados = clientes.filter(cliente => {
-    const matchBusqueda = busqueda.length === 0 ||
-      busqueda.length >= 2 &&
-      (cliente.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-       cliente.apellido.toLowerCase().includes(busqueda.toLowerCase()) ||
-       cliente.email.toLowerCase().includes(busqueda.toLowerCase()) ||
-       cliente.numeroDocumento.includes(busqueda));
+  const clientesFiltrados = useMemo(() => (
+    clientes.filter(cliente => {
+      const matchBusqueda = busqueda.length === 0 ||
+        busqueda.length >= 2 &&
+        (cliente.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
+         cliente.apellido.toLowerCase().includes(busqueda.toLowerCase()) ||
+         cliente.email.toLowerCase().includes(busqueda.toLowerCase()) ||
+         cliente.numeroDocumento.includes(busqueda));
 
-    const matchTipoDoc = !filtroTipoDoc || cliente.tipoDocumento === filtroTipoDoc;
-    const matchEstado = !filtroEstado || cliente.estado === filtroEstado;
+      const matchTipoDoc = !filtroTipoDoc || cliente.tipoDocumento === filtroTipoDoc;
+      const matchEstado = !filtroEstado || cliente.estado === filtroEstado;
 
-    return matchBusqueda && matchTipoDoc && matchEstado;
-  });
+      return matchBusqueda && matchTipoDoc && matchEstado;
+    })
+  ), [clientes, busqueda, filtroTipoDoc, filtroEstado]);
 
   return (
     <div className="space-y-6">
@@ -334,7 +342,7 @@ export function Clientes() {
               type="text"
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
-              placeholder="Buscar... (mín. 2, máx. 50 caracteres)"
+              placeholder="Buscar ..."
               className="w-full px-4 py-2.5 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
               maxLength={50}
             />
@@ -559,11 +567,13 @@ export function Clientes() {
           />
 
           <FormActions>
-            <Button variant="outline" onClick={() => setIsModalOpen(false)}>
+            <Button variant="outline" disabled={isSavingCliente} onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
-            <Button type="submit">
-              {selectedCliente ? 'Actualizar' : 'Crear'} Cliente
+            <Button type="submit" disabled={isSavingCliente}>
+              {isSavingCliente
+                ? 'Guardando...'
+                : `${selectedCliente ? 'Actualizar' : 'Crear'} Cliente`}
             </Button>
           </FormActions>
         </Form>

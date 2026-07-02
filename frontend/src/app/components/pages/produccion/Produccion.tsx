@@ -1,48 +1,96 @@
-﻿import React, { useState, useEffect } from 'react';
-import { DataTable, Column, commonActions } from '../../DataTable';
+import React, { useState, useEffect } from 'react';
+import { DataTable, Column, commonActions, openPrintablePdf } from '../../DataTable';
 import { Modal } from '../../Modal';
-import { Form, FormField, FormActions, FieldError, FieldSuccess } from '../../Form';
+import { Form, FormActions, FieldError, FieldSuccess } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, FileText, Calendar, Search, Package, ShoppingCart, Beaker } from 'lucide-react';
+import { Plus, FileText, Calendar, Search, Package, ShoppingCart } from 'lucide-react';
 import { api } from '../../../services/api';
 import { toast } from '../../AlertDialog';
-import type { OrdenProduccion, Producto, Usuario, ProductoInsumoRecetaLine } from '../../../services/types';
+import type { OrdenProduccion, Producto, Usuario, Pedido } from '../../../services/types';
+import { formatEntityCode, pedidoEstadoUi } from '../../../services/mappers';
 import { MotivoModal } from '../../MotivoModal';
 import { AlertDialog } from '../../AlertDialog';
-
-function totalRequeridoLinea(cantidadRequerida: number, ordenCantidad: number): number {
-  return Number(cantidadRequerida) * Math.max(1, ordenCantidad);
-}
-
-function totalMlVolumen(unidad: string, totalLinea: number): number | null {
-  const u = String(unidad || '')
-    .trim()
-    .toLowerCase();
-  if (u === 'mililitros') return totalLinea;
-  if (u === 'litros') return totalLinea * 1000;
-  return null;
-}
-
-function etiquetaEnvasesAprox(unidad: string, totalLinea: number, envaseMl: number): string {
-  const ml = totalMlVolumen(unidad, totalLinea);
-  if (ml == null) return '—';
-  if (envaseMl <= 0) return '—';
-  return String(Math.ceil(ml / envaseMl));
-}
+import { useAuth } from '../../AuthContext';
 
 interface OrdenProduccionView extends OrdenProduccion {
   productoNombre?: string;
   productorNombre?: string;
 }
 
+/** Extrae id de catálogo desde clave `c:123` (entregas / resumen productor). */
+function catalogoIdFromClave(clave: string): number | null {
+  const m = String(clave || '').match(/^c:(\d+)$/i);
+  return m ? Number(m[1]) : null;
+}
+
+type InsumoResumenRow = {
+  clave?: string;
+  unidad?: string;
+  disponible?: number;
+  disponible_unidades?: number;
+  ml_por_unidad?: number;
+};
+
+/** Unidad de medida del insumo según catálogo (Unidades | Mililitros) o entrega. */
+function etiquetaUnidadInsumo(row: InsumoResumenRow, insumosCatalogo: Producto[]): string {
+  if (/mililitro/i.test(String(row.unidad || ''))) return 'Mililitros';
+  const catId = catalogoIdFromClave(row.clave || '');
+  if (catId != null) {
+    const prod = insumosCatalogo.find((p) => p.id === catId);
+    const medida = prod?.insumoUnidadMedida?.trim();
+    if (medida === 'Mililitros' || medida === 'Unidades') return medida;
+    if (medida) return medida;
+  }
+  const u = String(row.unidad || '').trim();
+  if (/mililitro/i.test(u)) return 'Mililitros';
+  if (u) return u;
+  return 'Unidades';
+}
+
+/** ml por unidad de presentación (ej. 500 ml por botella). */
+function mlPorUnidadInsumo(row: InsumoResumenRow, insumosCatalogo: Producto[]): number | null {
+  if (row.ml_por_unidad != null && row.ml_por_unidad > 0) return row.ml_por_unidad;
+  const catId = catalogoIdFromClave(row.clave || '');
+  if (catId == null) return null;
+  const prod = insumosCatalogo.find((p) => p.id === catId);
+  if (prod?.insumoUnidadMedida !== 'Mililitros') return null;
+  const q = prod.insumoCantidadMedida;
+  return q != null && q > 0 ? q : null;
+}
+
+/** Saldo mostrado en UI: unidades o mililitros totales (10 u. × 500 ml = 5000 ml). */
+function disponibleMostrar(row: InsumoResumenRow, insumosCatalogo: Producto[]): number {
+  if (row.ml_por_unidad != null && row.disponible != null && /mililitro/i.test(String(row.unidad || ''))) {
+    return Number(row.disponible);
+  }
+  const ml = mlPorUnidadInsumo(row, insumosCatalogo);
+  if (ml) {
+    const unidades =
+      row.disponible_unidades != null ? Number(row.disponible_unidades) : Number(row.disponible ?? 0);
+    return Number((unidades * ml).toFixed(4));
+  }
+  return Number(row.disponible ?? 0);
+}
+
+function formatoCantidadInsumo(n: number, unidad: string): string {
+  if (/mililitro/i.test(unidad)) {
+    return Number.isInteger(n) ? String(n) : n.toFixed(2);
+  }
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
+}
+
 export function Produccion() {
+  const { user } = useAuth();
+  const esProductor = String(user?.rol || '').trim().toLowerCase() === 'productor';
+
   const [ordenes, setOrdenes] = useState<OrdenProduccionView[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
+  /** Catálogo de insumos (para unidad Mililitros / Unidades en el formulario Nueva orden). */
+  const [insumosCatalogo, setInsumosCatalogo] = useState<Producto[]>([]);
+  const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [productores, setProductores] = useState<Usuario[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
-  const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
-  const [pdfContent, setPdfContent] = useState('');
   const [selectedOrden, setSelectedOrden] = useState<OrdenProduccionView | null>(null);
   const [produccionPending, setProduccionPending] = useState<{
     orden: OrdenProduccionView;
@@ -52,25 +100,14 @@ export function Produccion() {
   const [busqueda, setBusqueda] = useState('');
   const [filtroEstado, setFiltroEstado] = useState<string>('');
   const [filtroFecha, setFiltroFecha] = useState<string>('');
-  const [busquedaProducto, setBusquedaProducto] = useState('');
+  const [busquedaPedido, setBusquedaPedido] = useState('');
   const [busquedaProductor, setBusquedaProductor] = useState('');
-  const [busquedaInsumo, setBusquedaInsumo] = useState('');
-  const [mostrarListaProductos, setMostrarListaProductos] = useState(false);
+  const [productosPedidoDisponibles, setProductosPedidoDisponibles] = useState<Producto[]>([]);
+  const [pedidoSeleccionado, setPedidoSeleccionado] = useState<Pedido | null>(null);
+  const [mostrarListaPedidos, setMostrarListaPedidos] = useState(false);
   const [mostrarListaProductores, setMostrarListaProductores] = useState(false);
-  const [mostrarListaInsumos, setMostrarListaInsumos] = useState(false);
-  const [insumosDisponibles, setInsumosDisponibles] = useState<Array<{
-    id: number;
-    insumo_id: number;
-    insumo_nombre: string;
-    cantidad: number;
-    unidad: string;
-    numero_entrega: string;
-    fecha: string;
-  }>>([]);
-  const [insumosSeleccionados, setInsumosSeleccionados] = useState<number[]>([]);
   const [formData, setFormData] = useState({
-    productoId: 0,
-    cantidad: 1,
+    pedidoId: 0,
     productorId: 0,
     fechaInicio: new Date().toISOString().split('T')[0],
     tiempoPreparacion: 60
@@ -79,131 +116,287 @@ export function Produccion() {
   // Estados para validaciones en tiempo real
   const [fechaValida, setFechaValida] = useState<boolean | null>(null);
   const [tiempoValido, setTiempoValido] = useState<boolean | null>(null);
-  const [recetaLineas, setRecetaLineas] = useState<ProductoInsumoRecetaLine[]>([]);
-  const [envaseMl, setEnvaseMl] = useState('');
-  const [detalleReceta, setDetalleReceta] = useState<ProductoInsumoRecetaLine[]>([]);
-  const [detalleEnvaseMl, setDetalleEnvaseMl] = useState('');
+  /** Insumos agregados del productor (una fila por insumo, saldo total). */
+  const [insumosResumenProductor, setInsumosResumenProductor] = useState<
+    (InsumoResumenRow & { clave: string; insumo_nombre?: string })[]
+  >([]);
+  /** Insumos seleccionados manualmente con sus cantidades. */
+  const [insumosSeleccionados, setInsumosSeleccionados] = useState<
+    { clave: string; insumo_nombre: string; cantidad: number; unidad: string }[]
+  >([]);
+  const [insumosSugeridos, setInsumosSugeridos] = useState<
+    { clave: string; insumo_nombre: string; cantidad: number; unidad: string }[]
+  >([]);
+  const [insumosFaltantes, setInsumosFaltantes] = useState<
+    { clave: string; insumo_nombre: string; requerido: number; disponible: number; falta: number; unidad: string }[]
+  >([]);
+  const [loadingSugerido, setLoadingSugerido] = useState(false);
+
+  const toggleInsumoSeleccionado = (insumo: any, cantidad: number) => {
+    const existente = insumosSeleccionados.find(i => i.clave === insumo.clave);
+    if (existente) {
+      if (cantidad <= 0) {
+        // Eliminar si cantidad es 0 o menor
+        setInsumosSeleccionados(insumosSeleccionados.filter(i => i.clave !== insumo.clave));
+      } else {
+        // Actualizar cantidad
+        setInsumosSeleccionados(
+          insumosSeleccionados.map(i =>
+            i.clave === insumo.clave ? { ...i, cantidad } : i
+          )
+        );
+      }
+    } else if (cantidad > 0) {
+      // Agregar nuevo
+      setInsumosSeleccionados([
+        ...insumosSeleccionados,
+        {
+          clave: insumo.clave,
+          insumo_nombre: insumo.insumo_nombre || 'Insumo',
+          cantidad,
+          unidad: etiquetaUnidadInsumo(insumo, insumosCatalogo),
+        }
+      ]);
+    } else if (cantidad === 0) {
+      // Agregar con cantidad 0 para que aparezca el input
+      setInsumosSeleccionados([
+        ...insumosSeleccionados,
+        {
+          clave: insumo.clave,
+          insumo_nombre: insumo.insumo_nombre || 'Insumo',
+          cantidad: 0,
+          unidad: etiquetaUnidadInsumo(insumo, insumosCatalogo),
+        }
+      ]);
+    }
+  };
+
+  const handleToggleCheckbox = (insumo: any, isChecked: boolean) => {
+    if (isChecked) {
+      // Marcar: agregar con cantidad 0
+      toggleInsumoSeleccionado(insumo, 0);
+    } else {
+      // Desmarcar: eliminar
+      setInsumosSeleccionados(insumosSeleccionados.filter(i => i.clave !== insumo.clave));
+    }
+  };
 
   useEffect(() => {
-    if (!formData.productoId) {
-      setRecetaLineas([]);
+    if (!isModalOpen || !formData.productorId) {
+      setInsumosResumenProductor([]);
+      setInsumosSeleccionados([]);
+      setInsumosSugeridos([]);
+      setInsumosFaltantes([]);
       return;
     }
     let cancelled = false;
     void (async () => {
       try {
-        const rows = await api.productoInsumos.getByProducto(formData.productoId);
-        if (!cancelled) setRecetaLineas(rows as ProductoInsumoRecetaLine[]);
-      } catch {
-        if (!cancelled) setRecetaLineas([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [formData.productoId]);
+        setLoadingSugerido(true);
+        if (formData.pedidoId) {
+          console.log(`[Produccion] Fetching sugerencias para pedidoId=${formData.pedidoId}, productorId=${formData.productorId}`);
+          const res = await api.produccion.sugerirConsumo(formData.pedidoId, formData.productorId);
+          console.log(`[Produccion] Sugerencia de consumo obtenida:`, res);
+          if (!cancelled) {
+            const enrichedDisp = (Array.isArray(res.disponible) ? res.disponible : []).map((row) => ({
+              ...row,
+              unidad: etiquetaUnidadInsumo(row, insumosCatalogo),
+            }));
+            setInsumosResumenProductor(enrichedDisp);
 
-  useEffect(() => {
-    if (!isDetailModalOpen || !selectedOrden?.productoId) {
-      setDetalleReceta([]);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const rows = await api.productoInsumos.getByProducto(selectedOrden.productoId);
-        if (!cancelled) setDetalleReceta(rows as ProductoInsumoRecetaLine[]);
-      } catch {
-        if (!cancelled) setDetalleReceta([]);
+            const enrichedSug = (Array.isArray(res.sugerido) ? res.sugerido : []).map((row) => ({
+              clave: row.clave,
+              insumo_nombre: row.insumo_nombre || 'Insumo',
+              cantidad: Number(row.cantidad) || 0,
+              unidad: etiquetaUnidadInsumo(row, insumosCatalogo),
+            }));
+            setInsumosSugeridos(enrichedSug);
+
+            const enrichedFalt = (Array.isArray(res.faltantes) ? res.faltantes : []).map((row) => ({
+              clave: row.clave,
+              insumo_nombre: row.insumo_nombre || 'Insumo',
+              requerido: Number(row.requerido) || 0,
+              disponible: Number(row.disponible) || 0,
+              falta: Number(row.falta) || 0,
+              unidad: etiquetaUnidadInsumo(row, insumosCatalogo),
+            }));
+            setInsumosFaltantes(enrichedFalt);
+
+            const preseleccionados = enrichedSug.map((sug) => ({
+              clave: sug.clave,
+              insumo_nombre: sug.insumo_nombre,
+              cantidad: sug.cantidad,
+              unidad: sug.unidad,
+            }));
+            setInsumosSeleccionados(preseleccionados);
+          }
+        } else {
+          console.log(`[Produccion] Fetching insumos para productorId=${formData.productorId}`);
+          const rows = await api.produccion.getInsumosResumenProductor(formData.productorId);
+          console.log(`[Produccion] Insumos obtenidos:`, rows);
+          if (!cancelled) {
+            const enriched = (Array.isArray(rows) ? rows : []).map((row) => ({
+              ...row,
+              unidad: etiquetaUnidadInsumo(row, insumosCatalogo),
+            }));
+            setInsumosResumenProductor(enriched);
+            setInsumosSugeridos([]);
+            setInsumosFaltantes([]);
+            setInsumosSeleccionados([]);
+          }
+        }
+      } catch (error) {
+        console.error(`[Produccion] Error al obtener insumos/sugerencia:`, error);
+        if (!cancelled) {
+          setInsumosResumenProductor([]);
+          setInsumosSugeridos([]);
+          setInsumosFaltantes([]);
+          setInsumosSeleccionados([]);
+        }
+      } finally {
+        if (!cancelled) setLoadingSugerido(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [isDetailModalOpen, selectedOrden?.productoId]);
+  }, [isModalOpen, formData.productorId, formData.pedidoId, insumosCatalogo]);
 
   // Cerrar listas desplegables al hacer clic fuera
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
-      if (!target.closest('.relative')) {
-        setMostrarListaProductos(false);
+      if (!target.closest('.produccion-pedido-picker')) {
+        setMostrarListaPedidos(false);
+      }
+      if (!target.closest('.produccion-productor-picker')) {
         setMostrarListaProductores(false);
-        setMostrarListaInsumos(false);
       }
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('mousedown', handleClickOutside, true);
+    return () => document.removeEventListener('mousedown', handleClickOutside, true);
   }, []);
-
-  // Al seleccionar/cambiar productor, cargar las entregas de insumos
-  // disponibles para ese productor (solo las que aun no estan asignadas a otra
-  // orden de produccion activa).
-  useEffect(() => {
-    if (!formData.productorId) {
-      setInsumosDisponibles([]);
-      setInsumosSeleccionados([]);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const rows = await api.produccion.getInsumosByProductor(formData.productorId);
-        if (!cancelled) {
-          setInsumosDisponibles(rows as any[]);
-          setInsumosSeleccionados([]);
-        }
-      } catch {
-        if (!cancelled) {
-          setInsumosDisponibles([]);
-          setInsumosSeleccionados([]);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [formData.productorId]);
 
   const cargarDatos = async () => {
     try {
-      const [ordenesData, productosData, usuariosData] = await Promise.all([
-        api.produccion.getAll(),
+      const ordenesData = await api.produccion.getAll();
+
+      if (esProductor && user?.id) {
+        const uid = Number(user.id);
+        const [pedidosDisp, insumosInv] = await Promise.all([
+          api.produccion.getPedidosDisponibles(),
+          api.insumos.getAll().catch(() => [] as Awaited<ReturnType<typeof api.insumos.getAll>>),
+        ]);
+        const ordenesConInfo = ordenesData.map((orden) => ({
+          ...orden,
+          productoNombre: orden.productoNombre || 'Producto',
+          productorNombre:
+            orden.productorNombre || (user ? `${user.nombre} ${user.apellido}`.trim() : 'Asignado a mí'),
+        }));
+        setOrdenes(ordenesConInfo);
+        setPedidos(pedidosDisp.map(mapPedidoDisponible));
+        setInsumosCatalogo(
+          insumosInv
+            .filter((i) => i.estado === 'activo')
+            .map((i) => ({
+              id: i.productoRelacionadoId && i.productoRelacionadoId > 0 ? i.productoRelacionadoId : i.id,
+              nombre: i.nombre,
+              descripcion: i.descripcion || '',
+              categoriaId: 0,
+              typo: 'insumo' as const,
+              precioVenta: 0,
+              stockMinimo: i.stockMinimo ?? 0,
+              estado: 'activo' as const,
+              insumoUnidadMedida: i.presentacionUnidad || 'Unidades',
+              insumoCantidadMedida: i.presentacionCantidad ?? 1,
+            }))
+        );
+        setProductores([
+          {
+            id: uid,
+            nombre: user.nombre,
+            apellido: user.apellido,
+            email: user.email || '',
+            rol: 'Productor',
+            estado: 'activo',
+            tipoDocumento: 'CC',
+            numeroDocumento: user.numeroDocumento || '',
+            telefono: user.telefono || '',
+          } as Usuario,
+        ]);
+        setProductos([]);
+        return;
+      }
+
+      const [productosData, usuariosData, pedidosDisp] = await Promise.all([
         api.productos.getAll(),
-        api.usuarios.getAll()
+        api.usuarios.getAll(),
+        api.produccion.getPedidosDisponibles(),
       ]);
 
-      const productoresData = usuariosData.filter(u => u.rol === 'Productor' && u.estado === 'activo');
+      const productoresData = usuariosData.filter((u) => u.rol === 'Productor' && u.estado === 'activo');
       setProductores(productoresData);
-      setProductos(productosData.filter(p => p.typo === 'de preparacion' && p.estado === 'activo'));
+      setProductos(productosData.filter((p) => p.typo === 'de preparacion' && p.estado === 'activo'));
+      setInsumosCatalogo(productosData.filter((p) => p.typo === 'insumo' && p.estado === 'activo'));
+      setPedidos(pedidosDisp.map(mapPedidoDisponible));
 
-      const ordenesConInfo = ordenesData.map(orden => {
-        const producto = productosData.find(p => p.id === orden.productoId);
-        const productor = usuariosData.find(u => u.id === orden.productorId);
+      const ordenesConInfo = ordenesData.map((orden) => {
+        const det = orden.detallePreparacion;
+        let productoNombre: string | undefined;
+        if (Array.isArray(det) && det.length > 0) {
+          productoNombre = det
+            .map((l) => `${l.cantidad}× ${l.productoNombre || 'Producto'}`)
+            .join(', ');
+        } else {
+          const producto = productosData.find((p) => p.id === orden.productoId);
+          productoNombre = producto?.nombre;
+        }
         return {
           ...orden,
-          productoNombre: producto?.nombre,
-          productorNombre: productor ? `${productor.nombre} ${productor.apellido}` : 'Desconocido'
+          productoNombre,
+          productorNombre: (orden as any).productorNombre || 'Desconocido',
         };
       });
 
       setOrdenes(ordenesConInfo);
-    } catch (error) {
-      toast.error('Error al cargar datos');
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'Error al cargar datos';
+      toast.error('No se pudieron cargar los datos de producción', { description: msg });
+      if (import.meta.env.DEV) {
+        console.error('Produccion cargarDatos', error);
+      }
     }
   };
 
   useEffect(() => {
-    cargarDatos();
-  }, []);
+    if (!user) return;
+    void cargarDatos();
+  }, [user?.id, user?.rol]);
 
-  // Filtrar productos según búsqueda
-  const productosFiltrados = productos.filter(p => {
-    const searchTerm = busquedaProducto.toLowerCase();
-    const idStr = String(p.id);
-    const nombre = p.nombre.toLowerCase();
-    return idStr.includes(searchTerm) || nombre.includes(searchTerm);
+  const mapPedidoDisponible = (p: {
+    id: number;
+    fecha?: string;
+    fecha_entrega?: string;
+    estado?: string;
+    total?: number;
+  }): Pedido => ({
+    id: Number(p.id),
+    clienteId: 0,
+    fechaPedido: String(p.fecha || '').split('T')[0],
+    fechaEntrega: String(p.fecha_entrega || '').split('T')[0],
+    metodoPago: 'efectivo',
+    porcentajeAbono: 100,
+    total: Number(p.total) || 0,
+    estado: pedidoEstadoUi(p.estado) as Pedido['estado'],
+    productos: [],
+  });
+
+  // Filtrar pedidos y productos dentro del pedido seleccionado
+  const pedidosFiltrados = pedidos.filter((p) => {
+    const searchTerm = busquedaPedido.toLowerCase();
+    if (!searchTerm) return true;
+    return String(p.id).includes(searchTerm);
   });
 
   // Filtrar productores según búsqueda
@@ -214,10 +407,43 @@ export function Produccion() {
     return nombreCompleto.includes(searchTerm) || idStr.includes(searchTerm);
   });
 
-  const seleccionarProducto = (producto: Producto) => {
-    setFormData({ ...formData, productoId: producto.id });
-    setBusquedaProducto(producto.nombre);
-    setMostrarListaProductos(false);
+  const seleccionarPedido = async (pedido: Pedido) => {
+    try {
+      const detalle = await api.produccion.getPedidoParaOrden(pedido.id);
+      const disponibles = (detalle.productos || [])
+        .filter((d) => Number(d.productoId) > 0)
+        .map(
+          (d) =>
+            ({
+              id: Number(d.productoId),
+              nombre: d.nombre || `Producto #${d.productoId}`,
+              descripcion: '',
+              categoriaId: 0,
+              typo: 'de preparacion',
+              precioVenta: Number(d.precio) || 0,
+              stockMinimo: 0,
+              estado: 'activo',
+            }) as Producto
+        );
+      if (disponibles.length === 0) {
+        toast.error('El pedido no tiene productos de preparación disponibles para producción');
+        return;
+      }
+      setPedidoSeleccionado(detalle);
+      setProductosPedidoDisponibles(disponibles);
+      setFormData({
+        ...formData,
+        pedidoId: pedido.id,
+      });
+      setBusquedaPedido(formatEntityCode('P', pedido.id));
+      setMostrarListaPedidos(false);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'No se pudo cargar el detalle del pedido seleccionado';
+      toast.error('No se pudo seleccionar el pedido', { description: msg });
+      if (import.meta.env.DEV) {
+        console.error('Produccion seleccionarPedido', error);
+      }
+    }
   };
 
   const seleccionarProductor = (productor: Usuario) => {
@@ -226,28 +452,11 @@ export function Produccion() {
     setMostrarListaProductores(false);
   };
 
-  // Filtrar entregas de insumos disponibles por busqueda
-  const insumosDisponiblesFiltrados = insumosDisponibles.filter((e) => {
-    const term = busquedaInsumo.toLowerCase();
-    if (!term) return true;
-    return (
-      String(e.insumo_nombre || '').toLowerCase().includes(term) ||
-      String(e.numero_entrega || '').toLowerCase().includes(term) ||
-      String(e.id).includes(term)
-    );
-  });
-
-  const toggleInsumoSeleccionado = (entregaId: number) => {
-    setInsumosSeleccionados((prev) =>
-      prev.includes(entregaId) ? prev.filter((x) => x !== entregaId) : [...prev, entregaId]
-    );
-  };
-
   const columns: Column[] = [
     {
       key: 'idOrden',
       label: 'ID Orden',
-      render: (value: number) => `#${String(value).padStart(4, '0')}`
+      render: (value: number) => formatEntityCode('O', value)
     },
     {
       key: 'productoNombre',
@@ -335,32 +544,52 @@ export function Produccion() {
   const handleAdd = () => {
     setSelectedOrden(null);
     const fechaHoy = new Date().toISOString().split('T')[0];
+    const productorIdInicial = esProductor && user?.id ? Number(user.id) : 0;
     setFormData({
-      productoId: 0,
-      cantidad: 1,
-      productorId: 0,
+      pedidoId: 0,
+      productorId: productorIdInicial,
       fechaInicio: fechaHoy,
       tiempoPreparacion: 60
     });
-    setBusquedaProducto('');
-    setBusquedaProductor('');
-    setBusquedaInsumo('');
-    setMostrarListaProductos(false);
+    setPedidoSeleccionado(null);
+    setProductosPedidoDisponibles([]);
+    setBusquedaPedido('');
+    setBusquedaProductor(
+      esProductor && user ? `${user.nombre} ${user.apellido}`.trim() : ''
+    );
+    setMostrarListaPedidos(false);
     setMostrarListaProductores(false);
-    setMostrarListaInsumos(false);
-    setInsumosDisponibles([]);
-    setInsumosSeleccionados([]);
     // Resetear validaciones
     setFechaValida(true); // Fecha de hoy es válida
     setTiempoValido(true); // 60 minutos es válido
-    setEnvaseMl('');
+    setInsumosResumenProductor([]);
+    setInsumosSeleccionados([]);
     setIsModalOpen(true);
   };
 
   const handleViewDetail = (orden: OrdenProduccionView) => {
     setSelectedOrden(orden);
-    setDetalleEnvaseMl('');
     setIsDetailModalOpen(true);
+    void (async () => {
+      try {
+        const full = await api.produccion.getById(orden.id);
+        setSelectedOrden((prev) =>
+          prev && prev.id === orden.id
+            ? {
+                ...prev,
+                ...full,
+                productoNombre: prev.productoNombre || full.productoNombre,
+                productorNombre: prev.productorNombre || full.productorNombre,
+              }
+            : prev
+        );
+      } catch (error) {
+        if (import.meta.env.DEV) {
+          console.error('Error al cargar detalle de orden', error);
+        }
+        toast.error('No se pudo cargar el detalle completo de la orden');
+      }
+    })();
   };
 
   const ejecutarProduccionCambio = async (
@@ -422,43 +651,70 @@ export function Produccion() {
   };
 
   const handleGeneratePDF = (orden: OrdenProduccionView) => {
-    const content = `
-============================================================
-           GRANDMA'S LIQUEURS - ORDEN DE PRODUCCION
-============================================================
+    const lineasPrep =
+      Array.isArray(orden.detallePreparacion) && orden.detallePreparacion.length > 0
+        ? orden.detallePreparacion
+            .map((l) => `${l.cantidad}× ${l.productoNombre || 'Producto'}`)
+            .join('\n')
+        : `${orden.productoNombre || 'Producto'}: ${orden.cantidad} unidades`;
 
-ID Orden:           #${String(orden.idOrden).padStart(4, '0')}
-Producto:           ${orden.productoNombre}
-Cantidad:           ${orden.cantidad} unidades
-Productor:          ${orden.productorNombre}
-Fecha Inicio:       ${orden.fechaInicio}
-Tiempo Preparación: ${orden.tiempoPreparacion} minutos
-Estado:             ${orden.estado}
-${orden.motivoCancelacion ? `Motivo Cancelación: ${orden.motivoCancelacion}` : ''}
+    const estadoLabel =
+      orden.estado === 'completada'
+        ? 'Completada'
+        : orden.estado === 'en proceso'
+          ? 'En proceso'
+          : orden.estado === 'pendiente'
+            ? 'Pendiente'
+            : orden.estado === 'cancelada'
+              ? 'Cancelada'
+              : orden.estado;
 
-------------------------------------------------------------
-Firma Productor:    _______________________
-
-Firma Supervisor:   _______________________
-
-Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
-------------------------------------------------------------
-    `.trim();
-
-    setPdfContent(content);
-    setIsPdfModalOpen(true);
+    const opened = openPrintablePdf({
+      title: `Orden de producción ${formatEntityCode('O', orden.idOrden)}`,
+      subtitle: `Generado el ${new Date().toLocaleString('es-CO')}`,
+      sections: [
+        {
+          title: 'Datos de la orden',
+          rows: [
+            { label: 'Productor', value: orden.productorNombre || '—' },
+            { label: 'Fecha inicio', value: orden.fechaInicio || '—' },
+            { label: 'Tiempo preparación', value: `${orden.tiempoPreparacion ?? 0} minutos` },
+            { label: 'Total unidades', value: orden.cantidad },
+            { label: 'Estado', value: estadoLabel },
+            ...(orden.pedidoId ? [{ label: 'Pedido vinculado', value: formatEntityCode('P', orden.pedidoId) }] : []),
+          ],
+        },
+        {
+          title: 'Productos (preparación)',
+          text: lineasPrep,
+        },
+        ...(orden.motivoCancelacion
+          ? [{ title: 'Motivo cancelación', text: orden.motivoCancelacion }]
+          : []),
+        {
+          title: 'Firmas',
+          text: 'Productor: _______________________\n\nSupervisor: _______________________',
+        },
+      ],
+      footer: 'Comprobante generado por Grandma\u2019s Liquors. Use "Descargar PDF" para guardar o imprimir.',
+    });
+    if (!opened) {
+      toast.error('No se pudo abrir la vista PDF', {
+        description: 'Permita las ventanas emergentes para este sitio.',
+      });
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!formData.productoId) {
-      toast.error('Seleccione un producto');
+    if (!formData.pedidoId) {
+      toast.error('Seleccione un pedido en preparación');
       return;
     }
 
-    if (formData.cantidad < 1) {
-      toast.error('La cantidad debe ser mayor a 0');
+    if (!pedidoSeleccionado || productosPedidoDisponibles.length === 0) {
+      toast.error('El pedido no tiene productos de preparación para esta orden');
       return;
     }
 
@@ -467,13 +723,8 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
       return;
     }
 
-    if (insumosSeleccionados.length === 0) {
-      toast.error('Seleccione al menos un insumo entregado al productor');
-      return;
-    }
-
-    if (formData.tiempoPreparacion < 15) {
-      toast.error('El tiempo de preparación debe ser al menos 15 minutos');
+    if (formData.tiempoPreparacion < 0 || formData.tiempoPreparacion > 120) {
+      toast.error('El tiempo de preparación debe estar entre 0 y 120 minutos');
       return;
     }
 
@@ -484,15 +735,42 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
       return;
     }
 
+    const insumosAUsar = insumosSeleccionados.filter((i) => Number(i.cantidad) > 0);
+    if (!insumosAUsar.length) {
+      toast.error('Seleccione insumos para consumir en esta orden de producción');
+      return;
+    }
+
+    for (const item of insumosAUsar) {
+      const row = insumosResumenProductor.find((r) => r.clave === item.clave);
+      if (!row) continue;
+      const maxDisp = disponibleMostrar(row, insumosCatalogo);
+      if (Number(item.cantidad) > maxDisp + 1e-6) {
+        const unidad = etiquetaUnidadInsumo(row, insumosCatalogo);
+        toast.error(`Cantidad excede el disponible para «${item.insumo_nombre}»`, {
+          description: `Máximo ${formatoCantidadInsumo(maxDisp, unidad)} ${unidad}.`,
+        });
+        return;
+      }
+    }
+
     try {
       const ordenCreada = await api.produccion.create({
-        productoId: formData.productoId,
-        cantidad: formData.cantidad,
+        pedidoId: formData.pedidoId,
         productorId: formData.productorId,
         fechaInicio: formData.fechaInicio,
         tiempoPreparacion: formData.tiempoPreparacion,
         estado: 'pendiente',
-        insumos: insumosSeleccionados,
+        consumoInsumos: insumosAUsar.map((i) => {
+          const catId = catalogoIdFromClave(i.clave);
+          return {
+            clave: i.clave,
+            insumo_nombre: i.insumo_nombre,
+            cantidad: Number(i.cantidad),
+            unidad: etiquetaUnidadInsumo(i, insumosCatalogo),
+            ...(catId != null ? { producto_catalogo_id: catId } : {}),
+          };
+        }),
       });
 
       const productor = productores.find(p => p.id === formData.productorId);
@@ -500,12 +778,18 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
       const ordenId = ordenCreada?.idOrden || 'XXXX';
 
       toast.success('Orden de producción creada exitosamente', {
-        description: `Orden #${String(ordenId).padStart(4, '0')} asignada a ${nombreProductor}. Estado: Pendiente.`
+        description: `Orden ${formatEntityCode('O', ordenId)} asignada a ${nombreProductor}. Estado: Pendiente.`
       });
       setIsModalOpen(false);
       cargarDatos();
     } catch (error: any) {
-      toast.error(error.message || 'Error al crear orden');
+      const detalle =
+        Array.isArray(error?.details) && error.details.length > 0
+          ? error.details.map((d: { message?: string }) => d.message).filter(Boolean).join('; ')
+          : '';
+      toast.error(error.message || 'Error al crear orden', {
+        description: detalle || undefined,
+      });
     }
   };
 
@@ -541,7 +825,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
               type="text"
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
-              placeholder="Buscar... (mín. 2, máx. 50 caracteres)"
+              placeholder="Buscar ..."
               className="w-full px-4 py-2.5 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
               maxLength={50}
             />
@@ -603,8 +887,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
           produccionPending ? (
             <>
               <p>
-                <strong>Orden:</strong> #
-                {String(produccionPending.orden.idOrden).padStart(4, '0')}
+                <strong>Orden:</strong> {formatEntityCode('O', produccionPending.orden.idOrden)}
               </p>
               <p className="text-muted-foreground">Indique el motivo de cancelación.</p>
             </>
@@ -633,64 +916,51 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         size="lg"
       >
         <Form onSubmit={handleSubmit}>
-          {/* Nota informativa sobre órdenes de producción */}
-          <div className="p-4 bg-blue-50 rounded-lg border border-blue-200 mb-4">
-            <p className="text-sm text-blue-700">
-              <strong>Nota:</strong> Las órdenes de producción se crean en estado Pendiente. Cambia el estado a 'En Proceso' cuando el productor comience el trabajo.
-            </p>
-          </div>
-
           <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2 p-3 bg-blue-50 rounded-lg border border-blue-200">
-              <p className="text-sm text-blue-700">
-                El ID de Orden se generará automáticamente
-              </p>
-            </div>
-
-            {/* Campo de busqueda de Producto (mismo diseno que "Agregar Productos" en Nueva Venta) */}
-            <div className="relative">
+            <div className="relative produccion-pedido-picker">
               <label className="block text-sm font-medium mb-2 flex items-center gap-2">
                 <ShoppingCart className="w-4 h-4" />
-                Producto *
+                ID Orden (Pedido) *
               </label>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                 <input
                   type="text"
-                  value={busquedaProducto}
+                  value={busquedaPedido}
                   onChange={(e) => {
-                    setBusquedaProducto(e.target.value);
-                    setMostrarListaProductos(true);
+                    setBusquedaPedido(e.target.value);
+                    setMostrarListaPedidos(true);
                   }}
-                  onFocus={() => setMostrarListaProductos(true)}
-                  placeholder="Busca por nombre o ID, o haz clic para ver todos los productos..."
+                  onFocus={() => setMostrarListaPedidos(true)}
+                  placeholder="Busca por ID de pedido en preparación..."
                   className="w-full pl-10 pr-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-base"
+                  maxLength={60}
                   required
                 />
               </div>
-              {mostrarListaProductos && (
+              {mostrarListaPedidos && (
                 <div className="absolute z-10 w-full mt-1 bg-white border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
-                  {productosFiltrados.length > 0 ? (
+                  {pedidosFiltrados.length > 0 ? (
                     <>
-                      <div className="sticky top-0 bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
-                        {busquedaProducto.trim() === ''
-                          ? `Todos los productos (${productosFiltrados.length})`
-                          : `${productosFiltrados.length} producto(s) encontrado(s)`}
+                      <div className="bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
+                        {busquedaPedido.trim() === ''
+                          ? `Todos los pedidos en preparación (${pedidosFiltrados.length})`
+                          : `${pedidosFiltrados.length} pedido(s) encontrado(s)`}
                       </div>
-                      {productosFiltrados.map((p) => (
+                      {pedidosFiltrados.map((p) => (
                         <div
                           key={p.id}
-                          onClick={() => seleccionarProducto(p)}
+                          onClick={() => void seleccionarPedido(p)}
                           className="px-4 py-3 border-b border-border last:border-b-0 hover:bg-accent cursor-pointer"
                         >
                           <div className="flex items-center justify-between">
                             <div className="flex-1">
                               <div className="flex items-center gap-2">
                                 <Package className="w-4 h-4 text-primary" />
-                                <span className="font-medium">{p.nombre}</span>
+                                <span className="font-medium">Pedido {formatEntityCode('P', p.id)}</span>
                               </div>
                               <div className="text-sm text-muted-foreground mt-1">
-                                ID: {p.id}
+                                Entrega: {p.fechaEntrega}
                               </div>
                             </div>
                             <Plus className="w-5 h-5 text-primary" />
@@ -699,47 +969,43 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                       ))}
                     </>
                   ) : (
-                    <div className="px-4 py-3 text-muted-foreground text-sm text-center">No se encontraron productos</div>
+                    <div className="px-4 py-3 text-muted-foreground text-sm text-center">No se encontraron pedidos</div>
                   )}
                 </div>
               )}
             </div>
 
-            <FormField
-              label="Cantidad"
-              name="cantidad"
-              type="number"
-              value={formData.cantidad}
-              onChange={(value) => setFormData({ ...formData, cantidad: value as number })}
-              placeholder="Unidades a producir"
-              required
-            />
-
-            {/* Campo de búsqueda de Productor */}
-            <div className="relative">
+            <div className="relative produccion-productor-picker">
               <label className="block text-sm font-medium mb-2">Productor *</label>
               <input
                 type="text"
                 value={busquedaProductor}
                 onChange={(e) => {
+                  if (esProductor) return;
                   setBusquedaProductor(e.target.value);
                   setMostrarListaProductores(true);
                 }}
-                onFocus={() => setMostrarListaProductores(true)}
+                onFocus={() => {
+                  if (!esProductor) setMostrarListaProductores(true);
+                }}
                 placeholder="Escribe ID, nombre o apellido..."
                 className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                maxLength={60}
+                readOnly={esProductor}
                 required
               />
-              {mostrarListaProductores && busquedaProductor && (
+              {mostrarListaProductores && !esProductor && (
                 <div className="absolute z-10 w-full mt-1 bg-white border border-border rounded-lg shadow-lg max-h-60 overflow-y-auto">
                   {productoresFiltrados.length > 0 ? (
-                    productoresFiltrados.map(p => (
+                    productoresFiltrados.map((p) => (
                       <div
                         key={p.id}
                         onClick={() => seleccionarProductor(p)}
                         className="px-3 py-2 hover:bg-accent cursor-pointer border-b border-border last:border-b-0"
                       >
-                        <div className="font-medium">{p.nombre} {p.apellido}</div>
+                        <div className="font-medium">
+                          {p.nombre} {p.apellido}
+                        </div>
                         <div className="text-sm text-muted-foreground">ID: {p.id}</div>
                       </div>
                     ))
@@ -750,110 +1016,204 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
               )}
             </div>
 
-            {/* Campo Insumos: solo entregas hechas al productor seleccionado
-                que aun no estan asignadas a otra orden activa. Mismo diseno
-                que "Agregar Productos" en Nueva Venta. */}
-            <div className="relative col-span-2">
+            <div className="col-span-2 rounded-lg border border-border p-4 space-y-2">
               <label className="block text-sm font-medium mb-2 flex items-center gap-2">
-                <Beaker className="w-4 h-4" />
-                Insumos *
+                <Package className="w-4 h-4" />
+                Productos a preparar *
               </label>
-              {!formData.productorId ? (
-                <div className="px-4 py-3 border border-dashed border-border rounded-lg text-sm text-muted-foreground">
-                  Seleccione un productor para ver los insumos entregados.
-                </div>
+              {!formData.pedidoId || !pedidoSeleccionado ? (
+                <p className="text-sm text-muted-foreground">Seleccione un pedido para ver los productos de preparación.</p>
               ) : (
-                <>
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                    <input
-                      type="text"
-                      value={busquedaInsumo}
-                      onChange={(e) => {
-                        setBusquedaInsumo(e.target.value);
-                        setMostrarListaInsumos(true);
-                      }}
-                      onFocus={() => setMostrarListaInsumos(true)}
-                      placeholder="Busca por insumo, # entrega o ID, o haz clic para ver todos los insumos entregados..."
-                      className="w-full pl-10 pr-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-base"
-                    />
-                  </div>
-                  {mostrarListaInsumos && (
-                    <div className="absolute z-10 w-full mt-1 bg-white border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
-                      {insumosDisponiblesFiltrados.length > 0 ? (
-                        <>
-                          <div className="sticky top-0 bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
-                            {busquedaInsumo.trim() === ''
-                              ? `Todos los insumos entregados (${insumosDisponiblesFiltrados.length})`
-                              : `${insumosDisponiblesFiltrados.length} insumo(s) encontrado(s)`}
-                          </div>
-                          {insumosDisponiblesFiltrados.map((e) => {
-                            const seleccionado = insumosSeleccionados.includes(e.id);
-                            return (
-                              <div
-                                key={e.id}
-                                onClick={() => toggleInsumoSeleccionado(e.id)}
-                                className={`px-4 py-3 border-b border-border last:border-b-0 hover:bg-accent cursor-pointer ${
-                                  seleccionado ? 'bg-primary/5' : ''
-                                }`}
-                              >
-                                <div className="flex items-center justify-between">
-                                  <div className="flex-1">
-                                    <div className="flex items-center gap-2">
-                                      <Beaker className="w-4 h-4 text-primary" />
-                                      <span className="font-medium">{e.insumo_nombre}</span>
-                                    </div>
-                                    <div className="text-sm text-muted-foreground mt-1">
-                                      Entrega #{e.numero_entrega} · {e.cantidad} {e.unidad} · {String(e.fecha || '').split('T')[0]}
-                                    </div>
-                                  </div>
-                                  {seleccionado ? (
-                                    <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary">
-                                      Seleccionado
-                                    </span>
-                                  ) : (
-                                    <Plus className="w-5 h-5 text-primary" />
-                                  )}
+                <ul className="space-y-2 text-sm">
+                  {productosPedidoDisponibles.map((p) => {
+                    const ln = pedidoSeleccionado.productos.find((x) => Number(x.productoId) === Number(p.id));
+                    const c = Math.max(0, Number(ln?.cantidad ?? 0));
+                    if (c <= 0) return null;
+                    return (
+                      <li
+                        key={p.id}
+                        className="flex items-center justify-between rounded-md border border-border bg-muted/30 px-3 py-2"
+                      >
+                        <span className="font-medium">{p.nombre}</span>
+                        <span className="tabular-nums text-muted-foreground">{c} Unidades</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+
+
+            <div className="col-span-2 rounded-lg border border-border p-4 space-y-3">
+              <label className="block text-sm font-medium">Insumos entregados al productor</label>
+              
+              {insumosFaltantes.length > 0 && (
+                <div className="p-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg text-red-800 dark:text-red-300 text-xs space-y-1">
+                  <span className="font-bold flex items-center gap-1">
+                    ⚠️ Alerta: Insuficientes insumos entregados al productor
+                  </span>
+                  <p>El productor no cuenta con saldo suficiente de los siguientes insumos requeridos por la receta:</p>
+                  <ul className="list-disc pl-4 space-y-0.5 font-medium">
+                    {insumosFaltantes.map(f => (
+                      <li key={f.clave}>
+                        <strong>{f.insumo_nombre}</strong>: requiere {formatoCantidadInsumo(f.requerido, f.unidad)} {f.unidad}, pero solo tiene {formatoCantidadInsumo(f.disponible, f.unidad)} {f.unidad} (falta {formatoCantidadInsumo(f.falta, f.unidad)} {f.unidad}).
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {loadingSugerido && (
+                <p className="text-xs text-muted-foreground text-center py-2">Calculando insumos requeridos...</p>
+              )}
+
+              {!formData.productorId ? (
+                <p className="text-sm text-muted-foreground">Asigne un productor para ver su inventario de insumos.</p>
+              ) : insumosResumenProductor.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Este productor no tiene insumos con saldo. Registre una entrega de insumos antes de producir.
+                </p>
+              ) : (
+                <div className="max-h-80 overflow-y-auto border border-border rounded-md p-3 bg-white space-y-3 text-sm">
+                  {insumosResumenProductor.map((row) => {
+                    const seleccionado = insumosSeleccionados.find(i => i.clave === row.clave);
+                    const cantidad = seleccionado?.cantidad || 0;
+                    const unidadLbl = etiquetaUnidadInsumo(row, insumosCatalogo);
+                    const disponible = disponibleMostrar(row, insumosCatalogo);
+                    const quedaría = Math.max(0, disponible - cantidad);
+                    
+                    const sugeridoItem = insumosSugeridos.find(s => s.clave === row.clave);
+                    const requerido = sugeridoItem ? sugeridoItem.cantidad : 0;
+                    
+                    const columnsCount = 1 + (requerido > 0 ? 1 : 0) + (seleccionado ? 2 : 0);
+
+                    return (
+                      <div
+                        key={row.clave}
+                        className={`border rounded-lg p-3 space-y-2 hover:bg-muted/20 transition ${
+                          requerido > disponible 
+                            ? 'border-red-200 bg-red-50/20' 
+                            : requerido > 0 
+                              ? 'border-blue-200 bg-blue-50/10' 
+                              : 'border-border/40'
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <input
+                            type="checkbox"
+                            checked={!!seleccionado}
+                            onChange={(e) => handleToggleCheckbox(row, e.target.checked)}
+                            className="w-4 h-4 accent-primary mt-1 flex-shrink-0"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between">
+                              <span className="font-semibold block text-foreground">{row.insumo_nombre || 'Insumo'}</span>
+                              {requerido > disponible && (
+                                <span className="text-xs font-bold text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-950/40 px-2 py-0.5 rounded">
+                                  ⚠️ Falta stock
+                                </span>
+                              )}
+                              {requerido > 0 && requerido <= disponible && (
+                                <span className="text-xs font-semibold text-green-700 bg-green-100 dark:bg-green-950/40 px-2 py-0.5 rounded">
+                                  ✓ Stock suficiente
+                                </span>
+                              )}
+                            </div>
+                            <div className={`grid gap-2 mt-2 text-xs ${
+                              columnsCount === 4 ? 'grid-cols-2 sm:grid-cols-4' :
+                              columnsCount === 3 ? 'grid-cols-3' :
+                              columnsCount === 2 ? 'grid-cols-2' : 'grid-cols-1'
+                            }`}>
+                              <div className="bg-muted/30 p-2 rounded">
+                                <div className="text-muted-foreground">Disponible</div>
+                                <div className="font-mono font-semibold text-foreground">
+                                  {formatoCantidadInsumo(disponible, unidadLbl)} {unidadLbl}
                                 </div>
                               </div>
-                            );
-                          })}
-                        </>
-                      ) : (
-                        <div className="px-4 py-3 text-muted-foreground text-sm text-center">
-                          {insumosDisponibles.length === 0
-                            ? 'Este productor no tiene insumos entregados disponibles.'
-                            : 'No se encontraron insumos con ese criterio.'}
+                              {requerido > 0 && (
+                                <div className="bg-amber-50/80 dark:bg-amber-950/30 p-2 rounded border border-amber-200 dark:border-amber-900">
+                                  <div className="text-muted-foreground">Ficha Técnica</div>
+                                  <div className="font-mono font-semibold text-amber-700 dark:text-amber-400">
+                                    {formatoCantidadInsumo(requerido, unidadLbl)} {unidadLbl}
+                                  </div>
+                                </div>
+                              )}
+                              {seleccionado && (
+                                <>
+                                  <div className="bg-blue-50 dark:bg-blue-950 p-2 rounded border border-blue-200 dark:border-blue-800">
+                                    <div className="text-muted-foreground">A Consumir ({unidadLbl})</div>
+                                    <input
+                                      type="number"
+                                      step={/mililitro/i.test(unidadLbl) ? '1' : '0.01'}
+                                      min="0"
+                                      max={disponible}
+                                      value={cantidad === 0 ? '' : cantidad}
+                                      onChange={(e) => {
+                                        const inputVal = e.target.value;
+                                        if (inputVal === '' || inputVal === undefined) {
+                                          toggleInsumoSeleccionado(row, 0);
+                                        } else {
+                                          const newVal = parseFloat(inputVal);
+                                          if (isNaN(newVal) || newVal < 0) {
+                                            toggleInsumoSeleccionado(row, 0);
+                                          } else {
+                                            const clamped = Math.min(newVal, disponible);
+                                            toggleInsumoSeleccionado(row, clamped);
+                                          }
+                                        }
+                                      }}
+                                      onBlur={(e) => {
+                                        const inputVal = e.target.value;
+                                        if (inputVal === '' || inputVal === undefined) {
+                                          toggleInsumoSeleccionado(row, 0);
+                                        }
+                                      }}
+                                      placeholder="0"
+                                      className="font-mono font-semibold w-full bg-transparent text-foreground outline-none"
+                                    />
+                                  </div>
+                                  <div className="bg-green-50 dark:bg-green-950 p-2 rounded border border-green-200 dark:border-green-800">
+                                    <div className="text-muted-foreground">Quedaría</div>
+                                    <div className="font-mono font-semibold text-foreground">
+                                      {formatoCantidadInsumo(quedaría, unidadLbl)} {unidadLbl}
+                                    </div>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  )}
-                  {insumosSeleccionados.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {insumosSeleccionados.map((id) => {
-                        const e = insumosDisponibles.find((x) => x.id === id);
-                        if (!e) return null;
-                        return (
-                          <span
-                            key={id}
-                            className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs"
-                          >
-                            {e.insumo_nombre} · {e.cantidad} {e.unidad}
-                            <button
-                              type="button"
-                              onClick={() => toggleInsumoSeleccionado(id)}
-                              className="hover:text-destructive"
-                              aria-label="Quitar"
-                            >
-                              ×
-                            </button>
-                          </span>
-                        );
-                      })}
-                    </div>
-                  )}
-                </>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
+              {insumosSeleccionados.length > 0 && (
+                <div className="space-y-2 pt-3 border-t border-border">
+                  <div className="flex items-center gap-2">
+                    <ShoppingCart className="w-4 h-4" />
+                    <p className="text-sm font-semibold text-foreground">Insumos para esta orden</p>
+                  </div>
+                  <div className="max-h-48 overflow-y-auto border border-blue-200 dark:border-blue-800 rounded-md p-3 bg-blue-50/50 dark:bg-blue-950/30 space-y-2">
+                    {insumosSeleccionados.map((c, idx) => (
+                      <div key={c.clave} className="flex justify-between items-center text-sm">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex w-6 h-6 items-center justify-center rounded-full bg-primary/20 text-xs font-semibold">{idx + 1}</span>
+                          <span className="font-medium">{c.insumo_nombre}</span>
+                        </div>
+                        <span className="font-mono bg-white dark:bg-slate-900 px-3 py-1 rounded border border-border">
+                          {formatoCantidadInsumo(c.cantidad, etiquetaUnidadInsumo(c, insumosCatalogo))}{' '}
+                          {etiquetaUnidadInsumo(c, insumosCatalogo)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="col-span-2 rounded-lg border border-border bg-accent/30 p-3 text-sm text-muted-foreground">
+              La orden se asocia al pedido seleccionado y se asigna a un productor.
             </div>
 
             {/* Fecha de Inicio con validación visual */}
@@ -894,15 +1254,16 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
             <div>
               <label className="block text-sm font-medium mb-2">Tiempo de Preparación (minutos) *</label>
               <input
-                type="number"
-                value={formData.tiempoPreparacion}
+                type="text"
+                inputMode="numeric"
+                value={formData.tiempoPreparacion === 0 ? '0' : String(formData.tiempoPreparacion)}
                 onChange={(e) => {
-                  const value = parseInt(e.target.value) || 0;
+                  const digits = e.target.value.replace(/\D/g, '').slice(0, 3);
+                  const value = digits === '' ? 0 : Math.min(120, Number(digits));
                   setFormData({ ...formData, tiempoPreparacion: value });
-                  setTiempoValido(value >= 15 && value <= 480);
+                  setTiempoValido(value >= 0 && value <= 120);
                 }}
-                placeholder="Ej: 60"
-                min="15"
+                placeholder="0–120"
                 className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 transition-all ${
                   tiempoValido === null ? 'border-border focus:ring-primary' :
                   tiempoValido ? 'border-green-500 ring-1 ring-green-500/20 focus:ring-green-500'
@@ -910,102 +1271,15 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
                 }`}
                 required
               />
-              {tiempoValido === false && formData.tiempoPreparacion < 15 && (
+              {tiempoValido === false && (
                 <div className="mt-1.5">
-                  <FieldError>El tiempo mínimo es 15 minutos.</FieldError>
-                </div>
-              )}
-              {formData.tiempoPreparacion > 480 && (
-                <div className="mt-2 p-2 bg-yellow-50 rounded border border-yellow-200">
-                  <p className="text-xs text-yellow-700">
-                    <strong>⚠️ Advertencia:</strong> El tiempo de preparación es muy alto ({formData.tiempoPreparacion} minutos = {(formData.tiempoPreparacion / 60).toFixed(1)} horas). Verifica que sea correcto.
-                  </p>
+                  <FieldError>El tiempo debe estar entre 0 y 120 minutos.</FieldError>
                 </div>
               )}
               {tiempoValido === true && (
-                <p className="text-xs text-green-600 mt-1">✓ Tiempo válido ({(formData.tiempoPreparacion / 60).toFixed(1)} horas)</p>
+                <p className="text-xs text-green-600 mt-1">✓ Tiempo válido ({formData.tiempoPreparacion} min)</p>
               )}
             </div>
-          </div>
-
-          {formData.productoId > 0 && (
-            <div className="mt-4 space-y-3">
-              <h4 className="text-sm font-medium">Receta (consumo previsto)</h4>
-              {recetaLineas.length === 0 ? (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                  No hay líneas de receta para este producto. Defina la receta en la API o administración
-                  antes de producir; consulte{' '}
-                  <code className="rounded bg-white/60 px-1 text-xs">docs/MODULO_PRODUCCION_FLUJO.md</code>{' '}
-                  en el repositorio.
-                </div>
-              ) : (
-                <>
-                  <div className="overflow-x-auto rounded-lg border border-border">
-                    <table className="w-full text-sm">
-                      <thead className="bg-muted/50">
-                        <tr>
-                          <th className="px-3 py-2 text-left font-medium">Insumo</th>
-                          <th className="px-3 py-2 text-right font-medium">Por unidad</th>
-                          <th className="px-3 py-2 text-right font-medium">Total</th>
-                          <th className="px-3 py-2 text-left font-medium">Unidad</th>
-                          <th className="px-3 py-2 text-right font-medium">Envases (aprox.)</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {recetaLineas.map((line) => {
-                          const porUnidad = Number(line.cantidad_requerida);
-                          const total = totalRequeridoLinea(porUnidad, formData.cantidad);
-                          const unidad = line.unidad || '';
-                          const envaseNum = parseFloat(String(envaseMl).replace(',', '.'));
-                          const envases = etiquetaEnvasesAprox(
-                            unidad,
-                            total,
-                            Number.isFinite(envaseNum) && envaseNum > 0 ? envaseNum : 0
-                          );
-                          return (
-                            <tr key={line.id} className="border-t border-border">
-                              <td className="px-3 py-2">
-                                {line.insumo_nombre?.trim() || `Insumo #${line.insumo_id}`}
-                              </td>
-                              <td className="px-3 py-2 text-right tabular-nums">{porUnidad}</td>
-                              <td className="px-3 py-2 text-right font-medium tabular-nums">{total}</td>
-                              <td className="px-3 py-2">{unidad}</td>
-                              <td className="px-3 py-2 text-right tabular-nums">{envases}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="flex flex-wrap items-end gap-3">
-                    <div>
-                      <label className="mb-1 block text-xs text-muted-foreground">
-                        Tamaño del envase (ml)
-                      </label>
-                      <input
-                        type="number"
-                        min={1}
-                        step="any"
-                        value={envaseMl}
-                        onChange={(e) => setEnvaseMl(e.target.value)}
-                        placeholder="Ej. 100"
-                        className="w-36 rounded-lg border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                      />
-                    </div>
-                    <p className="pb-2 text-xs text-muted-foreground">
-                      Solo aplica a insumos en litros o mililitros; otras unidades muestran —.
-                    </p>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-          <div className="p-4 bg-accent/50 rounded-lg">
-            <p className="text-sm text-muted-foreground">
-              La orden de producción se creará en estado "Pendiente".
-              Puedes cambiar el estado usando las acciones de la tabla.
-            </p>
           </div>
 
           <FormActions>
@@ -1031,7 +1305,7 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
             {/* Header con estado */}
             <div className="flex items-center justify-between p-4 bg-accent rounded-lg">
               <div>
-                <h3 className="text-lg">Orden #{String(selectedOrden.idOrden).padStart(4, '0')}</h3>
+                <h3 className="text-lg">Orden {formatEntityCode('O', selectedOrden.idOrden)}</h3>
                 <p className="text-sm text-muted-foreground">{selectedOrden.productoNombre}</p>
               </div>
               <span className={`px-4 py-2 rounded-full text-sm ${
@@ -1050,14 +1324,14 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
             <div className="grid grid-cols-2 gap-6">
               <div>
                 <label className="text-sm text-muted-foreground">ID Orden</label>
-                <p className="mt-1">#{String(selectedOrden.idOrden).padStart(4, '0')}</p>
+                <p className="mt-1">{formatEntityCode('O', selectedOrden.idOrden)}</p>
               </div>
               <div>
-                <label className="text-sm text-muted-foreground">Producto</label>
+                <label className="text-sm text-muted-foreground">Resumen productos</label>
                 <p className="mt-1">{selectedOrden.productoNombre}</p>
               </div>
               <div>
-                <label className="text-sm text-muted-foreground">Cantidad</label>
+                <label className="text-sm text-muted-foreground">Total unidades (preparación)</label>
                 <p className="mt-1">{selectedOrden.cantidad} unidades</p>
               </div>
               <div>
@@ -1075,70 +1349,50 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
             </div>
 
             <div className="space-y-3">
-              <h4 className="text-sm font-medium">Receta para esta orden</h4>
-              {detalleReceta.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No hay receta registrada para este producto (o no se pudo cargar).
-                </p>
+              <h4 className="text-sm font-medium">Productos a preparar (pedido)</h4>
+              {Array.isArray(selectedOrden.detallePreparacion) && selectedOrden.detallePreparacion.length > 0 ? (
+                <ul className="space-y-2 rounded-lg border border-border p-3 text-sm">
+                  {selectedOrden.detallePreparacion.map((line, idx) => (
+                    <li
+                      key={`${line.productoId}-${idx}`}
+                      className="flex items-center justify-between border-b border-border pb-2 last:border-0 last:pb-0"
+                    >
+                      <span className="font-medium">{line.productoNombre || `Producto #${line.productoId}`}</span>
+                      <span className="tabular-nums text-muted-foreground">{line.cantidad} Unidades</span>
+                    </li>
+                  ))}
+                </ul>
               ) : (
-                <>
-                  <div className="overflow-x-auto rounded-lg border border-border">
-                    <table className="w-full text-sm">
-                      <thead className="bg-muted/50">
-                        <tr>
-                          <th className="px-3 py-2 text-left font-medium">Insumo</th>
-                          <th className="px-3 py-2 text-right font-medium">Por unidad</th>
-                          <th className="px-3 py-2 text-right font-medium">Total orden</th>
-                          <th className="px-3 py-2 text-left font-medium">Unidad</th>
-                          <th className="px-3 py-2 text-right font-medium">Envases (aprox.)</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {detalleReceta.map((line) => {
-                          const porUnidad = Number(line.cantidad_requerida);
-                          const total = totalRequeridoLinea(porUnidad, selectedOrden.cantidad);
-                          const unidad = line.unidad || '';
-                          const envaseNum = parseFloat(String(detalleEnvaseMl).replace(',', '.'));
-                          const envases = etiquetaEnvasesAprox(
-                            unidad,
-                            total,
-                            Number.isFinite(envaseNum) && envaseNum > 0 ? envaseNum : 0
-                          );
-                          return (
-                            <tr key={line.id} className="border-t border-border">
-                              <td className="px-3 py-2">
-                                {line.insumo_nombre?.trim() || `Insumo #${line.insumo_id}`}
-                              </td>
-                              <td className="px-3 py-2 text-right tabular-nums">{porUnidad}</td>
-                              <td className="px-3 py-2 text-right font-medium tabular-nums">{total}</td>
-                              <td className="px-3 py-2">{unidad}</td>
-                              <td className="px-3 py-2 text-right tabular-nums">{envases}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="flex flex-wrap items-end gap-3">
-                    <div>
-                      <label className="mb-1 block text-xs text-muted-foreground">
-                        Tamaño del envase (ml)
-                      </label>
-                      <input
-                        type="number"
-                        min={1}
-                        step="any"
-                        value={detalleEnvaseMl}
-                        onChange={(e) => setDetalleEnvaseMl(e.target.value)}
-                        placeholder="Ej. 100"
-                        className="w-36 rounded-lg border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                      />
-                    </div>
-                    <p className="pb-2 text-xs text-muted-foreground">
-                      Cálculo orientativo para volúmenes (L / ml).
-                    </p>
-                  </div>
-                </>
+                <p className="text-sm text-muted-foreground">
+                  Detalle por producto no disponible para esta orden (registros anteriores a la actualización).
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              <h4 className="text-sm font-medium">Insumos de la orden</h4>
+              {Array.isArray(selectedOrden.insumosGastados) && selectedOrden.insumosGastados.length > 0 ? (
+                <ul className="space-y-2 rounded-lg border border-border p-3 text-sm">
+                  {selectedOrden.insumosGastados.map((ins, idx) => {
+                    const cant = Number(ins.cantidad_descontada ?? ins.cantidad ?? 0);
+                    const unidad = String(ins.unidad || 'Unidades').trim();
+                    return (
+                      <li
+                        key={`${ins.insumo_nombre || 'insumo'}-${idx}`}
+                        className="flex items-center justify-between border-b border-border pb-2 last:border-0 last:pb-0"
+                      >
+                        <span className="font-medium">{ins.insumo_nombre || 'Insumo'}</span>
+                        <span className="tabular-nums text-muted-foreground">
+                          {formatoCantidadInsumo(cant, unidad)} {unidad}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No hay insumos registrados para esta orden.
+                </p>
               )}
             </div>
 
@@ -1186,27 +1440,6 @@ Fecha Impresión:    ${new Date().toLocaleString('es-CO')}
         )}
       </Modal>
 
-      {/* Modal de PDF */}
-      <Modal
-        isOpen={isPdfModalOpen}
-        onClose={() => setIsPdfModalOpen(false)}
-        title="Orden de Producción"
-        size="lg"
-      >
-        <div className="p-4 bg-accent/50 rounded-lg">
-          <pre className="text-sm text-muted-foreground">
-            {pdfContent}
-          </pre>
-        </div>
-        <div className="flex justify-end mt-4">
-          <Button 
-            variant="outline" 
-            onClick={() => setIsPdfModalOpen(false)}
-          >
-            Cerrar
-          </Button>
-        </div>
-      </Modal>
     </div>
   );
 }

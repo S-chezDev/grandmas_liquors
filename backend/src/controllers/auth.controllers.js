@@ -5,16 +5,22 @@ const models = {
   Roles: require('../models/usuarios/roles'),
   Usuarios: require('../models/usuarios/usuarios'),
 };
-const pool = require('../../db');
 const bcrypt = require('bcryptjs');
+const ClienteCuenta = require('../models/ventas/cliente-cuenta');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const config = require('../../config');
 const { normalizeAuthRegisterPayload } = require('./normalizador-http');
 const { generateTempPassword, isStrongPassword } = require('../utils/credentials');
-const { sendTemporaryPasswordEmail, sendWelcomeEmail } = require('../services/email.service');
+const {
+  sendTemporaryPasswordEmail,
+  sendWelcomeEmail,
+  sendPasswordChangeNotification,
+} = require('../services/email.service');
+const { validators } = require('../middlewares/auth.middleware');
 
-const passwordTokenExpiryMs = 15 * 60 * 1000;
+/** Validez del código de recuperación enviado por correo (confirmación en el flujo de restablecimiento). */
+const passwordTokenExpiryMs = 2 * 60 * 60 * 1000;
 
 const getLoginIdentifier = (value) => String(value || '').trim().toLowerCase();
 
@@ -48,18 +54,26 @@ const mapUserForResponse = (usuario, roleName, clienteId, permissions = []) => (
   email: usuario.email,
   nombre: usuario.nombre,
   apellido: usuario.apellido,
+  tipo_documento: usuario.tipo_documento || null,
+  documento: usuario.documento || null,
+  telefono: usuario.telefono || null,
+  direccion: usuario.direccion || null,
   rol: roleName,
   rol_id: usuario.rol_id,
   cliente_id: clienteId,
+  estado: usuario.estado,
   permisos: permissions,
 });
 
 const buildSessionMetadata = (sessionExpiresAtMs) => {
-  if (!sessionExpiresAtMs) return {};
+  if (!sessionExpiresAtMs) {
+    return { idle_timeout_ms: config.auth.idleTimeoutMs };
+  }
 
   return {
     session_expires_at: new Date(sessionExpiresAtMs).toISOString(),
     session_remaining_ms: Math.max(0, sessionExpiresAtMs - Date.now()),
+    idle_timeout_ms: config.auth.idleTimeoutMs,
   };
 };
 
@@ -84,6 +98,36 @@ const headerValueToString = (value) => {
 };
 
 module.exports = {
+  checkRegisterClienteAvailability: async (req, res) => {
+    try {
+      const documento = String(req.query?.documento || '').replace(/\D/g, '');
+      const email = getLoginIdentifier(req.query?.email);
+      const data = {
+        documentoExists: false,
+        emailExists: false,
+      };
+
+      if (documento) {
+        const [usuarioByDocumento, clienteByDocumento] = await Promise.all([
+          models.Usuarios.getByDocumento(documento),
+          models.Clientes.getByDocumento(documento),
+        ]);
+        data.documentoExists = Boolean(usuarioByDocumento || clienteByDocumento);
+      }
+
+      if (email) {
+        const [usuarioByEmail, clienteByEmail] = await Promise.all([
+          models.Usuarios.getByEmailLogin(email),
+          models.Clientes.getByEmail(email),
+        ]);
+        data.emailExists = Boolean(usuarioByEmail || clienteByEmail);
+      }
+
+      return res.json({ success: true, data });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  },
   login: async (req, res) => {
     try {
       const { email, password, rememberMe } = req.body;
@@ -95,6 +139,15 @@ module.exports = {
       const identifier = getLoginIdentifier(email);
       const MAX_INTENTOS = models.Usuarios.MAX_LOGIN_ATTEMPTS || 6;
       const BLOQUEO_MIN = Math.round((models.Usuarios.LOGIN_BLOCK_DURATION_MS || 5 * 60 * 1000) / 60000);
+
+      const usuario = await models.Usuarios.getByEmailLogin(identifier);
+      if (!usuario) {
+        return res.status(401).json({
+          success: false,
+          code: 'INVALID_CREDENTIALS',
+          message: 'No encontramos un usuario activo con esas credenciales. Verifica el correo y la contraseña o regístrate en la aplicación.',
+        });
+      }
 
       const blockInfo = await models.Usuarios.getLoginBlockInfo(identifier);
       if (blockInfo?.blocked) {
@@ -113,29 +166,15 @@ module.exports = {
         });
       }
 
-      const usuario = await models.Usuarios.getByEmailLogin(identifier);
-      if (!usuario) {
-        const failure = await models.Usuarios.registerLoginFailure(identifier);
-        const intentosUsados = Number(failure?.attempts || 0);
-        const intentosRestantes = Math.max(0, MAX_INTENTOS - intentosUsados);
-        if (intentosRestantes === 0) {
-          return res.status(429).json({
-            success: false,
-            code: 'LOGIN_BLOCKED',
-            message: `Demasiados intentos de inicio de sesión. Tu acceso ha sido bloqueado temporalmente; vuelve a intentarlo en ${BLOQUEO_MIN} minutos.`,
-            details: { blocked: true, remainingMinutes: BLOQUEO_MIN, maxAttempts: MAX_INTENTOS, blockMinutes: BLOQUEO_MIN },
-          });
-        }
-        return res.status(401).json({
-          success: false,
-          code: 'INVALID_CREDENTIALS',
-          message: `Credenciales incorrectas. Te quedan ${intentosRestantes} intento${intentosRestantes === 1 ? '' : 's'} antes de bloquear el acceso por ${BLOQUEO_MIN} minutos.`,
-          details: { attemptsUsed: intentosUsados, attemptsRemaining: intentosRestantes, maxAttempts: MAX_INTENTOS },
-        });
-      }
-
       if (usuario.estado !== 'Activo') {
-        return res.status(403).json({ success: false, message: 'La cuenta se encuentra inactiva y no puede iniciar sesion' });
+        const latestReason = await models.Usuarios.getLatestStatusReason(usuario.id, 'Inactivo').catch(() => null);
+        return res.status(403).json({
+          success: false,
+          code: 'INACTIVE_ACCOUNT',
+          message: latestReason
+            ? `Tu cuenta está inactiva. Motivo: ${latestReason}. Comunícate con los administradores de la aplicación.`
+            : 'Tu cuenta está inactiva. Comunícate con los administradores de la aplicación.',
+        });
       }
 
       const isValid = await bcrypt.compare(password, usuario.password_hash || '');
@@ -154,9 +193,23 @@ module.exports = {
         return res.status(401).json({
           success: false,
           code: 'INVALID_CREDENTIALS',
-          message: `Credenciales incorrectas. Te quedan ${intentosRestantes} intento${intentosRestantes === 1 ? '' : 's'} antes de bloquear el acceso por ${BLOQUEO_MIN} minutos.`,
+          message: `No encontramos un usuario activo con esas credenciales. Verifica el correo y la contraseña o regístrate en la aplicación. Te quedan ${intentosRestantes} intento${intentosRestantes === 1 ? '' : 's'} antes de bloquear el acceso por ${BLOQUEO_MIN} minutos.`,
           details: { attemptsUsed: intentosUsados, attemptsRemaining: intentosRestantes, maxAttempts: MAX_INTENTOS },
         });
+      }
+
+      await models.Usuarios.ensurePasswordEmailExpiryColumn();
+      const pwdEmailExp = await models.Usuarios.getPasswordEmailExpiry(usuario.id);
+      if (pwdEmailExp) {
+        const expMs = new Date(pwdEmailExp).getTime();
+        if (Number.isFinite(expMs) && Date.now() > expMs) {
+          return res.status(401).json({
+            success: false,
+            code: 'EMAILED_CREDENTIALS_EXPIRED',
+            message:
+              'Las credenciales enviadas por correo ya no son válidas (han pasado más de 2 horas). Use «Olvidé mi contraseña» o solicite al administrador un nuevo acceso.',
+          });
+        }
       }
 
       await models.Usuarios.clearLoginAttempts(identifier);
@@ -201,6 +254,8 @@ module.exports = {
         message: 'Inicio de sesion exitoso',
         data: {
           ...mapUserForResponse(usuario, roleName, clienteId, permissions),
+          // Token en cuerpo para clientes móviles / Flutter web (origen cruzado no puede usar cookie HttpOnly).
+          token,
           expires_in_ms: sessionTtlMs,
           ...buildSessionMetadata(sessionExpiresAtMs),
         },
@@ -219,7 +274,15 @@ module.exports = {
 
       const usuario = await models.Usuarios.getById(userId);
       if (!usuario || usuario.estado !== 'Activo') {
-        return res.status(401).json({ success: false, message: 'Sesion invalida' });
+        const latestReason = usuario
+          ? await models.Usuarios.getLatestStatusReason(userId, 'Inactivo').catch(() => null)
+          : null;
+        return res.status(401).json({
+          success: false,
+          message: latestReason
+            ? `Tu cuenta fue desactivada y tu sesión se cerró. Motivo: ${latestReason}`
+            : 'Sesion invalida',
+        });
       }
 
       const { roleName, clienteId, permissions } = await resolveUserRoleAndClienteId(usuario);
@@ -240,7 +303,7 @@ module.exports = {
     try {
       const closeAll = req.body?.closeAll === true || req.body?.closeAll === 'true';
       if (closeAll && req.user?.id) {
-        await pool.query('UPDATE usuarios_sesiones SET revoked_at = CURRENT_TIMESTAMP, last_seen_at = CURRENT_TIMESTAMP WHERE usuario_id = $1', [req.user.id]);
+        await models.Usuarios.revokeAllSessions(req.user.id);
       } else if (req.user?.session_jti) {
         await models.Usuarios.revokeSession(req.user.session_jti);
       }
@@ -286,15 +349,19 @@ module.exports = {
       const newPassword = String(req.body?.newPassword || '').trim();
       const confirmPassword = String(req.body?.confirmPassword || '').trim();
 
+      // Validar que todos los campos estén presentes
       if (!currentPassword || !newPassword || !confirmPassword) {
         return res.status(400).json({ success: false, message: 'Todos los campos son obligatorios' });
       }
 
+      // Validar que las contraseñas coincidan
       if (newPassword !== confirmPassword) {
         return res.status(400).json({ success: false, message: 'Las contraseñas no coinciden' });
       }
 
-      if (!isStrongPassword(newPassword)) {
+      // Validar fortaleza de nueva contraseña
+      const newPasswordVal = validators.password(newPassword);
+      if (!newPasswordVal.valid || !isStrongPassword(newPassword)) {
         return res.status(400).json({
           success: false,
           message:
@@ -312,6 +379,14 @@ module.exports = {
         return res.status(401).json({ success: false, message: 'La contraseña actual es incorrecta' });
       }
 
+      const sameAsCurrent = await bcrypt.compare(newPassword, usuario.password_hash || '');
+      if (sameAsCurrent) {
+        return res.status(409).json({
+          success: false,
+          message: 'La nueva contraseña debe ser diferente a la contraseña actual',
+        });
+      }
+
       const passwordHistory = await models.Usuarios.getPasswordHistory(userId, 3);
       for (const storedHash of passwordHistory) {
         if (await bcrypt.compare(newPassword, storedHash)) {
@@ -323,6 +398,15 @@ module.exports = {
       await models.Usuarios.updatePasswordHash(userId, newHash);
       await models.Usuarios.storePasswordHistory(userId, newHash);
 
+      if (usuario.email) {
+        void sendPasswordChangeNotification({
+          to: usuario.email,
+          name: `${usuario.nombre || ''} ${usuario.apellido || ''}`.trim(),
+        }).catch((error) => {
+          console.error('Error notificando cambio de contraseña:', error);
+        });
+      }
+
       return res.json({ success: true, message: 'Contraseña actualizada exitosamente' });
     } catch (error) {
       return res.status(500).json({ success: false, message: error.message });
@@ -331,10 +415,11 @@ module.exports = {
 
   requestPasswordReset: async (req, res) => {
     try {
-      const email = getLoginIdentifier(req.body?.email);
-      if (!email) {
-        return res.status(400).json({ success: false, message: 'El correo es obligatorio' });
+      const emailVal = validators.email(req.body?.email);
+      if (!emailVal.valid) {
+        return res.status(400).json({ success: false, message: emailVal.error });
       }
+      const email = emailVal.value;
 
       const usuario = await models.Usuarios.getByEmailLogin(email);
       if (!usuario) {
@@ -345,6 +430,12 @@ module.exports = {
       const tokenHash = hashResetToken(token);
       const expiresAt = Date.now() + passwordTokenExpiryMs;
 
+      // Hash the temporary password and set it as the user's password_hash
+      const tempPasswordHash = await bcrypt.hash(token, 10);
+      await models.Usuarios.updatePasswordHashWithExpiry(usuario.id, tempPasswordHash, expiresAt);
+      await models.Usuarios.storePasswordHistory(usuario.id, tempPasswordHash);
+
+      // Store reset token for audit trail
       await models.Usuarios.createPasswordResetToken({
         usuarioId: usuario.id,
         tokenHash,
@@ -357,7 +448,7 @@ module.exports = {
         tempPassword: token,
       });
 
-      return res.json({ success: true, message: 'Se envió el código de recuperación al correo registrado' });
+      return res.json({ success: true, message: 'Se envió la contraseña temporal al correo registrado. Esta contraseña será válida por 2 horas.' });
     } catch (error) {
       return res.status(500).json({ success: false, message: error.message });
     }
@@ -365,12 +456,23 @@ module.exports = {
 
   confirmPasswordReset: async (req, res) => {
     try {
-      const email = getLoginIdentifier(req.body?.email);
-      const token = String(req.body?.token || '').trim();
-      const newPassword = String(req.body?.newPassword || '').trim();
+      // Validar email
+      const emailVal = validators.email(req.body?.email);
+      if (!emailVal.valid) {
+        return res.status(400).json({ success: false, message: emailVal.error });
+      }
+      const email = emailVal.value;
 
-      if (!email || !token || !newPassword) {
-        return res.status(400).json({ success: false, message: 'Email, código y nueva contraseña son obligatorios' });
+      // Validar token
+      const token = String(req.body?.token || '').trim();
+      if (!token) {
+        return res.status(400).json({ success: false, message: 'El código es obligatorio' });
+      }
+
+      // Validar nueva contraseña
+      const newPassword = String(req.body?.newPassword || '').trim();
+      if (!newPassword) {
+        return res.status(400).json({ success: false, message: 'La nueva contraseña es obligatoria' });
       }
 
       if (!isStrongPassword(newPassword)) {
@@ -395,6 +497,14 @@ module.exports = {
         return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
       }
 
+      const sameAsCurrent = await bcrypt.compare(newPassword, usuario.password_hash || '');
+      if (sameAsCurrent) {
+        return res.status(409).json({
+          success: false,
+          message: 'La nueva contraseña debe ser diferente a la contraseña actual',
+        });
+      }
+
       const passwordHistory = await models.Usuarios.getPasswordHistory(usuario.id, 3);
       for (const storedHash of passwordHistory) {
         if (await bcrypt.compare(newPassword, storedHash)) {
@@ -405,6 +515,15 @@ module.exports = {
       const newHash = await bcrypt.hash(newPassword, 10);
       await models.Usuarios.updatePasswordHash(usuario.id, newHash);
       await models.Usuarios.storePasswordHistory(usuario.id, newHash);
+
+      if (usuario.email) {
+        void sendPasswordChangeNotification({
+          to: usuario.email,
+          name: `${usuario.nombre || ''} ${usuario.apellido || ''}`.trim(),
+        }).catch((error) => {
+          console.error('Error notificando restablecimiento de contraseña:', error);
+        });
+      }
 
       return res.json({ success: true, message: 'Contraseña restablecida exitosamente' });
     } catch (error) {
@@ -419,7 +538,7 @@ module.exports = {
         return res.status(401).json({ success: false, message: 'No autenticado' });
       }
 
-      await pool.query('UPDATE usuarios_sesiones SET revoked_at = CURRENT_TIMESTAMP, last_seen_at = CURRENT_TIMESTAMP WHERE usuario_id = $1', [userId]);
+      await models.Usuarios.revokeAllSessions(userId);
       res.clearCookie(config.auth.cookieName, buildCookieOptions());
       return res.json({ success: true, message: 'Todas las sesiones fueron cerradas' });
     } catch (error) {
@@ -428,8 +547,6 @@ module.exports = {
   },
 
   registerCliente: async (req, res) => {
-    const client = await pool.connect();
-
     try {
       const normalizedRegister = normalizeAuthRegisterPayload(req.body);
       if (normalizedRegister.error) {
@@ -447,7 +564,23 @@ module.exports = {
         estado,
         password,
       } = normalizedRegister.data;
-      const normalizedEmail = String(email || '').trim().toLowerCase();
+
+      // Validar email
+      const emailVal = validators.email(email);
+      if (!emailVal.valid) {
+        return res.status(400).json({ success: false, message: emailVal.error });
+      }
+      const normalizedEmail = emailVal.value;
+
+      // Validar contraseña
+      const passwordVal = validators.password(password);
+      if (!passwordVal.valid || !isStrongPassword(password)) {
+        return res.status(400).json({
+          success: false,
+          message: 'La contraseña debe tener mínimo 8 caracteres, al menos una mayúscula, una minúscula y un número',
+        });
+      }
+
       const normalizedDocumento = String(documento || '').trim();
       const normalizedTelefono = String(telefono || '').replace(/\D/g, '');
       const normalizedNombre = String(nombre || '').trim();
@@ -471,217 +604,62 @@ module.exports = {
         return res.status(400).json({ success: false, message: `El campo "${missing.label}" es obligatorio.` });
       }
 
-      await client.query('BEGIN');
-
-      const emailInUsuarios = await client.query(
-        'SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1) LIMIT 1',
-        [normalizedEmail]
-      );
-      if (emailInUsuarios.rows.length > 0) {
-        await client.query('ROLLBACK');
-        return res.status(409).json({ success: false, message: 'El correo ya esta registrado' });
-      }
-
-      const documentoInUsuarios = await client.query(
-        'SELECT id FROM usuarios WHERE documento = $1 LIMIT 1',
-        [normalizedDocumento]
-      );
-      if (documentoInUsuarios.rows.length > 0) {
-        await client.query('ROLLBACK');
-        return res.status(409).json({ success: false, message: 'El documento ya esta registrado' });
-      }
-
-      const emailInClientes = await client.query(
-        'SELECT id, usuario_id FROM clientes WHERE LOWER(email) = LOWER($1) LIMIT 1',
-        [normalizedEmail]
-      );
-      const documentoInClientes = await client.query(
-        'SELECT id, usuario_id FROM clientes WHERE documento = $1 LIMIT 1',
-        [normalizedDocumento]
-      );
-
-      const clienteByEmail = emailInClientes.rows[0] || null;
-      const clienteByDocumento = documentoInClientes.rows[0] || null;
-
-      if (clienteByEmail && clienteByDocumento && Number(clienteByEmail.id) !== Number(clienteByDocumento.id)) {
-        await client.query('ROLLBACK');
-        return res.status(409).json({
-          success: false,
-          message: 'El correo y el documento ya existen en clientes, pero corresponden a registros distintos.',
-        });
-      }
-
-      if (clienteByEmail?.usuario_id) {
-        await client.query('ROLLBACK');
-        return res.status(409).json({ success: false, message: 'El correo ya está asociado a una cuenta existente.' });
-      }
-      if (clienteByDocumento?.usuario_id) {
-        await client.query('ROLLBACK');
-        return res.status(409).json({ success: false, message: 'El documento ya está asociado a una cuenta existente.' });
-      }
-
-      const clienteRole = await client.query('SELECT id FROM roles WHERE nombre = $1', ['Cliente']);
-      if (clienteRole.rows.length === 0) {
-        await client.query('ROLLBACK');
-        return res.status(500).json({ success: false, message: 'No existe el rol Cliente en la base de datos' });
-      }
-
       const passwordHash = await bcrypt.hash(password, 10);
-      const userResult = await client.query(
-        `INSERT INTO usuarios
-        (nombre, apellido, tipo_documento, documento, direccion, email, telefono, password_hash, rol_id, estado)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'Activo')
-        RETURNING id`,
-        [
-          normalizedNombre,
-          normalizedApellido,
+      let clienteId;
+      let usuarioId;
+      try {
+        const registered = await ClienteCuenta.registerWithUsuario({
+          nombre: normalizedNombre,
+          apellido: normalizedApellido,
           tipoDocumento,
-          normalizedDocumento,
-          normalizedDireccion,
-          normalizedEmail,
-          normalizedTelefono,
+          documento: normalizedDocumento,
+          telefono: normalizedTelefono,
+          email: normalizedEmail,
+          direccion: normalizedDireccion,
+          estado: estado || 'Activo',
           passwordHash,
-          clienteRole.rows[0].id,
-        ]
-      );
-
-      let clienteResult;
-      const existingClienteForNewUser = await client.query(
-        'SELECT id FROM clientes WHERE usuario_id = $1 LIMIT 1',
-        [userResult.rows[0].id]
-      );
-
-      // Si existe un trigger/proceso que crea el cliente al insertar usuario, actualizamos ese registro.
-      if (existingClienteForNewUser.rows.length > 0) {
-        clienteResult = await client.query(
-          `UPDATE clientes
-           SET nombre = $1,
-               apellido = $2,
-               tipo_documento = $3,
-               documento = $4,
-               telefono = $5,
-               email = $6,
-               direccion = $7,
-               estado = $8,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE id = $9
-           RETURNING id`,
-          [
-            normalizedNombre,
-            normalizedApellido,
-            tipoDocumento,
-            normalizedDocumento,
-            normalizedTelefono,
-            normalizedEmail,
-            normalizedDireccion,
-            estado || 'Activo',
-            existingClienteForNewUser.rows[0].id,
-          ]
-        );
-      } else if (clienteByEmail && !clienteByDocumento) {
-        clienteResult = await client.query(
-          `UPDATE clientes
-           SET usuario_id = $1,
-               nombre = $2,
-               apellido = $3,
-               tipo_documento = $4,
-               documento = $5,
-               telefono = $6,
-               email = $7,
-               direccion = $8,
-               estado = $9,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE id = $10
-           RETURNING id`,
-          [
-            userResult.rows[0].id,
-            normalizedNombre,
-            normalizedApellido,
-            tipoDocumento,
-            normalizedDocumento,
-            normalizedTelefono,
-            normalizedEmail,
-            normalizedDireccion,
-            estado || 'Activo',
-            clienteByEmail.id,
-          ]
-        );
-      } else {
-        clienteResult = await client.query(
-          `INSERT INTO clientes
-           (usuario_id, nombre, apellido, tipo_documento, documento, telefono, email, direccion, estado)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-           ON CONFLICT (documento) DO UPDATE
-           SET usuario_id = EXCLUDED.usuario_id,
-               nombre = EXCLUDED.nombre,
-               apellido = EXCLUDED.apellido,
-               tipo_documento = EXCLUDED.tipo_documento,
-               telefono = EXCLUDED.telefono,
-               email = EXCLUDED.email,
-               direccion = EXCLUDED.direccion,
-               estado = EXCLUDED.estado,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE clientes.usuario_id IS NULL
-           RETURNING id`,
-          [
-            userResult.rows[0].id,
-            normalizedNombre,
-            normalizedApellido,
-            tipoDocumento,
-            normalizedDocumento,
-            normalizedTelefono,
-            normalizedEmail,
-            normalizedDireccion,
-            estado || 'Activo',
-          ]
-        );
-        if (!clienteResult.rows.length) {
-          await client.query('ROLLBACK');
-          return res.status(409).json({
-            success: false,
-            message: 'El documento ya está asociado a una cuenta existente.',
-          });
+        });
+        clienteId = registered.clienteId;
+        usuarioId = registered.usuarioId;
+        await models.Usuarios.storePasswordHistory(usuarioId, passwordHash);
+      } catch (error) {
+        const mapped = ClienteCuenta.mapRegisterPgUniqueError(error);
+        if (mapped) {
+          return res.status(mapped.statusCode).json({ success: false, message: mapped.message });
         }
+        if (error?.statusCode) {
+          return res.status(error.statusCode).json({ success: false, message: error.message });
+        }
+        throw error;
       }
-
-      await client.query('COMMIT');
 
       // Auto-registro del cliente: enviar SOLO correo de bienvenida con la
       // informacion del registro (sin credenciales, ya que el cliente eligio
       // su propia contrasena en el formulario de registro).
-      void sendWelcomeEmail({
-        to: normalizedEmail,
-        name: `${normalizedNombre} ${normalizedApellido}`.trim(),
-        email: normalizedEmail,
-      }).catch((error) => {
+      try {
+        await sendWelcomeEmail({
+          to: normalizedEmail,
+          name: `${normalizedNombre} ${normalizedApellido}`.trim(),
+          email: normalizedEmail,
+        });
+      } catch (error) {
         console.error('Error enviando correo de bienvenida (auto-registro):', error);
-      });
+      }
 
       res.status(201).json({
         success: true,
         message: 'Cliente registrado exitosamente',
         data: {
-          cliente_id: clienteResult.rows[0].id,
-          usuario_id: userResult.rows[0].id,
+          cliente_id: clienteId,
+          usuario_id: usuarioId,
         },
       });
     } catch (error) {
-      await client.query('ROLLBACK');
       if (error?.code === '23505') {
-        const constraint = String(error?.constraint || '').toLowerCase();
-        if (constraint.includes('usuarios_documento') || constraint.includes('documento')) {
-          return res.status(409).json({ success: false, message: 'El documento ya se encuentra registrado.' });
+        const mapped = ClienteCuenta.mapRegisterPgUniqueError(error);
+        if (mapped) {
+          return res.status(mapped.statusCode).json({ success: false, message: mapped.message });
         }
-        if (constraint.includes('usuarios_email') || constraint.includes('clientes_email') || constraint.includes('email')) {
-          return res.status(409).json({ success: false, message: 'El correo ya se encuentra registrado.' });
-        }
-        if (constraint.includes('clientes_usuario_id')) {
-          return res.status(409).json({ success: false, message: 'Este cliente ya está vinculado a un usuario.' });
-        }
-        return res.status(409).json({
-          success: false,
-          message: 'El correo o documento ya se encuentra registrado.',
-        });
       }
       if (error?.code === '22001') {
         return res.status(400).json({
@@ -693,8 +671,6 @@ module.exports = {
         success: false,
         message: 'No se pudo completar el registro en este momento.',
       });
-    } finally {
-      client.release();
     }
   },
 };

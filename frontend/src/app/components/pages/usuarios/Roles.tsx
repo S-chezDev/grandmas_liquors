@@ -1,12 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
-import { Card } from '../../Card';
 import { Button } from '../../Button';
 import { Form, FormField, FormActions, FieldError, FieldHelper } from '../../Form';
 import { Plus, Shield, Check, X } from 'lucide-react';
 import { useAlertDialog } from '../../AlertDialog';
 import { api } from '../../../services/api';
+import {
+  STAFF_MODULES,
+  ALL_SUB_GESTION_IDS,
+  collapseToGestiones,
+  expandGestiones,
+  isModuleFullySelected,
+  toggleModuleInSelection,
+  toggleSubGestionInSelection,
+  type StaffSubGestionId,
+} from '../../../services/routePermissions';
 import { toast } from '../../AlertDialog';
 
 interface Role {
@@ -18,65 +27,6 @@ interface Role {
   usuarios: number;
 }
 
-// Lista de todos los permisos disponibles en el sistema
-const todosLosPermisos = [
-  // Dashboard
-  { modulo: 'Dashboard', permiso: 'Ver Dashboard' },
-  
-  // Usuarios
-  { modulo: 'Usuarios', permiso: 'Ver Usuarios' },
-  { modulo: 'Usuarios', permiso: 'Crear Usuarios' },
-  { modulo: 'Usuarios', permiso: 'Editar Usuarios' },
-  { modulo: 'Usuarios', permiso: 'Eliminar Usuarios' },
-  
-  // Roles
-  { modulo: 'Configuración', permiso: 'Ver Roles' },
-  { modulo: 'Configuración', permiso: 'Asignar Permisos' },
-  
-  // Compras
-  { modulo: 'Compras', permiso: 'Ver Proveedores' },
-  { modulo: 'Compras', permiso: 'Crear Proveedores' },
-  { modulo: 'Compras', permiso: 'Editar Proveedores' },
-  { modulo: 'Compras', permiso: 'Ver Compras' },
-  { modulo: 'Compras', permiso: 'Registrar Compras' },
-  { modulo: 'Compras', permiso: 'Anular Compras' },
-  { modulo: 'Compras', permiso: 'Ver Productos' },
-  { modulo: 'Compras', permiso: 'Crear Productos' },
-  { modulo: 'Compras', permiso: 'Editar Productos' },
-  { modulo: 'Compras', permiso: 'Ver Categorías' },
-  { modulo: 'Compras', permiso: 'Crear Categorías' },
-  
-  // Producción
-  { modulo: 'Producción', permiso: 'Ver Insumos' },
-  { modulo: 'Producción', permiso: 'Entregar Insumos' },
-  { modulo: 'Producción', permiso: 'Ver Producción' },
-  { modulo: 'Producción', permiso: 'Registrar Producción' },
-  
-  // Ventas
-  { modulo: 'Ventas', permiso: 'Ver Clientes' },
-  { modulo: 'Ventas', permiso: 'Crear Clientes' },
-  { modulo: 'Ventas', permiso: 'Editar Clientes' },
-  { modulo: 'Ventas', permiso: 'Ver Ventas' },
-  { modulo: 'Ventas', permiso: 'Registrar Ventas' },
-  { modulo: 'Ventas', permiso: 'Anular Ventas' },
-  { modulo: 'Ventas', permiso: 'Ver Abonos' },
-  { modulo: 'Ventas', permiso: 'Registrar Abonos' },
-  { modulo: 'Ventas', permiso: 'Ver Pedidos' },
-  { modulo: 'Ventas', permiso: 'Crear Pedidos' },
-  { modulo: 'Ventas', permiso: 'Ver Domicilios' },
-  { modulo: 'Ventas', permiso: 'Gestionar Domicilios' },
-];
-
-const moduloPorPermiso = (permiso: string) => {
-  const p = permiso.toLowerCase();
-  if (p.includes('dashboard')) return 'Dashboard';
-  if (p.includes('usuarios') || p.includes('roles') || p.includes('permisos')) return 'Usuarios';
-  if (p.includes('proveedor') || p.includes('compra') || p.includes('producto') || p.includes('categor')) return 'Compras';
-  if (p.includes('insumo') || p.includes('producci')) return 'Producción';
-  if (p.includes('cliente') || p.includes('venta') || p.includes('abono') || p.includes('pedido') || p.includes('domicilio')) return 'Ventas';
-  return 'Otros';
-};
-
 export function Roles() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,19 +35,19 @@ export function Roles() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
-  const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
+  const [selectedGestiones, setSelectedGestiones] = useState<StaffSubGestionId[]>([]);
   const [busqueda, setBusqueda] = useState('');
   const [filtroRol, setFiltroRol] = useState<string>('Todos');
   const [filtroEstado, setFiltroEstado] = useState<string>('Todos');
-  const [filtroModuloPermisos, setFiltroModuloPermisos] = useState<string>('Todos');
   const [formData, setFormData] = useState({
     nombre: '',
     descripcion: '',
     estado: 'Activo' as 'Activo' | 'Inactivo',
-    permisos: [] as string[]
+    gestiones: [] as StaffSubGestionId[]
   });
   // Estado de validación inline para el campo "Nombre del Rol".
   const [nombreError, setNombreError] = useState<string>('');
+  const [showEditPermisosNote, setShowEditPermisosNote] = useState(true);
   const { showAlert, AlertComponent } = useAlertDialog();
 
   // Valida el nombre del rol localmente con mensajes claros para el usuario.
@@ -146,14 +96,17 @@ export function Roles() {
     { key: 'descripcion', label: 'Descripción' },
     { 
       key: 'permisos', 
-      label: 'Permisos Asignados',
-      render: (permisos: string[]) => (
-        <div className="flex items-center gap-2">
-          <span className="px-3 py-1 bg-primary/10 text-primary rounded-full">
-            {permisos.length} permisos
-          </span>
-        </div>
-      )
+      label: 'Gestiones asignadas',
+      render: (permisos: string[]) => {
+        const gestiones = collapseToGestiones(permisos);
+        return (
+          <div className="flex items-center gap-2">
+            <span className="px-3 py-1 bg-primary/10 text-primary rounded-full">
+              {gestiones.length} gestión{gestiones.length !== 1 ? 'es' : ''}
+            </span>
+          </div>
+        );
+      }
     },
     { 
       key: 'usuarios', 
@@ -213,29 +166,34 @@ export function Roles() {
       });
       return;
     }
-    if (formData.permisos.length === 0) {
-      toast.warning('Asigne al menos un permiso', {
-        description: 'Cada rol debe tener al menos un permiso seleccionado.',
+    if (formData.gestiones.length === 0) {
+      toast.warning('Asigne al menos una gestión', {
+        description: 'Cada rol debe tener acceso a al menos una gestión del sistema.',
       });
       return;
     }
 
     try {
+      const permisosExpandidos = expandGestiones(formData.gestiones);
       const created = await api.roles.create({
         nombre: formData.nombre.trim(),
         descripcion: formData.descripcion.trim(),
         estado: formData.estado,
-        permisos: formData.permisos,
+        permisos: permisosExpandidos,
       });
-      if (created?.id && formData.permisos.length > 0) {
-        await api.roles.updatePermisos(Number(created.id), formData.permisos, 'Asignación inicial de permisos');
+      if (created?.id && permisosExpandidos.length > 0) {
+        await api.roles.updatePermisos(
+          Number(created.id),
+          permisosExpandidos,
+          'Asignación inicial de gestiones'
+        );
       }
       toast.success('Rol creado exitosamente', {
         description: `El rol "${formData.nombre.trim()}" se registró correctamente.`,
       });
       setIsCreateModalOpen(false);
       setNombreError('');
-      setFormData({ nombre: '', descripcion: '', estado: 'Activo', permisos: [] });
+      setFormData({ nombre: '', descripcion: '', estado: 'Activo', gestiones: [] });
       await cargarRoles();
     } catch (error: any) {
       toast.error('No se pudo crear el rol', {
@@ -273,7 +231,7 @@ export function Roles() {
       setIsEditModalOpen(false);
       setSelectedRole(null);
       setNombreError('');
-      setFormData({ nombre: '', descripcion: '', estado: 'Activo', permisos: [] });
+      setFormData({ nombre: '', descripcion: '', estado: 'Activo', gestiones: [] });
       await cargarRoles();
     } catch (error: any) {
       toast.error('No se pudo actualizar el rol', {
@@ -284,7 +242,13 @@ export function Roles() {
 
   const handleEdit = (role: Role) => {
     setSelectedRole(role);
-    setFormData({ nombre: role.nombre, descripcion: role.descripcion, estado: role.estado, permisos: role.permisos });
+    setFormData({
+      nombre: role.nombre,
+      descripcion: role.descripcion,
+      estado: role.estado,
+      gestiones: collapseToGestiones(role.permisos),
+    });
+    setShowEditPermisosNote(true);
     setIsEditModalOpen(true);
   };
 
@@ -326,28 +290,110 @@ export function Roles() {
 
   const handleManagePermissions = (role: Role) => {
     setSelectedRole(role);
-    setSelectedPermissions(role.permisos);
-    setFiltroModuloPermisos('Todos');
+    setSelectedGestiones(collapseToGestiones(role.permisos));
     setIsPermissionsModalOpen(true);
   };
 
-  const togglePermission = (permiso: string) => {
-    setSelectedPermissions(prev =>
-      prev.includes(permiso)
-        ? prev.filter(p => p !== permiso)
-        : [...prev, permiso]
-    );
-  };
+  const renderSelectorGestiones = (
+    selected: StaffSubGestionId[],
+    onChange: (next: StaffSubGestionId[]) => void
+  ) => (
+    <>
+      <div className="flex items-center justify-between p-3 bg-muted rounded-lg mb-3">
+        <span className="text-sm">
+          Sub-gestiones seleccionadas: <strong>{selected.length}</strong> de {ALL_SUB_GESTION_IDS.length}
+        </span>
+        <div className="flex gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={() => onChange([...ALL_SUB_GESTION_IDS])}>
+            Todas
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => onChange([])}>
+            Ninguna
+          </Button>
+        </div>
+      </div>
+      <div className="max-h-96 overflow-y-auto space-y-3 border border-border rounded-lg p-3">
+        {STAFF_MODULES.map((modulo) => {
+          const moduleSelected = isModuleFullySelected(modulo.id, selected);
+          return (
+            <div key={modulo.id} className="rounded-lg border border-border p-3 bg-background">
+              <button
+                type="button"
+                onClick={() => onChange(toggleModuleInSelection(modulo.id, selected))}
+                className={`mb-3 flex w-full items-center gap-3 rounded-lg border-2 p-3 text-left transition-all ${
+                  moduleSelected
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border hover:border-primary/50'
+                }`}
+              >
+                <div
+                  className={`flex h-5 w-5 items-center justify-center rounded border-2 ${
+                    moduleSelected ? 'border-primary bg-primary' : 'border-muted-foreground'
+                  }`}
+                >
+                  {moduleSelected && <Check className="h-3 w-3 text-white" />}
+                </div>
+                <span className="font-medium text-primary">{modulo.label} (módulo completo)</span>
+              </button>
+              {modulo.subGestiones.length > 1 ? (
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                  {modulo.subGestiones.map((sub) => {
+                    const isSelected = selected.includes(sub.id);
+                    return (
+                      <button
+                        key={sub.id}
+                        type="button"
+                        onClick={() => onChange(toggleSubGestionInSelection(sub.id, selected))}
+                        className={`flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all ${
+                          isSelected
+                            ? 'border-primary bg-primary/5'
+                            : 'border-border hover:border-primary/50'
+                        }`}
+                      >
+                        <div
+                          className={`flex h-5 w-5 items-center justify-center rounded border-2 ${
+                            isSelected ? 'border-primary bg-primary' : 'border-muted-foreground'
+                          }`}
+                        >
+                          {isSelected && <Check className="h-3 w-3 text-white" />}
+                        </div>
+                        <span className={isSelected ? 'text-foreground' : 'text-muted-foreground'}>
+                          {sub.label}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+      <FieldHelper>
+        Puede asignar el módulo completo o solo algunas gestiones dentro del módulo. Cada opción incluye
+        consultar, crear, editar y eliminar en esa área.
+      </FieldHelper>
+    </>
+  );
 
   const handleSavePermissions = async () => {
     if (selectedRole) {
+      if (selectedGestiones.length === 0) {
+        toast.warning('Seleccione al menos una gestión', {
+          description: 'El rol debe tener acceso a al menos una gestión.',
+        });
+        return;
+      }
       try {
+        const permisosExpandidos = expandGestiones(selectedGestiones);
         await api.roles.updatePermisos(
           selectedRole.id,
-          selectedPermissions,
-          `Actualización de permisos para rol ${selectedRole.nombre}`
+          permisosExpandidos,
+          `Actualización de gestiones para rol ${selectedRole.nombre}`
         );
-        toast.success('Permisos actualizados');
+        toast.success('Gestiones actualizadas', {
+          description: `El rol "${selectedRole.nombre}" tiene acceso completo a ${selectedGestiones.length} gestión(es).`,
+        });
         setIsPermissionsModalOpen(false);
         await cargarRoles();
       } catch (error: any) {
@@ -357,35 +403,19 @@ export function Roles() {
   };
 
   // Filtrar roles
-  const rolesFiltrados = roles.filter(rol => {
-    const matchBusqueda = busqueda.length === 0 ||
-      busqueda.length >= 2 &&
-      (rol.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-       rol.descripcion.toLowerCase().includes(busqueda.toLowerCase()));
+  const rolesFiltrados = useMemo(() => (
+    roles.filter(rol => {
+      const matchBusqueda = busqueda.length === 0 ||
+        busqueda.length >= 2 &&
+        (rol.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
+         rol.descripcion.toLowerCase().includes(busqueda.toLowerCase()));
 
-    const matchRol = filtroRol === 'Todos' || rol.nombre === filtroRol;
-    const matchEstado = filtroEstado === 'Todos' || rol.estado === filtroEstado;
+      const matchRol = filtroRol === 'Todos' || rol.nombre === filtroRol;
+      const matchEstado = filtroEstado === 'Todos' || rol.estado === filtroEstado;
 
-    return matchBusqueda && matchRol && matchEstado;
-  });
-
-  const permisosDisponibles = useMemo(() => {
-    const backendPerms = roles.flatMap((r) => r.permisos || []);
-    const fallback = todosLosPermisos.map((p) => p.permiso);
-    return [...new Set([...backendPerms, ...fallback])].sort((a, b) => a.localeCompare(b));
-  }, [roles]);
-
-  // Agrupar permisos por módulo
-  const permisosPorModulo = useMemo(
-    () =>
-      permisosDisponibles.reduce((acc, permiso) => {
-        const modulo = moduloPorPermiso(permiso);
-        if (!acc[modulo]) acc[modulo] = [];
-        acc[modulo].push(permiso);
-        return acc;
-      }, {} as { [key: string]: string[] }),
-    [permisosDisponibles]
-  );
+      return matchBusqueda && matchRol && matchEstado;
+    })
+  ), [roles, busqueda, filtroRol, filtroEstado]);
 
   // Solo mostramos el spinner a pantalla completa en la carga inicial.
   // Si ya hay datos en pantalla, mantenemos la UI montada para que la
@@ -422,7 +452,7 @@ export function Roles() {
               type="text"
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
-              placeholder="Buscar... (mín. 2, máx. 50 caracteres)"
+              placeholder="Buscar ..."
               className="w-full px-4 py-2.5 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
               maxLength={50}
             />
@@ -486,7 +516,7 @@ export function Roles() {
         onClose={() => {
           setIsCreateModalOpen(false);
           setNombreError('');
-          setFormData({ nombre: '', descripcion: '', estado: 'Activo', permisos: [] });
+          setFormData({ nombre: '', descripcion: '', estado: 'Activo', gestiones: [] });
         }}
         title="Crear Nuevo Rol"
         size="lg"
@@ -504,7 +534,7 @@ export function Roles() {
                 setFormData({ ...formData, nombre: value });
                 setNombreError(validarNombreRol(value));
               }}
-              placeholder="Ej: Supervisor, Contador, etc. (3 a 50 caracteres)"
+              placeholder="Ej: Supervisor, Contador, etc."
               maxLength={50}
               minLength={3}
               className={`w-full px-4 py-2 bg-input-background border rounded-lg focus:outline-none focus:ring-2 transition-all ${
@@ -545,71 +575,19 @@ export function Roles() {
             type="textarea"
             value={formData.descripcion}
             onChange={(value) => setFormData({ ...formData, descripcion: value as string })}
-            placeholder="Describa el rol (10-50 caracteres)"
+            placeholder="Describa el rol"
             rows={3}
             required
             minLength={10}
             maxLength={50}
           />
 
-          {/* Permisos Asignables */}
+          {/* Gestiones asignables */}
           <div className="space-y-3">
-            <label className="block">Permisos Asignables</label>
-            <div className="flex items-center justify-between p-3 bg-muted rounded-lg mb-3">
-              <span className="text-sm">Permisos seleccionados: <strong>{formData.permisos.length}</strong> de {permisosDisponibles.length}</span>
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setFormData({ ...formData, permisos: permisosDisponibles })}
-                >
-                  Todos
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setFormData({ ...formData, permisos: [] })}
-                >
-                  Ninguno
-                </Button>
-              </div>
-            </div>
-
-            <div className="max-h-64 overflow-y-auto space-y-3 border border-border rounded-lg p-3">
-              {Object.entries(permisosPorModulo).map(([modulo, permisos]) => (
-                <div key={modulo}>
-                  <h4 className="text-sm text-primary mb-2">{modulo}</h4>
-                  <div className="grid grid-cols-1 gap-2 mb-3">
-                    {permisos.map((permiso) => {
-                      const isSelected = formData.permisos.includes(permiso);
-                      return (
-                        <label
-                          key={permiso}
-                          className="flex items-center gap-2 p-2 rounded hover:bg-accent cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => {
-                              setFormData({
-                                ...formData,
-                                permisos: isSelected
-                                  ? formData.permisos.filter(p => p !== permiso)
-                                  : [...formData.permisos, permiso]
-                              });
-                            }}
-                            className="w-4 h-4 text-primary"
-                          />
-                          <span className="text-sm">{permiso}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <label className="block">Gestiones con acceso completo</label>
+            {renderSelectorGestiones(formData.gestiones, (gestiones) =>
+              setFormData({ ...formData, gestiones })
+            )}
           </div>
 
           <FormActions>
@@ -617,7 +595,7 @@ export function Roles() {
               variant="outline"
               onClick={() => {
                 setIsCreateModalOpen(false);
-                setFormData({ nombre: '', descripcion: '', estado: 'Activo', permisos: [] });
+                setFormData({ nombre: '', descripcion: '', estado: 'Activo', gestiones: [] });
               }}
             >
               Cancelar
@@ -636,7 +614,7 @@ export function Roles() {
           setIsEditModalOpen(false);
           setSelectedRole(null);
           setNombreError('');
-          setFormData({ nombre: '', descripcion: '', estado: 'Activo', permisos: [] });
+          setFormData({ nombre: '', descripcion: '', estado: 'Activo', gestiones: [] });
         }}
         title={`Editar Rol - ${selectedRole?.nombre}`}
         size="md"
@@ -654,7 +632,7 @@ export function Roles() {
                 setFormData({ ...formData, nombre: value });
                 setNombreError(validarNombreRol(value, selectedRole?.id));
               }}
-              placeholder="Ej: Supervisor, Contador, etc. (3 a 50 caracteres)"
+              placeholder="Ej: Supervisor, Contador, etc."
               maxLength={50}
               minLength={3}
               className={`w-full px-4 py-2 bg-input-background border rounded-lg focus:outline-none focus:ring-2 transition-all ${
@@ -695,18 +673,30 @@ export function Roles() {
             type="textarea"
             value={formData.descripcion}
             onChange={(value) => setFormData({ ...formData, descripcion: value as string })}
-            placeholder="Describa el rol (10-50 caracteres)"
+            placeholder="Describa el rol"
             rows={3}
             required
             minLength={10}
             maxLength={50}
           />
 
-          <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
-            <p className="text-sm text-blue-700">
-              Para gestionar los permisos de este rol, usa el botón "Gestionar Permisos" en la tabla principal.
-            </p>
-          </div>
+          {showEditPermisosNote ? (
+            <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-sm text-blue-700">
+                  Para gestionar las gestiones de este rol, usa el botón &quot;Gestionar Permisos&quot; en la tabla principal.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowEditPermisosNote(false)}
+                  className="rounded-md p-1 text-blue-700 transition-colors hover:bg-blue-100 hover:text-blue-900"
+                  aria-label="Cerrar nota informativa"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           <FormActions>
             <Button
@@ -714,7 +704,7 @@ export function Roles() {
               onClick={() => {
                 setIsEditModalOpen(false);
                 setSelectedRole(null);
-                setFormData({ nombre: '', descripcion: '', estado: 'Activo', permisos: [] });
+                setFormData({ nombre: '', descripcion: '', estado: 'Activo', gestiones: [] });
               }}
             >
               Cancelar
@@ -760,26 +750,47 @@ export function Roles() {
                 <p>{selectedRole.usuarios} usuario{selectedRole.usuarios !== 1 ? 's' : ''}</p>
               </div>
               <div>
-                <p className="text-sm text-muted-foreground">Permisos Asignados</p>
+                <p className="text-sm text-muted-foreground">Gestiones asignadas</p>
                 <span className="px-3 py-1 bg-primary/10 text-primary rounded-full text-xs">
-                  {selectedRole.permisos.length} permisos
+                  {collapseToGestiones(selectedRole.permisos).length} gestión
+                  {collapseToGestiones(selectedRole.permisos).length !== 1 ? 'es' : ''}
                 </span>
               </div>
             </div>
 
             <div className="p-4 bg-accent/50 rounded-lg">
-              <p className="text-sm text-muted-foreground mb-3">Lista de Permisos</p>
-              {selectedRole.permisos.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {selectedRole.permisos.map((permiso) => (
-                    <div key={permiso} className="flex items-center gap-2 p-2 bg-background rounded border">
-                      <Check className="w-4 h-4 text-green-600" />
-                      <span className="text-sm">{permiso}</span>
-                    </div>
-                  ))}
+              <p className="text-sm text-muted-foreground mb-3">Gestiones con acceso completo</p>
+              {collapseToGestiones(selectedRole.permisos).length > 0 ? (
+                <div className="space-y-3">
+                  {STAFF_MODULES.map((modulo) => {
+                    const asignadas = collapseToGestiones(selectedRole.permisos).filter((id) =>
+                      id.startsWith(`${modulo.id}.`)
+                    );
+                    if (asignadas.length === 0) return null;
+                    return (
+                      <div key={modulo.id}>
+                        <p className="text-sm font-medium text-primary mb-2">{modulo.label}</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          {asignadas.map((gestionId) => {
+                            const label =
+                              modulo.subGestiones.find((s) => s.id === gestionId)?.label ?? gestionId;
+                            return (
+                              <div
+                                key={gestionId}
+                                className="flex items-center gap-2 p-2 bg-background rounded border"
+                              >
+                                <Check className="w-4 h-4 text-green-600" />
+                                <span className="text-sm">{label}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
-                <p className="text-sm text-muted-foreground italic">Sin permisos asignados</p>
+                <p className="text-sm text-muted-foreground italic">Sin gestiones asignadas</p>
               )}
             </div>
 
@@ -798,12 +809,11 @@ export function Roles() {
         )}
       </Modal>
 
-      {/* Modal de Gestión de Permisos */}
+      {/* Modal de Gestión de Permisos (por gestión) */}
       <Modal
         isOpen={isPermissionsModalOpen}
         onClose={() => {
           setIsPermissionsModalOpen(false);
-          setFiltroModuloPermisos('Todos');
         }}
         title={`Gestionar Permisos - ${selectedRole?.nombre}`}
         size="lg"
@@ -811,154 +821,25 @@ export function Roles() {
         <div className="space-y-6">
           <div className="p-4 bg-accent rounded-lg">
             <p className="text-sm text-muted-foreground">
-              Selecciona los permisos que deseas asignar al rol <strong>{selectedRole?.nombre}</strong>.
-              Los permisos activos están marcados con una palomita verde.
+              Selecciona las gestiones a las que tendrá acceso completo el rol{' '}
+              <strong>{selectedRole?.nombre}</strong> (consultar, crear, editar y eliminar dentro de cada área).
             </p>
           </div>
 
-          <div className="space-y-4">
-            {/* Contador de permisos */}
-            <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
-              <span>Permisos seleccionados: <strong>{selectedPermissions.length}</strong> de {permisosDisponibles.length}</span>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setSelectedPermissions(permisosDisponibles)}
-                >
-                  Seleccionar Todos
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setSelectedPermissions([])}
-                >
-                  Quitar Todos
-                </Button>
-              </div>
-            </div>
-
-            {/* Botones de filtro por módulo */}
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => setFiltroModuloPermisos('Todos')}
-                className={`px-4 py-2 rounded-lg border-2 transition-all font-medium ${
-                  filtroModuloPermisos === 'Todos'
-                    ? 'border-primary bg-primary text-white'
-                    : 'border-border bg-white text-foreground hover:border-primary/50'
-                }`}
-              >
-                Todos
-              </button>
-              <button
-                onClick={() => setFiltroModuloPermisos('Dashboard')}
-                className={`px-4 py-2 rounded-lg border-2 transition-all font-medium ${
-                  filtroModuloPermisos === 'Dashboard'
-                    ? 'border-primary bg-primary text-white'
-                    : 'border-border bg-white text-foreground hover:border-primary/50'
-                }`}
-              >
-                Dashboard
-              </button>
-              <button
-                onClick={() => setFiltroModuloPermisos('Usuarios')}
-                className={`px-4 py-2 rounded-lg border-2 transition-all font-medium ${
-                  filtroModuloPermisos === 'Usuarios'
-                    ? 'border-primary bg-primary text-white'
-                    : 'border-border bg-white text-foreground hover:border-primary/50'
-                }`}
-              >
-                Usuarios
-              </button>
-              <button
-                onClick={() => setFiltroModuloPermisos('Configuración')}
-                className={`px-4 py-2 rounded-lg border-2 transition-all font-medium ${
-                  filtroModuloPermisos === 'Configuración'
-                    ? 'border-primary bg-primary text-white'
-                    : 'border-border bg-white text-foreground hover:border-primary/50'
-                }`}
-              >
-                Configuración
-              </button>
-              <button
-                onClick={() => setFiltroModuloPermisos('Compras')}
-                className={`px-4 py-2 rounded-lg border-2 transition-all font-medium ${
-                  filtroModuloPermisos === 'Compras'
-                    ? 'border-primary bg-primary text-white'
-                    : 'border-border bg-white text-foreground hover:border-primary/50'
-                }`}
-              >
-                Compras
-              </button>
-              <button
-                onClick={() => setFiltroModuloPermisos('Producción')}
-                className={`px-4 py-2 rounded-lg border-2 transition-all font-medium ${
-                  filtroModuloPermisos === 'Producción'
-                    ? 'border-primary bg-primary text-white'
-                    : 'border-border bg-white text-foreground hover:border-primary/50'
-                }`}
-              >
-                Producción
-              </button>
-              <button
-                onClick={() => setFiltroModuloPermisos('Ventas')}
-                className={`px-4 py-2 rounded-lg border-2 transition-all font-medium ${
-                  filtroModuloPermisos === 'Ventas'
-                    ? 'border-primary bg-primary text-white'
-                    : 'border-border bg-white text-foreground hover:border-primary/50'
-                }`}
-              >
-                Ventas
-              </button>
-            </div>
-          </div>
-
-          <div className="space-y-4 max-h-96 overflow-y-auto">
-            {Object.entries(permisosPorModulo)
-              .filter(([modulo]) => filtroModuloPermisos === 'Todos' || modulo === filtroModuloPermisos)
-              .map(([modulo, permisos]) => (
-                <Card key={modulo}>
-                  <h4 className="mb-3 text-primary">{modulo}</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {permisos.map((permiso) => {
-                      const isSelected = selectedPermissions.includes(permiso);
-                      return (
-                        <button
-                          key={permiso}
-                          onClick={() => togglePermission(permiso)}
-                          className={`flex items-center gap-3 p-3 rounded-lg border-2 transition-all ${
-                            isSelected
-                              ? 'border-primary bg-primary/5'
-                              : 'border-border hover:border-primary/50'
-                          }`}
-                        >
-                          <div className={`flex items-center justify-center w-5 h-5 rounded border-2 ${
-                            isSelected
-                              ? 'bg-primary border-primary'
-                              : 'border-muted-foreground'
-                          }`}>
-                            {isSelected && <Check className="w-3 h-3 text-white" />}
-                          </div>
-                          <span className={isSelected ? 'text-foreground' : 'text-muted-foreground'}>
-                            {permiso}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </Card>
-              ))}
-          </div>
+          {renderSelectorGestiones(selectedGestiones, setSelectedGestiones)}
 
           <div className="flex gap-3 pt-4 border-t border-border">
-            <Button variant="outline" onClick={() => {
-              setIsPermissionsModalOpen(false);
-              setFiltroModuloPermisos('Todos');
-            }} className="flex-1">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsPermissionsModalOpen(false);
+              }}
+              className="flex-1"
+            >
               Cancelar
             </Button>
             <Button onClick={handleSavePermissions} className="flex-1">
-              Guardar Permisos
+              Guardar gestiones
             </Button>
           </div>
         </div>

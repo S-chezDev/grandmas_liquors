@@ -17,6 +17,7 @@ const {
   ensureUserPasswordHistoryTable,
   ensureUserPasswordResetTable,
   ensureUserLoginAttemptsTable,
+  ensureUsuariosPasswordEmailExpiresColumn,
   registerUserSession,
   getPasswordHistory,
   storePasswordHistory,
@@ -28,7 +29,11 @@ const {
   isLoginBlocked,
   getLoginBlockInfo,
   revokeUserSession,
+  revokeAllUserSessions,
+  isUserSessionActive,
+  touchUserSession,
   getActiveUserSessionCount,
+  getLatestUserStatusReason,
   getLinkedClienteForUsuario,
   getUserDeletionBlockers,
   getUserDeletionImpact,
@@ -92,6 +97,27 @@ const Usuarios = {
   getByTelefono: async (telefono) => {
     const result = await pool.query('SELECT * FROM usuarios WHERE telefono = $1', [telefono]);
     return result.rows[0];
+  },
+  existsEmailExcept: async (email, excludeUserId = 0) => {
+    const result = await pool.query(
+      'SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1) AND id <> $2 LIMIT 1',
+      [email, Number(excludeUserId) || 0]
+    );
+    return result.rows.length > 0;
+  },
+  existsDocumentoExcept: async (documento, excludeUserId = 0) => {
+    const result = await pool.query(
+      'SELECT id FROM usuarios WHERE documento = $1 AND id <> $2 LIMIT 1',
+      [documento, Number(excludeUserId) || 0]
+    );
+    return result.rows.length > 0;
+  },
+  existsTelefonoExcept: async (telefono, excludeUserId = 0) => {
+    const result = await pool.query(
+      'SELECT id FROM usuarios WHERE telefono = $1 AND id <> $2 LIMIT 1',
+      [telefono, Number(excludeUserId) || 0]
+    );
+    return result.rows.length > 0;
   },
   getByEmailLogin: async (identifier) => {
     const result = await pool.query(
@@ -215,11 +241,23 @@ const Usuarios = {
     return true;
   },
   updatePasswordHash: async (id, passwordHash) => {
+    await ensureUsuariosPasswordEmailExpiresColumn();
     await pool.query(
-      'UPDATE usuarios SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      'UPDATE usuarios SET password_hash = $1, password_email_expires_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
       [passwordHash, id]
     );
     return true;
+  },
+  updatePasswordHashWithExpiry: async (id, passwordHash, expiresAtMs) => {
+    await ensureUsuariosPasswordEmailExpiresColumn();
+    await pool.query(
+      'UPDATE usuarios SET password_hash = $1, password_email_expires_at = to_timestamp($2 / 1000.0), updated_at = CURRENT_TIMESTAMP WHERE id = $3',
+      [passwordHash, expiresAtMs, id]
+    );
+    return true;
+  },
+  ensurePasswordEmailExpiryColumn: async () => {
+    await ensureUsuariosPasswordEmailExpiresColumn();
   },
   getPasswordHistory: getPasswordHistory,
   storePasswordHistory: storePasswordHistory,
@@ -239,9 +277,13 @@ const Usuarios = {
     await revokeUserSession(jti);
     return true;
   },
+  revokeAllSessions: async (usuarioId) => revokeAllUserSessions(usuarioId),
+  isSessionActive: async (usuarioId, jti) => isUserSessionActive(usuarioId, jti),
+  touchSession: async (jti) => touchUserSession(jti),
   getActiveSessionCount: async (id) => {
     return getActiveUserSessionCount(id);
   },
+  getLatestStatusReason: async (usuarioId, estado = null) => getLatestUserStatusReason(usuarioId, estado),
   getActivityById: async (id, limit = 80) => {
     await ensureUserAuditTable();
     await ensureUserSessionTable();
@@ -335,19 +377,17 @@ const Usuarios = {
       throw error;
     }
 
-    const force = data.force === true || data.force === 'true';
+    const forceRequested = data.force === true || data.force === 'true';
     let activeSessions = 0;
+    let revokedSessions = 0;
 
     if (nextStatus === 'Inactivo') {
       ensureMotivoEstado(data?.motivo);
       activeSessions = await getActiveUserSessionCount(id);
-      if (activeSessions > 0 && !force) {
-        const error = new Error('No se puede desactivar un usuario con sesion activa');
-        error.statusCode = 409;
-        error.details = { activeSessions };
-        throw error;
-      }
       await checkInactivacionDependencias('usuario', id);
+      if (activeSessions > 0) {
+        revokedSessions = await revokeAllUserSessions(id);
+      }
     } else {
       ensureMotivoEstado(data?.motivo);
     }
@@ -369,8 +409,9 @@ const Usuarios = {
         changedFields,
         reason: typeof data.motivo === 'string' && data.motivo.trim() ? data.motivo.trim() : null,
         statusChange: true,
-        force,
+        forceRequested,
         activeSessions,
+        revokedSessions,
       },
     });
 
@@ -452,6 +493,7 @@ const Usuarios = {
     const tempPassword = generateTempPassword();
     const passwordHash = await bcrypt.hash(tempPassword, 10);
     await Usuarios.updatePasswordHash(id, passwordHash);
+    await Usuarios.storePasswordHistory(id, passwordHash);
 
     await registerUserAudit({
       usuarioId: Number(id),
@@ -469,6 +511,31 @@ const Usuarios = {
       user,
       tempPassword,
     };
+  },
+
+  // Obtener expiración de contraseña temporal enviada por correo
+  getPasswordEmailExpiry: async (usuarioId) => {
+    const result = await pool.query(
+      'SELECT password_email_expires_at FROM usuarios WHERE id = $1',
+      [usuarioId]
+    );
+    return result.rows[0]?.password_email_expires_at || null;
+  },
+
+  // Limpiar expiración de contraseña temporal
+  clearPasswordEmailExpiry: async (usuarioId) => {
+    await pool.query(
+      'UPDATE usuarios SET password_email_expires_at = NULL WHERE id = $1',
+      [usuarioId]
+    );
+  },
+
+  // Revocar todas las sesiones de un usuario
+  revokeAllSessions: async (usuarioId) => {
+    await pool.query(
+      'UPDATE usuarios_sesiones SET revoked_at = CURRENT_TIMESTAMP, last_seen_at = CURRENT_TIMESTAMP WHERE usuario_id = $1',
+      [usuarioId]
+    );
   }
 };
 

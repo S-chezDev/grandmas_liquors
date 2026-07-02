@@ -1,14 +1,17 @@
-﻿import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { DataTable, Column, commonActions } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
 import { Plus } from 'lucide-react';
 import { api } from '../../../services/api';
+import { settledValue } from '../../../services/routePermissions';
+import { formatEntityCode } from '../../../services/mappers';
 import { toast } from '../../AlertDialog';
-import type { Domicilio, Pedido, Cliente, Usuario } from '../../../services/types';
+import type { Domicilio, Pedido, Cliente, Usuario, Producto } from '../../../services/types';
 import { MotivoModal } from '../../MotivoModal';
 import { AlertDialog } from '../../AlertDialog';
+import { useAuth } from '../../AuthContext';
 
 interface DomicilioView extends Domicilio {
   clienteNombre?: string;
@@ -17,6 +20,9 @@ interface DomicilioView extends Domicilio {
 }
 
 export function Domicilios() {
+  const { user } = useAuth();
+  const esRepartidor = String(user?.rol || '').trim().toLowerCase() === 'repartidor';
+
   const [domicilios, setDomicilios] = useState<DomicilioView[]>([]);
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
@@ -49,13 +55,31 @@ export function Domicilios() {
 
   const cargarDatos = async () => {
     try {
-      const [domiciliosData, pedidosData, clientesData, usuariosData, productosData] = await Promise.all([
-        api.domicilios.getAll(),
+      const domiciliosSettled = await Promise.allSettled([api.domicilios.getAll()]);
+      const domiciliosResult = domiciliosSettled[0];
+      if (domiciliosResult.status === 'rejected') {
+        console.error('[Domicilios] Error al cargar domicilios:', domiciliosResult.reason);
+        toast.error('Error al cargar datos', {
+          description:
+            domiciliosResult.reason instanceof Error
+              ? domiciliosResult.reason.message
+              : 'No autorizado o error de red',
+        });
+        return;
+      }
+      const domiciliosData = domiciliosResult.value;
+
+      const [pedidosR, clientesR, usuariosR, productosR] = await Promise.allSettled([
         api.pedidos.getAll(),
         api.clientes.getAll(),
         api.usuarios.getAll(),
-        api.productos.getAll()
+        api.productos.getAll(),
       ]);
+
+      const pedidosData = settledValue(pedidosR, [] as Pedido[], 'pedidos');
+      const clientesData = settledValue(clientesR, [] as Cliente[], 'clientes');
+      const usuariosData = settledValue(usuariosR, [] as Usuario[], 'usuarios');
+      const productosData = settledValue(productosR, [] as Producto[], 'productos');
 
       const repartidoresData = usuariosData.filter(
         (u) =>
@@ -64,19 +88,29 @@ export function Domicilios() {
             .toLowerCase() === 'repartidor' && u.estado === 'activo'
       );
       setRepartidores(repartidoresData);
-      setPedidos(pedidosData.filter(p => p.estado === 'pendiente' || p.estado === 'en proceso' || p.estado === 'completado'));
+      setPedidos(
+        pedidosData.filter(
+          (p) => p.estado === 'pendiente' || p.estado === 'en proceso' || p.estado === 'completado'
+        )
+      );
       setClientes(clientesData);
-      setProductosCatalogo(productosData.map((p) => ({ id: p.id, nombre: p.nombre })));
+      setProductosCatalogo(
+        productosData.map((p: { id: number; nombre: string }) => ({ id: p.id, nombre: p.nombre }))
+      );
 
-      const domiciliosConInfo = domiciliosData.map(domicilio => {
-        const cliente = clientesData.find(c => c.id === domicilio.clienteId);
-        const repartidor = usuariosData.find(u => u.id === domicilio.repartidorId);
-        const pedido = pedidosData.find(p => p.id === domicilio.pedidoId);
+      const domiciliosConInfo = domiciliosData.map((domicilio) => {
+        const cliente = clientesData.find((c) => c.id === domicilio.clienteId);
+        const repartidor = usuariosData.find((u) => u.id === domicilio.repartidorId);
+        const pedido = pedidosData.find((p) => p.id === domicilio.pedidoId);
         return {
           ...domicilio,
-          clienteNombre: cliente ? `${cliente.nombre} ${cliente.apellido}` : 'Desconocido',
+          clienteNombre:
+            domicilio.clienteNombre ||
+            (cliente ? `${cliente.nombre} ${cliente.apellido}` : 'Desconocido'),
           repartidorNombre: repartidor ? `${repartidor.nombre} ${repartidor.apellido}` : 'Desconocido',
-          pedidoNumero: pedido ? `#${String(pedido.id).padStart(4, '0')}` : 'Desconocido'
+          pedidoNumero:
+            domicilio.pedidoNumero ||
+            (pedido ? formatEntityCode('P', pedido.id) : 'Desconocido'),
         };
       });
 
@@ -92,6 +126,20 @@ export function Domicilios() {
       currency: 'COP',
       minimumFractionDigits: 0
     }).format(value);
+  };
+
+  const totalDomicilioVista = (d: DomicilioView) => {
+    const base = d.totalPedidoBase ?? d.total;
+    const esq = d.esquemaAbonoPedido ?? '';
+    if (esRepartidor && String(esq).includes('50')) return Math.round(Number(base) * 0.5);
+    return Math.round(Number(base));
+  };
+
+  const valorRestanteDomicilio = (d: DomicilioView) => {
+    const base = Math.round(Number(d.totalPedidoBase ?? d.total));
+    const esq = String(d.esquemaAbonoPedido || '');
+    if (esq.includes('50')) return Math.round(base * 0.5);
+    return 0;
   };
 
   const domicilioEstadoOpciones = (
@@ -180,6 +228,11 @@ export function Domicilios() {
 
   const columns: Column[] = [
     {
+      key: 'id',
+      label: 'ID Domicilio',
+      render: (value: number) => formatEntityCode('D', value)
+    },
+    {
       key: 'pedidoNumero',
       label: 'ID Pedido'
     },
@@ -199,7 +252,7 @@ export function Domicilios() {
     {
       key: 'total',
       label: 'Total',
-      render: (total: number) => formatCurrency(total)
+      render: (_total: number, row: DomicilioView) => formatCurrency(totalDomicilioVista(row)),
     },
     {
       key: 'fechaPedido',
@@ -411,9 +464,11 @@ export function Domicilios() {
           <h2>Gestión de Domicilios</h2>
           <p className="text-muted-foreground">Administra las entregas a domicilio</p>
         </div>
-        <Button icon={<Plus className="w-5 h-5" />} onClick={handleAdd}>
-          Nuevo Domicilio
-        </Button>
+        {!esRepartidor ? (
+          <Button icon={<Plus className="w-5 h-5" />} onClick={handleAdd}>
+            Nuevo Domicilio
+          </Button>
+        ) : null}
       </div>
 
       <div className="bg-white rounded-lg border border-border p-4">
@@ -423,7 +478,7 @@ export function Domicilios() {
               type="text"
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
-              placeholder="Buscar... (mín. 2, máx. 50 caracteres)"
+              placeholder="Buscar ..."
               className="w-full px-4 py-2.5 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
               maxLength={50}
             />
@@ -440,18 +495,20 @@ export function Domicilios() {
               <option value="completado">Completado</option>
               <option value="cancelado">Cancelado</option>
             </select>
-            <select
-              value={filtroRepartidor}
-              onChange={(e) => setFiltroRepartidor(e.target.value)}
-              className="px-3 py-2.5 border border-border rounded-lg bg-white text-gray-500 focus:outline-none focus:ring-2 focus:ring-primary min-w-[180px]"
-            >
-              <option value="">Filtrar por repartidor</option>
-              {repartidores.map(r => (
-                <option key={r.id} value={String(r.id)}>
-                  {r.nombre} {r.apellido}
-                </option>
-              ))}
-            </select>
+            {!esRepartidor ? (
+              <select
+                value={filtroRepartidor}
+                onChange={(e) => setFiltroRepartidor(e.target.value)}
+                className="px-3 py-2.5 border border-border rounded-lg bg-white text-gray-500 focus:outline-none focus:ring-2 focus:ring-primary min-w-[180px]"
+              >
+                <option value="">Filtrar por repartidor</option>
+                {repartidores.map((r) => (
+                  <option key={r.id} value={String(r.id)}>
+                    {r.nombre} {r.apellido}
+                  </option>
+                ))}
+              </select>
+            ) : null}
             <Button
               variant="outline"
               onClick={() => {
@@ -465,13 +522,6 @@ export function Domicilios() {
             </Button>
           </div>
         </div>
-      </div>
-
-      <div className="p-4 bg-green-50 rounded-lg border border-green-200">
-        <p className="text-sm text-green-700">
-          <strong>Sincronización automática:</strong> Cuando un domicilio se marca como "Completado",
-          se actualizan automáticamente el pedido, venta y abono relacionados a estado completado.
-        </p>
       </div>
 
       <DataTable
@@ -495,7 +545,7 @@ export function Domicilios() {
             }
             setIsDetailModalOpen(true);
           }),
-          commonActions.edit(handleEdit),
+          ...(esRepartidor ? [] : [commonActions.edit(handleEdit)]),
         ]}
       />
 
@@ -511,7 +561,7 @@ export function Domicilios() {
             <>
               <p>
                 <strong>Domicilio:</strong> #
-                {String(domicilioPending.domicilio.id).padStart(4, '0')}
+                {formatEntityCode('D', domicilioPending.domicilio.id)}
               </p>
               <p className="text-muted-foreground">
                 Estado actual: {domicilioPending.domicilio.estado}
@@ -558,7 +608,7 @@ export function Domicilios() {
             {editingDomicilio ? (
               <div className="p-3 rounded-lg bg-accent text-sm">
                 <p>
-                  <strong>Domicilio:</strong> #{String(editingDomicilio.id).padStart(4, '0')}
+                  <strong>Domicilio:</strong> {formatEntityCode('D', editingDomicilio.id)}
                 </p>
                 <p>
                   <strong>Pedido asignado:</strong> {editingDomicilio.pedidoNumero}
@@ -586,7 +636,7 @@ export function Domicilios() {
                     const cliente = clientes.find(c => c.id === p.clienteId);
                     return {
                       value: String(p.id),
-                      label: `Pedido #${String(p.id).padStart(4, '0')} - ${cliente ? `${cliente.nombre} ${cliente.apellido}` : 'Desconocido'} - Entrega: ${p.fechaEntrega}`
+                      label: `Pedido ${formatEntityCode('P', p.id)} - ${cliente ? `${cliente.nombre} ${cliente.apellido}` : 'Desconocido'} - Entrega: ${p.fechaEntrega}`
                     };
                   })
                 ]}
@@ -687,7 +737,7 @@ export function Domicilios() {
           <div className="space-y-6">
             <div className="flex items-center justify-between p-4 bg-accent rounded-lg">
               <div>
-                <h3 className="text-lg">Domicilio #{String(selectedDomicilio.id).padStart(4, '0')}</h3>
+                <h3 className="text-lg">Domicilio {formatEntityCode('D', selectedDomicilio.id)}</h3>
                 <p className="text-sm text-muted-foreground">{selectedDomicilio.clienteNombre}</p>
               </div>
               <span className={`px-4 py-2 rounded-full text-sm ${
@@ -717,7 +767,15 @@ export function Domicilios() {
               </div>
               <div>
                 <label className="text-sm text-muted-foreground">Total</label>
-                <p className="mt-1 font-semibold text-lg">{formatCurrency(selectedDomicilio.total)}</p>
+                <p className="mt-1 font-semibold text-lg">
+                  {formatCurrency(totalDomicilioVista(selectedDomicilio))}
+                </p>
+              </div>
+              <div>
+                <label className="text-sm text-muted-foreground">Valor restante por cobrar</label>
+                <p className="mt-1 font-semibold">
+                  {formatCurrency(valorRestanteDomicilio(selectedDomicilio))}
+                </p>
               </div>
               <div>
                 <label className="text-sm text-muted-foreground">Dirección de Entrega</label>

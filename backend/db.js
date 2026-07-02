@@ -11,9 +11,11 @@ const pool = new Pool({
   user: config.db.user,
   password: dbPassword,
   database: config.db.database,
-  max: 10,
+  ssl: config.db.ssl ? { rejectUnauthorized: false } : false,
+  max: 50,
+  min: 5,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  connectionTimeoutMillis: 10000,
 });
 
 // Verificar conexión a la base de datos
@@ -26,5 +28,20 @@ pool.connect()
     console.error('✗ Error al conectar a la Base de Datos:', error.message);
     process.exit(1);
   });
+
+// Monitorear pool de conexiones para detectar agotamiento
+if (config.server.env === 'production') {
+  setInterval(() => {
+    const totalCount = pool.totalCount;
+    const idleCount = pool.idleCount;
+    const waitingCount = pool.waitingCount;
+    
+    if (waitingCount > 0) {
+      console.warn(`⚠️  DB Pool: ${totalCount} total, ${idleCount} idle, ${waitingCount} waiting - Posible agotamiento`);
+    } else if (totalCount > 40) {
+      console.warn(`⚠️  DB Pool: ${totalCount} total, ${idleCount} idle - Uso alto (${Math.round(totalCount/50*100)}%)`);
+    }
+  }, 60000);
+}
 
 module.exports = pool;

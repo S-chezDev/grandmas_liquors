@@ -72,12 +72,26 @@ const canonicalizeWithMap = (value, map) => {
 
 const normalizeTipoDocumento = (value) => canonicalizeWithMap(value, TIPO_DOCUMENTO_MAP);
 
+const normalizeProveedorIdentifier = (value) => {
+  const cleaned = String(value ?? '')
+    .trim()
+    .replace(/[^0-9:\/*,-]/g, '')
+    .replace(/([:\/*,-]){2,}/g, '$1')
+    .replace(/^[:\/*,-]+|[:\/*,-]+$/g, '');
+  return {
+    cleaned,
+    digits: cleaned.replace(/\D/g, ''),
+  };
+};
+
 const normalizeMetodoPago = (value) => {
   if (value === undefined || value === null) return undefined;
   return canonicalizeWithMap(String(value), METODO_PAGO_MAP);
 };
 
 /** Montos en COP: número o texto con puntos como separador de miles (ej. "2.500.000" → 2500000). */
+const MONEY_MAX_COP = 100_000_000;
+
 const parseMoneyCO = (value) => {
   if (value === undefined || value === null || value === '') return undefined;
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -103,6 +117,11 @@ const normalizeVentaPayload = (payload = {}) => {
     }
     if (total < 0) {
       return { error: 'Total de venta no puede ser negativo.' };
+    }
+    if (total > MONEY_MAX_COP) {
+      return {
+        error: `El total de la venta no puede superar $${MONEY_MAX_COP.toLocaleString('es-CO')} COP.`,
+      };
     }
     data.total = total;
   }
@@ -395,14 +414,14 @@ const normalizeProveedorPayload = (payload = {}) => {
         ? String(payload.nit).trim()
         : '';
     if (docRaw) {
-      const docDigits = docRaw.replace(/\D/g, '');
-      if (docDigits.length < 6 || docDigits.length > 12) {
+      const { cleaned: formattedIdentifier, digits: docDigits } = normalizeProveedorIdentifier(docRaw);
+      if (docDigits.length < 6 || docDigits.length > 15) {
         return {
-          error: 'El NIT/Documento debe tener entre 6 y 12 digitos.',
+          error: 'El NIT/Documento debe tener entre 6 y 15 digitos.',
         };
       }
       if (data.tipoPersona === 'Juridica') {
-        data.nit = docDigits;
+        data.nit = formattedIdentifier;
       } else {
         data.numeroDocumento = docDigits;
         data.nit = null;

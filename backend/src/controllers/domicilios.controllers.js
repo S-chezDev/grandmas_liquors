@@ -14,38 +14,100 @@ const {
   assertOwnDomicilioId,
   assertOwnPedidoId,
 } = require('../utils/selfServiceAccess');
+const { asyncHandler } = require('../utils/asyncHandler');
+const { AppError } = require('../utils/AppError');
+
+const isRepartidorUser = (req) => String(req.user?.rol || '').trim().toLowerCase() === 'repartidor';
+
+/** Repartidor solo accede a domicilios donde es repartidor_id asignado. */
+const assertRepartidorOwnsDomicilio = (req, domicilio) => {
+  if (!isRepartidorUser(req)) return;
+  if (!domicilio || Number(domicilio.repartidor_id) !== Number(req.user.id)) {
+    throw AppError.forbidden();
+  }
+};
+
+const throwIfModelError = (error) => {
+  if (error?.statusCode) {
+    throw new AppError(error.message, error.statusCode, 'BUSINESS_RULE', error.details);
+  }
+  throw error;
+};
 
 const normalizeEstado = (value) => String(value || '').trim().toLowerCase();
-
-const buildVentaNumber = () => `VEN-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
 const ensureVentaForDeliveredDomicilio = async (domicilioId) => {
   try {
     const domicilio = await models.Domicilios.getById(domicilioId);
     if (!domicilio) return;
-    if (normalizeEstado(domicilio.estado) !== 'entregado') return;
+    const domicilioEstado = normalizeEstado(domicilio.estado);
+    if (!['entregado', 'cancelado'].includes(domicilioEstado)) return;
 
     const pedido = await models.Pedidos.getById(domicilio.pedido_id);
     if (!pedido) return;
 
     const ventaExistente = await models.Ventas.getByPedido(domicilio.pedido_id);
+    const pedidoTotal = Number(pedido.total || 0);
+    const pedidoId = Number(pedido.id);
 
-    /*
-     * Liquidacion del abono al entregar: no se crea un segundo abono por el mismo pedido.
-     * Se actualiza el abono mas antiguo del pedido (el creado al registrar el pedido con 50%)
-     * al monto total y 100%, y se eliminan filas duplicadas del mismo pedido.
-     */
+    if (domicilioEstado === 'cancelado') {
+      if (String(pedido.estado || '').trim() !== 'Cancelado') {
+        await models.Pedidos.update(pedidoId, {
+          numero_pedido: pedido.numero_pedido,
+          fecha: pedido.fecha,
+          fecha_entrega: pedido.fecha_entrega,
+          detalles: pedido.detalles,
+          direccion: pedido.direccion,
+          telefono: pedido.telefono,
+          total: pedido.total,
+          metodo_pago: pedido.metodo_pago,
+          esquema_abono: pedido.esquema_abono,
+          monto_abonado: pedido.monto_abonado,
+          estado: 'Cancelado',
+        });
+      }
+      if (ventaExistente?.id) {
+        const ventaActual = await models.Ventas.getById(ventaExistente.id);
+        if (ventaActual && String(ventaActual.estado || '').trim() === 'Pendiente') {
+          await models.Ventas.update(ventaExistente.id, { estado: 'Cancelada' });
+        }
+      }
+      const abonosRaw = await models.Abonos.getByPedido(pedidoId);
+      for (const abono of Array.isArray(abonosRaw) ? abonosRaw : []) {
+        const estadoAbono = String(abono.estado || '').trim();
+        if (estadoAbono === 'Registrado' || estadoAbono === 'Verificado' || estadoAbono === 'Aplicado') {
+          await models.Abonos.updateEstado(abono.id, 'Cancelado');
+        }
+      }
+      return;
+    }
+
+    if (String(pedido.estado || '').trim() !== 'Completado') {
+      await models.Pedidos.update(pedidoId, {
+        numero_pedido: pedido.numero_pedido,
+        fecha: pedido.fecha,
+        fecha_entrega: pedido.fecha_entrega,
+        detalles: pedido.detalles,
+        direccion: pedido.direccion,
+        telefono: pedido.telefono,
+        total: pedido.total,
+        metodo_pago: pedido.metodo_pago,
+        esquema_abono: pedido.esquema_abono,
+        monto_abonado: pedido.monto_abonado,
+        estado: 'Completado',
+      });
+    }
+
     try {
       const abonosRaw = await models.Abonos.getByPedido(pedido.id);
-      const totalPedido = Number(pedido.total || 0);
       const lista = [...(Array.isArray(abonosRaw) ? abonosRaw : [])].sort((a, b) => Number(a.id) - Number(b.id));
       const isCancelado = (s) => String(s || '').trim().toLowerCase().includes('cancel');
       const activos = lista.filter((a) => !isCancelado(a.estado));
       const principal = activos[0] || lista[0] || null;
 
-      if (principal && totalPedido > 0) {
+      if (principal && pedidoTotal > 0) {
         const montoPrevio = Number(principal.monto || 0);
-        const faltante = Math.max(0, Math.round(totalPedido - montoPrevio));
+        const faltante = Math.max(0, Math.round(pedidoTotal - montoPrevio));
         const fechaHoy = new Date().toISOString().split('T')[0];
         const fechaPrev = principal.fecha ? String(principal.fecha).split('T')[0] : 'sin fecha';
         const metodoPrev = principal.metodo_pago || 'no especificado';
@@ -53,26 +115,26 @@ const ensureVentaForDeliveredDomicilio = async (domicilioId) => {
         const partes = [];
         partes.push(
           `Abono inicial: $${montoPrevio.toLocaleString('es-CO')} (${
-            totalPedido > 0 ? Math.round((montoPrevio * 100) / totalPedido) : 0
+            pedidoTotal > 0 ? Math.round((montoPrevio * 100) / pedidoTotal) : 0
           }%) - ${fechaPrev} - ${metodoPrev}`
         );
         if (faltante > 0) {
           partes.push(
             `Liquidacion contraentrega: $${faltante.toLocaleString('es-CO')} (${
-              totalPedido > 0 ? Math.round((faltante * 100) / totalPedido) : 0
+              pedidoTotal > 0 ? Math.round((faltante * 100) / pedidoTotal) : 0
             }%) - ${fechaHoy} - Contraentrega`
           );
         } else {
           partes.push(`Liquidacion contraentrega: $0 - pedido ya saldado al ${fechaHoy}`);
         }
         partes.push(
-          `Total liquidado: $${Math.round(totalPedido).toLocaleString('es-CO')} (100%) - cierre el ${fechaHoy}`
+          `Total liquidado: $${Math.round(pedidoTotal).toLocaleString('es-CO')} (100%) - cierre el ${fechaHoy}`
         );
         const detalleCombinado = partes.join(' | ');
 
         try {
           await models.Abonos.updateLiquidacion(principal.id, {
-            monto: Math.round(totalPedido),
+            monto: Math.round(pedidoTotal),
             detalle: detalleCombinado,
             estado: 'Finalizado',
             porcentaje_abonado: 100,
@@ -83,25 +145,19 @@ const ensureVentaForDeliveredDomicilio = async (domicilioId) => {
 
         for (const a of lista) {
           if (Number(a.id) === Number(principal.id)) continue;
-          try {
-            await models.Abonos.delete(a.id);
-          } catch (e) {
-            // continuar
-          }
+          await models.Abonos.updateEstado(a.id, 'Cancelado');
         }
-      } else if (totalPedido > 0 && lista.length === 0) {
+      } else if (pedidoTotal > 0 && lista.length === 0) {
         const fechaHoy = new Date().toISOString().split('T')[0];
-        const numero_abono = `ABO-${Date.now()}`;
         await models.Abonos.create({
-          numero_abono,
-          pedido_id: pedido.id,
+          pedido_id: pedidoId,
           cliente_id: pedido.cliente_id,
-          monto: Math.round(totalPedido),
+          monto: Math.round(pedidoTotal),
           fecha: fechaHoy,
           metodo_pago: 'Contraentrega',
           estado: 'Finalizado',
           porcentaje_abonado: 100,
-          detalle: `Liquidacion total a contraentrega: $${Math.round(totalPedido).toLocaleString(
+          detalle: `Liquidacion total a contraentrega: $${Math.round(pedidoTotal).toLocaleString(
             'es-CO'
           )} (100%) - ${fechaHoy} - Contraentrega`,
         });
@@ -109,8 +165,15 @@ const ensureVentaForDeliveredDomicilio = async (domicilioId) => {
 
       try {
         await models.Pedidos.update(pedido.id, {
+          numero_pedido: pedido.numero_pedido,
+          fecha: pedido.fecha,
+          fecha_entrega: pedido.fecha_entrega,
+          detalles: pedido.detalles,
+          direccion: pedido.direccion,
+          telefono: pedido.telefono,
           esquema_abono: '100%',
-          monto_abonado: Math.round(totalPedido),
+          monto_abonado: Math.round(pedidoTotal),
+          estado: 'Completado',
         });
       } catch (e) {
         // ignore
@@ -133,17 +196,16 @@ const ensureVentaForDeliveredDomicilio = async (domicilioId) => {
 
     // Crear venta por pedido y marcarla como Completada
     const ventaId = await models.Ventas.create({
-      numero_venta: buildVentaNumber(),
       tipo: 'Por Pedido',
       cliente_id: pedido.cliente_id,
-      pedido_id: pedido.id,
+      pedido_id: pedidoId,
       fecha: new Date().toISOString().split('T')[0],
       metodopago: 'Contraentrega',
-      total: Number(pedido.total || 0),
+      total: pedidoTotal,
       estado: 'Completada',
     });
 
-    const detalles = await models.Pedidos.getDetalles(pedido.id);
+    const detalles = await models.Pedidos.getDetalles(pedidoId);
     await Promise.all(
       (Array.isArray(detalles) ? detalles : []).map((item) =>
         models.Ventas.addDetalle(
@@ -160,59 +222,43 @@ const ensureVentaForDeliveredDomicilio = async (domicilioId) => {
   }
 };
 
-module.exports = {
-  getAll: async (req, res) => {
-    try {
-      if (isClienteUser(req)) {
-        return res.status(403).json({ success: false, message: 'No autorizado' });
-      }
-      const domicilios = await models.Domicilios.getAll();
-      return res.json({ success: true, data: domicilios });
-    } catch (error) {
-      return res.status(500).json({ success: false, message: error.message });
-    }
-  },
-  getByCliente: async (req, res) => {
-    try {
-      const denied = assertOwnClienteParam(req, res, req.params.clienteId);
-      if (denied) return denied;
+exports.getAll = asyncHandler(async (req, res) => {
+  if (isClienteUser(req)) throw AppError.forbidden();
+  const rid = isRepartidorUser(req) ? req.user.id : null;
+  const domicilios = await models.Domicilios.getAll(rid ? { repartidorUserId: rid } : {});
+  res.json({ success: true, data: domicilios });
+});
 
-      const domicilios = await models.Domicilios.getByCliente(req.params.clienteId);
-      return res.json({ success: true, data: domicilios });
-    } catch (error) {
-      return res.status(500).json({ success: false, message: error.message });
-    }
-  },
-  getById: async (req, res) => {
-    try {
-      const denied = await assertOwnDomicilioId(req, res, req.params.id);
-      if (denied) return denied;
+exports.getByCliente = asyncHandler(async (req, res) => {
+  const denied = assertOwnClienteParam(req, res, req.params.clienteId);
+  if (denied) return denied;
+  const domicilios = await models.Domicilios.getByCliente(req.params.clienteId);
+  res.json({ success: true, data: domicilios });
+});
 
-      const domicilio = await models.Domicilios.getById(req.params.id);
-      if (!domicilio) return res.status(404).json({ success: false, message: 'Domicilio no encontrado' });
-      return res.json({ success: true, data: domicilio });
-    } catch (error) {
-      return res.status(500).json({ success: false, message: error.message });
-    }
-  },
-  getByPedido: async (req, res) => {
-    try {
-      if (isClienteUser(req)) {
-        const denied = await assertOwnPedidoId(req, res, req.params.pedidoId);
-        if (denied) return denied;
-      }
-      const domicilio = await models.Domicilios.getByPedido(req.params.pedidoId);
-      return res.json({ success: true, data: domicilio });
-    } catch (error) {
-      return res.status(500).json({ success: false, message: error.message });
-    }
-  },
-  create: async (req, res) => {
-    try {
-      if (isClienteUser(req)) {
-        return res.status(403).json({ success: false, message: 'No autorizado' });
-      }
-      const b = req.body || {};
+exports.getById = asyncHandler(async (req, res) => {
+  const denied = await assertOwnDomicilioId(req, res, req.params.id);
+  if (denied) return denied;
+
+  const domicilio = await models.Domicilios.getById(req.params.id);
+  if (!domicilio) throw AppError.notFound('Domicilio no encontrado');
+  assertRepartidorOwnsDomicilio(req, domicilio);
+  res.json({ success: true, data: domicilio });
+});
+
+exports.getByPedido = asyncHandler(async (req, res) => {
+  if (isClienteUser(req)) {
+    const denied = await assertOwnPedidoId(req, res, req.params.pedidoId);
+    if (denied) return denied;
+  }
+  const domicilio = await models.Domicilios.getByPedido(req.params.pedidoId);
+  res.json({ success: true, data: domicilio });
+});
+
+exports.create = asyncHandler(async (req, res) => {
+  if (isClienteUser(req) || isRepartidorUser(req)) throw AppError.forbidden();
+
+  const b = req.body || {};
 
       let direccionFromBody = b.direccion;
       if (direccionFromBody !== undefined && direccionFromBody !== null && typeof direccionFromBody === 'object') {
@@ -235,39 +281,20 @@ module.exports = {
         fechaFromBody = null;
       }
 
-      const pedido_id = Number(b.pedido_id ?? b.pedidoId);
-      if (!Number.isFinite(pedido_id) || pedido_id <= 0) {
-        return res.status(400).json({ success: false, message: 'pedido_id es requerido y debe ser válido' });
-      }
+  const pedido_id = Number(b.pedido_id ?? b.pedidoId);
+  const repartidor_id = Number(b.repartidor_id ?? b.repartidorId);
 
-      const repIdRaw = b.repartidor_id ?? b.repartidorId;
-      const repartidor_id =
-        repIdRaw !== undefined && repIdRaw !== null && String(repIdRaw).trim() !== ''
-          ? Number(repIdRaw)
-          : null;
-      if (repartidor_id === null || !Number.isFinite(repartidor_id) || repartidor_id <= 0) {
-        return res.status(400).json({ success: false, message: 'repartidor_id es requerido' });
-      }
+  const [repartidorUsuario, pedidoRow] = await Promise.all([
+    models.Usuarios.getById(repartidor_id),
+    models.Pedidos.getById(pedido_id),
+  ]);
+  if (!repartidorUsuario) throw AppError.badRequest('Repartidor no encontrado');
+  if (!pedidoRow) throw AppError.notFound('Pedido no encontrado');
 
-      const [repartidorUsuario, pedidoRow] = await Promise.all([
-        models.Usuarios.getById(repartidor_id),
-        models.Pedidos.getById(pedido_id),
-      ]);
-      if (!repartidorUsuario) {
-        return res.status(400).json({ success: false, message: 'Repartidor no encontrado' });
-      }
-      if (!pedidoRow) {
-        return res.status(404).json({ success: false, message: 'Pedido no encontrado' });
-      }
-
-      // Siempre tomar cliente del pedido en BD (evita desajustes con la lista del frontend)
-      const cliente_id = Number(pedidoRow.cliente_id);
-      if (!Number.isFinite(cliente_id) || cliente_id <= 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'El pedido no tiene un cliente válido asociado',
-        });
-      }
+  const cliente_id = Number(pedidoRow.cliente_id);
+  if (!Number.isFinite(cliente_id) || cliente_id <= 0) {
+    throw AppError.badRequest('El pedido no tiene un cliente válido asociado');
+  }
 
       let direccion = direccionFromBody;
       if (!direccion) {
@@ -301,12 +328,6 @@ module.exports = {
         fecha = new Date().toISOString().split('T')[0];
       }
 
-      const numeroRaw =
-        (typeof b.numero_domicilio === 'string' && b.numero_domicilio.trim()) ||
-        (typeof b.numeroDomicilio === 'string' && b.numeroDomicilio.trim()) ||
-        `DOM-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-      const numero = String(numeroRaw).slice(0, 50);
-
       let repartidorNombre =
         b.repartidor !== undefined && b.repartidor !== null && String(b.repartidor).trim() !== ''
           ? String(b.repartidor).trim()
@@ -324,7 +345,6 @@ module.exports = {
       if (horaVal === '' || horaVal === undefined) horaVal = null;
 
       const payload = {
-        numero_domicilio: numero,
         pedido_id,
         cliente_id,
         direccion,
@@ -336,65 +356,56 @@ module.exports = {
         detalle: b.detalle != null && String(b.detalle).trim() !== '' ? String(b.detalle).trim() : null,
       };
 
-      const id = await models.Domicilios.create(payload);
-      return res.status(201).json({ success: true, id, message: 'Domicilio creado exitosamente' });
-    } catch (error) {
-      return res.status(error.statusCode || 500).json({ success: false, message: error.message });
-    }
-  },
-  update: async (req, res) => {
-    try {
-      if (isClienteUser(req)) {
-        return res.status(403).json({ success: false, message: 'No autorizado' });
-      }
-      await models.Domicilios.update(req.params.id, req.body);
-      await ensureVentaForDeliveredDomicilio(req.params.id);
-      return res.json({ success: true, message: 'Domicilio actualizado exitosamente' });
-    } catch (error) {
-      return res.status(error.statusCode || 500).json({ success: false, message: error.message });
-    }
-  },
-  updateStatus: async (req, res) => {
-    try {
-      if (isClienteUser(req)) {
-        return res.status(403).json({ success: false, message: 'No autorizado' });
-      }
+  try {
+    const id = await models.Domicilios.create(payload);
+    res.status(201).json({ success: true, id, message: 'Domicilio creado exitosamente' });
+  } catch (error) {
+    throwIfModelError(error);
+  }
+});
 
-      const estado = typeof req.body?.estado === 'string' ? req.body.estado.trim() : '';
-      const motivo = typeof req.body?.motivo_cancelacion === 'string' ? req.body.motivo_cancelacion.trim() : '';
-      if (!['Pendiente', 'En Camino', 'Entregado', 'Cancelado'].includes(estado)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Estado invalido. Valores permitidos: Pendiente, En Camino, Entregado, Cancelado',
-        });
-      }
+exports.update = asyncHandler(async (req, res) => {
+  if (isClienteUser(req)) throw AppError.forbidden();
+  const dom = await models.Domicilios.getById(req.params.id);
+  assertRepartidorOwnsDomicilio(req, dom);
+  try {
+    await models.Domicilios.update(req.params.id, req.body);
+    await ensureVentaForDeliveredDomicilio(req.params.id);
+    res.json({ success: true, message: 'Domicilio actualizado exitosamente' });
+  } catch (error) {
+    throwIfModelError(error);
+  }
+});
 
-      if (estado === 'Cancelado' && (!motivo || motivo.length < 10 || motivo.length > 50)) {
-        return res.status(400).json({
-          success: false,
-          message: 'El motivo de cancelación es obligatorio y debe tener entre 10 y 50 caracteres',
-        });
-      }
+exports.updateStatus = asyncHandler(async (req, res) => {
+  if (isClienteUser(req)) throw AppError.forbidden();
 
-      await models.Domicilios.update(req.params.id, {
-        estado,
-        motivo_cancelacion: estado === 'Cancelado' ? motivo : undefined,
-      });
-      await ensureVentaForDeliveredDomicilio(req.params.id);
-      return res.json({ success: true, message: 'Estado del domicilio actualizado correctamente' });
-    } catch (error) {
-      return res.status(error.statusCode || 500).json({ success: false, message: error.message });
-    }
-  },
-  delete: async (req, res) => {
-    try {
-      if (isClienteUser(req)) {
-        return res.status(403).json({ success: false, message: 'No autorizado' });
-      }
-      await models.Domicilios.delete(req.params.id);
-      return res.json({ success: true, message: 'Domicilio eliminado exitosamente' });
-    } catch (error) {
-      return res.status(500).json({ success: false, message: error.message });
-    }
-  },
-};
+  const dom = await models.Domicilios.getById(req.params.id);
+  assertRepartidorOwnsDomicilio(req, dom);
+
+  const { estado } = req.body;
+  const motivo = String(req.body.motivo_cancelacion ?? req.body.motivoCancelacion ?? '').trim();
+
+  try {
+    await models.Domicilios.update(req.params.id, {
+      estado,
+      motivo_cancelacion: estado === 'Cancelado' ? motivo : undefined,
+    });
+    await ensureVentaForDeliveredDomicilio(req.params.id);
+    res.json({ success: true, message: 'Estado del domicilio actualizado correctamente' });
+  } catch (error) {
+    throwIfModelError(error);
+  }
+});
+
+exports.delete = asyncHandler(async (req, res) => {
+  if (isClienteUser(req)) throw AppError.forbidden();
+  const dom = await models.Domicilios.getById(req.params.id);
+  assertRepartidorOwnsDomicilio(req, dom);
+  const motivo = String(req.body?.motivo || '').trim();
+  if (!motivo || motivo.length < 10 || motivo.length > 50) {
+    throw AppError.badRequest('El motivo de eliminacion es obligatorio y debe tener entre 10 y 50 caracteres');
+  }
+  await models.Domicilios.delete(req.params.id, { reason: motivo, actor_id: req.user?.id || null });
+  res.json({ success: true, message: 'Domicilio eliminado exitosamente' });
+});

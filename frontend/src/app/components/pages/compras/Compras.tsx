@@ -1,10 +1,12 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DataTable, Column, commonActions, openPrintablePdf } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, Eye, Trash2, Package, Search, ShoppingCart } from 'lucide-react';
+import { Plus, Eye, Trash2, Package, Search, ShoppingCart, Edit } from 'lucide-react';
 import { api } from '../../../services/api';
+import { settledValue } from '../../../services/routePermissions';
+import { formatEntityCode, formatMoneyInput, parseMoneyInput, MAX_MONEY_DIGITS } from '../../../services/mappers';
 import type { Compra, Producto, Proveedor, CompraProducto } from '../../../services/types';
 import { toast } from '../../AlertDialog';
 import { AlertDialog } from '../../AlertDialog';
@@ -34,6 +36,7 @@ export function Compras() {
     precioCompra: 0,
     ganancia: 0
   });
+  const [editingProductoId, setEditingProductoId] = useState<number | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [filtroEstado, setFiltroEstado] = useState<string>('Todos');
@@ -41,6 +44,8 @@ export function Compras() {
   const [mostrarListaProveedores, setMostrarListaProveedores] = useState(false);
   const [busquedaProducto, setBusquedaProducto] = useState('');
   const [mostrarListaProductos, setMostrarListaProductos] = useState(false);
+  const [isSubmittingCompra, setIsSubmittingCompra] = useState(false);
+  const [isSubmittingEstado, setIsSubmittingEstado] = useState(false);
 
   useEffect(() => {
     cargarDatos();
@@ -50,14 +55,16 @@ export function Compras() {
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
-      if (!target.closest('.relative')) {
+      if (!target.closest('.compra-proveedor-picker')) {
         setMostrarListaProveedores(false);
+      }
+      if (!target.closest('.compra-producto-picker')) {
         setMostrarListaProductos(false);
       }
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('mousedown', handleClickOutside, true);
+    return () => document.removeEventListener('mousedown', handleClickOutside, true);
   }, []);
 
   const productosFiltrados = (() => {
@@ -71,27 +78,69 @@ export function Compras() {
   })();
 
   const seleccionarProductoCompra = (producto: Producto) => {
-    setProductoActual({ ...productoActual, productoId: producto.id });
+    const esInsumo = producto.typo === 'insumo';
+    setProductoActual((prev) => ({
+      ...prev,
+      productoId: producto.id,
+      ganancia: esInsumo ? 0 : prev.ganancia,
+    }));
     setBusquedaProducto(`${producto.nombre} (ID: ${producto.id})`);
     setMostrarListaProductos(false);
   };
 
-  const cargarDatos = async () => {
+  const cargarDatos = async (options?: { soloCompras?: boolean; silencioso?: boolean }) => {
     try {
-      setLoading(true);
-      const [comprasData, productosData, proveedoresData] = await Promise.all([
+      if (!options?.silencioso) {
+        setLoading(true);
+      }
+      if (options?.soloCompras) {
+        const comprasData = await api.compras.getAll();
+        setCompras(comprasData);
+        return;
+      }
+      const [comprasR, productosR, proveedoresR] = await Promise.allSettled([
         api.compras.getAll(),
         api.productos.getAll(),
-        api.proveedores.getAll()
+        api.proveedores.getAll(),
       ]);
+
+      if (comprasR.status === 'rejected') {
+        console.error('[Compras] Error al cargar compras:', comprasR.reason);
+        if (!options?.silencioso) {
+          toast.error('Error al cargar datos', {
+            description:
+              comprasR.reason instanceof Error ? comprasR.reason.message : 'No autorizado o error de red',
+          });
+        }
+        throw comprasR.reason;
+      }
+
+      const comprasData = comprasR.value;
+      const productosData = settledValue(productosR, [], 'productos');
+      const proveedoresData = settledValue(proveedoresR, [], 'proveedores');
+
       setCompras(comprasData);
-      setProductos(productosData.filter(p => p.estado === 'activo'));
-      setProveedores(proveedoresData.filter(p => p.estado === 'activo'));
+      setProductos(productosData.filter((p) => p.estado === 'activo' && p.typo !== 'de preparacion'));
+      setProveedores(proveedoresData.filter((p) => p.estado === 'activo'));
     } catch (error: any) {
-      toast.error('Error al cargar datos', { description: error.message });
+      if (!options?.silencioso) {
+        toast.error('Error al cargar datos', { description: error.message });
+      }
+      throw error;
     } finally {
-      setLoading(false);
+      if (!options?.silencioso) {
+        setLoading(false);
+      }
     }
+  };
+
+  const actualizarEstadoCompraLocal = (
+    compraId: number,
+    estado: Compra['estado']
+  ) => {
+    setCompras((prev) =>
+      prev.map((c) => (c.id === compraId ? { ...c, estado } : c))
+    );
   };
 
   const formatCurrency = (value: number) => {
@@ -100,6 +149,18 @@ export function Compras() {
       currency: 'COP',
       minimumFractionDigits: 0
     }).format(value);
+  };
+
+  const resetProductoForm = () => {
+    setProductoActual({
+      productoId: 0,
+      cantidad: 0,
+      precioCompra: 0,
+      ganancia: 0
+    });
+    setBusquedaProducto('');
+    setMostrarListaProductos(false);
+    setEditingProductoId(null);
   };
 
   // Filtrar proveedores según búsqueda
@@ -129,21 +190,17 @@ export function Compras() {
     return matchBusqueda && matchEstado;
   });
 
-  const opcionesEstadoCompra = (row: Compra): { v: Compra['estado']; l: string }[] => {
-    if (row.estado === 'recibida') return [{ v: 'recibida', l: 'Recibida' }];
-    if (row.estado === 'cancelada') return [{ v: 'cancelada', l: 'Cancelada' }];
-    return [
-      { v: 'pendiente', l: 'Pendiente' },
-      { v: 'recibida', l: 'Recibida' },
-      { v: 'cancelada', l: 'Cancelada' }
-    ];
-  };
+  const opcionesEstadoCompra = (_row: Compra): { v: Compra['estado']; l: string }[] => [
+    { v: 'pendiente', l: 'Pendiente' },
+    { v: 'recibida', l: 'Recibida' },
+    { v: 'cancelada', l: 'Cancelada' }
+  ];
 
   const columns: Column[] = [
     {
       key: 'id',
       label: 'ID Compra',
-      render: (id: number) => `#${id}`
+      render: (id: number) => formatEntityCode('C', id)
     },
     {
       key: 'proveedorId',
@@ -177,7 +234,6 @@ export function Compras() {
       label: 'Estado',
       render: (_: any, row: Compra) => {
         const opts = opcionesEstadoCompra(row);
-        const locked = opts.length === 1;
         const bg =
           row.estado === 'recibida' ? '#dcfce7' :
           row.estado === 'pendiente' ? '#fef9c3' : '#fee2e2';
@@ -188,10 +244,10 @@ export function Compras() {
           <select
             value={row.estado}
             onChange={(e) => handleEstadoChange(row, e.target.value as 'pendiente' | 'recibida' | 'cancelada')}
-            disabled={locked}
             className="px-3 py-1 rounded-full text-xs border-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ backgroundColor: bg, color: fg }}
             onClick={(e) => e.stopPropagation()}
+            disabled={row.estado === 'recibida' || row.estado === 'cancelada'}
           >
             {opts.map((o) => (
               <option key={o.v} value={o.v}>
@@ -206,42 +262,51 @@ export function Compras() {
 
   const handleEstadoChange = (compra: Compra, estado: 'pendiente' | 'recibida' | 'cancelada') => {
     if (compra.estado === estado) return;
-    if (compra.estado === 'recibida' || compra.estado === 'cancelada') {
-      toast.warning('No se puede modificar el estado de una compra finalizada');
-      return;
-    }
+    setSelectedCompra(compra);
+    setNuevoEstado(estado);
+    setMotivoCancelacion('');
+
     if (estado === 'recibida') {
       setCompraRecibidaPendiente(compra);
       return;
     }
     if (estado === 'cancelada') {
-      setSelectedCompra(compra);
-      setNuevoEstado('cancelada');
-      setMotivoCancelacion('');
       setIsEstadoModalOpen(true);
+      return;
     }
+    void confirmarCambioEstado(compra, 'pendiente', '');
   };
 
   const confirmarRecibidaCompra = async () => {
-    if (!compraRecibidaPendiente) return;
+    if (!compraRecibidaPendiente || isSubmittingEstado) return;
     try {
+      setIsSubmittingEstado(true);
       await api.compras.changeEstado(compraRecibidaPendiente.id, 'recibida');
+      actualizarEstadoCompraLocal(compraRecibidaPendiente.id, 'recibida');
       toast.success('Estado actualizado', {
         description: 'Compra recibida y stock actualizado exitosamente'
       });
       setCompraRecibidaPendiente(null);
-      cargarDatos();
+      void cargarDatos({ soloCompras: true, silencioso: true }).catch(() => undefined);
     } catch (error: any) {
       toast.error('Error al cambiar estado', { description: error.message });
-      cargarDatos();
+    } finally {
+      setIsSubmittingEstado(false);
     }
   };
 
-  const confirmarCambioEstado = async () => {
-    if (!selectedCompra) return;
+  const confirmarCambioEstado = async (
+    compraOverride?: Compra,
+    estadoOverride?: 'pendiente' | 'recibida' | 'cancelada',
+    motivoOverride?: string
+  ) => {
+    const compraObjetivo = compraOverride || selectedCompra;
+    if (!compraObjetivo || isSubmittingEstado) return;
+    const estadoObjetivo = estadoOverride || nuevoEstado;
+    const motivoCancelacionLimpio = String(motivoOverride ?? motivoCancelacion ?? '').trim();
 
-    if (nuevoEstado === 'cancelada') {
-      if (motivoCancelacion.length < 10 || motivoCancelacion.length > 50) {
+    if (estadoObjetivo === 'cancelada') {
+      if (motivoCancelacionLimpio.length < 10 || motivoCancelacionLimpio.length > 50) {
         toast.error('Error de validación', {
           description: 'El motivo debe tener entre 10 y 50 caracteres'
         });
@@ -250,23 +315,26 @@ export function Compras() {
     }
 
     try {
+      setIsSubmittingEstado(true);
       await api.compras.changeEstado(
-        selectedCompra.id,
-        nuevoEstado,
-        nuevoEstado === 'cancelada' ? motivoCancelacion : undefined
+        compraObjetivo.id,
+        estadoObjetivo,
+        estadoObjetivo === 'cancelada' ? motivoCancelacionLimpio : undefined
       );
 
+      actualizarEstadoCompraLocal(compraObjetivo.id, estadoObjetivo);
       toast.success('Estado actualizado', {
-        description: 'Compra cancelada exitosamente',
+        description: `Compra marcada como ${estadoObjetivo} exitosamente`,
       });
 
       setIsEstadoModalOpen(false);
       setMotivoCancelacion('');
       setSelectedCompra(null);
-      cargarDatos();
+      void cargarDatos({ soloCompras: true, silencioso: true }).catch(() => undefined);
     } catch (error: any) {
       toast.error('Error al cambiar estado', { description: error.message });
-      cargarDatos();
+    } finally {
+      setIsSubmittingEstado(false);
     }
   };
 
@@ -286,6 +354,7 @@ export function Compras() {
       precioCompra: 0,
       ganancia: 0
     });
+    setEditingProductoId(null);
     setBusquedaProveedor('');
     setMostrarListaProveedores(false);
     setBusquedaProducto('');
@@ -305,13 +374,13 @@ export function Compras() {
   const handleVerPdf = (compra: Compra) => {
     const proveedor = proveedores.find((p) => p.id === compra.proveedorId);
     const opened = openPrintablePdf({
-      title: `Compra #${compra.id}`,
+      title: `Compra ${formatEntityCode('C', compra.id)}`,
       subtitle: `Generado el ${new Date().toLocaleString('es-CO')}`,
       sections: [
         {
           title: 'Datos generales',
           rows: [
-            { label: 'ID compra', value: `#${compra.id}` },
+            { label: 'ID compra', value: formatEntityCode('C', compra.id) },
             { label: 'Proveedor', value: proveedor?.nombreRazonSocial || `ID ${compra.proveedorId}` },
             ...(proveedor?.nit ? [{ label: 'NIT/Documento proveedor', value: proveedor.nit }] : []),
             { label: 'Fecha de compra', value: new Date(compra.fecha).toLocaleString('es-CO') },
@@ -371,18 +440,34 @@ export function Compras() {
       return;
     }
 
-    if (productoActual.ganancia < 0) {
-      toast.error('Error', { description: 'La ganancia no puede ser negativa' });
+    if (String(productoActual.precioCompra).replace(/\D/g, '').length > MAX_MONEY_DIGITS) {
+      toast.error('Error', { description: `El precio de compra no puede superar ${MAX_MONEY_DIGITS} dígitos` });
       return;
     }
 
-    if (productoActual.ganancia > 100) {
-      toast.error('Error', { description: 'La ganancia debe estar entre 0% y 100%' });
+    const prodSel = productos.find((p) => p.id === productoActual.productoId);
+    if (prodSel?.typo === 'de preparacion') {
+      toast.error('Error', { description: 'No se pueden comprar productos tipo preparación' });
       return;
     }
+    const esInsumo = prodSel?.typo === 'insumo';
 
-    // Verificar si el producto ya está en la lista
-    const yaExiste = formData.productos.find(p => p.productoId === productoActual.productoId);
+    if (!esInsumo) {
+      if (productoActual.ganancia < 0) {
+        toast.error('Error', { description: 'La ganancia no puede ser negativa' });
+        return;
+      }
+
+      if (productoActual.ganancia > 100) {
+        toast.error('Error', { description: 'La ganancia debe estar entre 0% y 100%' });
+        return;
+      }
+    }
+
+    // Verificar si el producto ya está en la lista, salvo que se esté editando esa misma línea.
+    const yaExiste = formData.productos.find(
+      (p) => p.productoId === productoActual.productoId && p.productoId !== editingProductoId
+    );
     if (yaExiste) {
       toast.error('Error', { description: 'El producto ya está en la lista' });
       return;
@@ -392,26 +477,45 @@ export function Compras() {
       productoId: productoActual.productoId,
       cantidad: productoActual.cantidad,
       precioCompra: productoActual.precioCompra,
-      ganancia: productoActual.ganancia,
+      ganancia: esInsumo ? 0 : productoActual.ganancia,
       subtotal: productoActual.cantidad * productoActual.precioCompra
     };
 
-    setFormData({
-      ...formData,
-      productos: [...formData.productos, nuevoProducto]
-    });
+    if (editingProductoId !== null) {
+      setFormData({
+        ...formData,
+        productos: formData.productos.map((p) =>
+          p.productoId === editingProductoId ? nuevoProducto : p
+        )
+      });
+      toast.success('Producto actualizado');
+    } else {
+      setFormData({
+        ...formData,
+        productos: [...formData.productos, nuevoProducto]
+      });
+      toast.success('Producto agregado');
+    }
 
-    // Limpiar formulario de producto
+    resetProductoForm();
+  };
+
+  const editarProducto = (productoId: number) => {
+    const producto = formData.productos.find((p) => p.productoId === productoId);
+    const productoCatalogo = productos.find((p) => p.id === productoId);
+    if (!producto) return;
+
+    setEditingProductoId(productoId);
     setProductoActual({
-      productoId: 0,
-      cantidad: 0,
-      precioCompra: 0,
-      ganancia: 0
+      productoId: producto.productoId,
+      cantidad: producto.cantidad,
+      precioCompra: producto.precioCompra,
+      ganancia: producto.ganancia
     });
-    setBusquedaProducto('');
+    setBusquedaProducto(
+      productoCatalogo ? `${productoCatalogo.nombre} (ID: ${productoCatalogo.id})` : `ID: ${productoId}`
+    );
     setMostrarListaProductos(false);
-
-    toast.success('Producto agregado');
   };
 
   const eliminarProducto = (productoId: number) => {
@@ -419,11 +523,15 @@ export function Compras() {
       ...formData,
       productos: formData.productos.filter(p => p.productoId !== productoId)
     });
+    if (editingProductoId === productoId) {
+      resetProductoForm();
+    }
     toast.success('Producto eliminado');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingCompra) return;
 
     // Validaciones
     if (formData.proveedorId === 0) {
@@ -452,9 +560,18 @@ export function Compras() {
     }
 
     try {
+      setIsSubmittingCompra(true);
       const subtotal = formData.productos.reduce((sum, p) => sum + p.subtotal, 0);
       const iva = subtotal * 0.19;
       const total = subtotal + iva;
+
+      if (total > 100_000_000) {
+        toast.error('Total de compra demasiado alto', {
+          description:
+            'El total con IVA no puede superar $100.000.000 COP. Reduzca cantidades o precios de compra.',
+        });
+        return;
+      }
 
       const nuevaCompra = {
         proveedorId: formData.proveedorId,
@@ -475,11 +592,23 @@ export function Compras() {
       setIsModalOpen(false);
       cargarDatos();
     } catch (error: unknown) {
-      const msg =
+      const raw =
         error instanceof Error ? error.message : typeof error === 'string' ? error : 'Error desconocido al guardar';
+      const msg =
+        /total|999999|100\.?000\.?000|validaci[oó]n/i.test(raw) && /superar|monto|total/i.test(raw)
+          ? 'El total de la compra supera el máximo permitido ($100.000.000 COP con IVA). Revise cantidades y precios.'
+          : raw;
       toast.error('No se pudo crear la compra', { description: msg });
+      if (import.meta.env.DEV) {
+        console.error('Error al crear compra', error);
+      }
+    } finally {
+      setIsSubmittingCompra(false);
     }
   };
+
+  const productoSeleccionadoCompra = productos.find((p) => p.id === productoActual.productoId);
+  const lineaCompraEsInsumo = productoSeleccionadoCompra?.typo === 'insumo';
 
   // Spinner solo en la carga inicial: en recargas la UI permanece para no perder foco al buscar.
   if (loading && compras.length === 0) {
@@ -513,7 +642,7 @@ export function Compras() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar... (mín. 2, máx. 50 caracteres)"
+              placeholder="Buscar ..."
               className="w-full px-4 py-2.5 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
               maxLength={50}
             />
@@ -577,7 +706,7 @@ export function Compras() {
         <Form onSubmit={handleSubmit} noValidate>
           <div className="grid grid-cols-2 gap-4">
             {/* Campo de búsqueda de Proveedor */}
-            <div className="relative">
+            <div className="relative compra-proveedor-picker">
               <label className="block text-sm font-medium mb-2">Proveedor *</label>
               <input
                 type="text"
@@ -589,6 +718,7 @@ export function Compras() {
                 onFocus={() => setMostrarListaProveedores(true)}
                 placeholder="Escribe ID, nombre/razón social o NIT..."
                 className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                maxLength={60}
                 required
               />
               {mostrarListaProveedores && busquedaProveedor && (
@@ -631,7 +761,7 @@ export function Compras() {
             </h3>
 
             {/* Buscador de productos (mismo diseno que "Agregar Productos" en Nueva Venta) */}
-            <div className="relative">
+            <div className="relative compra-producto-picker">
               <label className="block text-sm font-medium mb-2 flex items-center gap-2">
                 <ShoppingCart className="w-4 h-4" />
                 Producto *
@@ -651,13 +781,14 @@ export function Compras() {
                   onFocus={() => setMostrarListaProductos(true)}
                   placeholder="Busca por nombre o ID, o haz clic para ver todos los productos..."
                   className="w-full pl-10 pr-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-base bg-white"
+                  maxLength={60}
                 />
               </div>
               {mostrarListaProductos && (
                 <div className="absolute z-10 w-full mt-1 bg-white border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
                   {productosFiltrados.length > 0 ? (
                     <>
-                      <div className="sticky top-0 bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
+                      <div className="bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
                         {busquedaProducto.trim() === ''
                           ? `Todos los productos (${productosFiltrados.length})`
                           : `${productosFiltrados.length} producto(s) encontrado(s)`}
@@ -690,64 +821,73 @@ export function Compras() {
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {productoActual.productoId === 0 ? (
+              <p className="text-sm text-muted-foreground bg-muted/40 border border-border rounded-lg px-3 py-2">
+                Seleccione un producto en el buscador para ingresar cantidad, precio de compra
+                {lineaCompraEsInsumo ? '' : ' y ganancia'}.
+              </p>
+            ) : (
+            <div className={`grid gap-4 ${lineaCompraEsInsumo ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-3'}`}>
               <FormField
                 label="Cantidad *"
                 name="cantidad"
-                type="number"
-                value={productoActual.cantidad === 0 ? '' : productoActual.cantidad}
+                type="text"
+                value={productoActual.cantidad === 0 ? '' : String(productoActual.cantidad)}
                 onChange={(value) => {
-                  const num = parseInt(value as string) || 0;
+                  const digits = String(value ?? '').replace(/\D/g, '').slice(0, 6);
+                  const num = digits ? Number(digits) : 0;
                   if (num < 0) {
                     toast.warning('No se permiten números negativos');
                     return;
                   }
                   setProductoActual({ ...productoActual, cantidad: num });
                 }}
-                min={1}
+                placeholder="Ej: 10"
               />
 
               <FormField
-                label="Precio de Compra *"
+                label="Precio de Compra (COP) *"
                 name="precioCompra"
-                type="number"
-                value={productoActual.precioCompra === 0 ? '' : productoActual.precioCompra}
+                type="text"
+                value={formatMoneyInput(productoActual.precioCompra)}
                 onChange={(value) => {
-                  const num = parseInt(value as string) || 0;
-                  if (num < 0) {
-                    toast.warning('No se permiten números negativos');
-                    return;
-                  }
+                  const num = parseMoneyInput(value as string);
                   setProductoActual({ ...productoActual, precioCompra: num });
                 }}
-                min={1}
+                placeholder="Ej: 125.000 (máx. 12 dígitos)"
               />
 
-              <FormField
-                label="Ganancia (%) *"
-                name="ganancia"
-                type="number"
-                value={productoActual.ganancia === 0 ? '' : productoActual.ganancia}
-                onChange={(value) => {
-                  const num = parseInt(value as string) || 0;
-                  if (num < 0) {
-                    toast.warning('No se permiten números negativos');
-                    return;
-                  }
-                  if (num > 100) {
-                    toast.warning('La ganancia no puede ser mayor al 100%');
-                    return;
-                  }
-                  setProductoActual({ ...productoActual, ganancia: num });
-                }}
-                min={0}
-                max={100}
-              />
+              {!lineaCompraEsInsumo && (
+                <FormField
+                  label="Ganancia (%) *"
+                  name="ganancia"
+                  type="text"
+                  value={productoActual.ganancia === 0 ? '' : String(productoActual.ganancia)}
+                  onChange={(value) => {
+                    const digits = String(value ?? '').replace(/\D/g, '').slice(0, 3);
+                    const num = digits ? Math.min(100, Number(digits)) : 0;
+                    if (num < 0) {
+                      toast.warning('No se permiten números negativos');
+                      return;
+                    }
+                    setProductoActual({ ...productoActual, ganancia: num });
+                  }}
+                  placeholder="0–100"
+                />
+              )}
             </div>
+            )}
 
-            <Button type="button" onClick={agregarProducto} size="sm">
-              Agregar Producto
-            </Button>
+            <div className="flex gap-2">
+              <Button type="button" onClick={agregarProducto} size="sm" disabled={productoActual.productoId === 0}>
+                {editingProductoId !== null ? 'Guardar cambios' : 'Agregar Producto'}
+              </Button>
+              {editingProductoId !== null && (
+                <Button type="button" variant="outline" onClick={resetProductoForm} size="sm">
+                  Cancelar edición
+                </Button>
+              )}
+            </div>
           </div>
 
           {/* Lista de productos agregados */}
@@ -762,18 +902,31 @@ export function Compras() {
                       <div className="flex-1">
                         <p className="font-medium">{producto?.nombre}</p>
                         <p className="text-sm text-muted-foreground">
-                          Cantidad: {prod.cantidad} | Precio: {formatCurrency(prod.precioCompra)} |
-                          Ganancia: {prod.ganancia}% | Subtotal: {formatCurrency(prod.subtotal)}
+                          Cantidad: {prod.cantidad} | Precio: {formatCurrency(prod.precioCompra)}
+                          {productos.find((x) => x.id === prod.productoId)?.typo === 'insumo'
+                            ? ''
+                            : ` | Ganancia: ${prod.ganancia}%`}{' '}
+                          | Subtotal: {formatCurrency(prod.subtotal)}
                         </p>
                       </div>
-                      <Button
-                        type="button"
-                        variant="danger"
-                        size="sm"
-                        onClick={() => eliminarProducto(prod.productoId)}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => editarProducto(prod.productoId)}
+                        >
+                          <Edit className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="danger"
+                          size="sm"
+                          onClick={() => eliminarProducto(prod.productoId)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
                     </div>
                   );
                 })}
@@ -803,11 +956,11 @@ export function Compras() {
           )}
 
           <FormActions>
-            <Button variant="outline" onClick={() => setIsModalOpen(false)}>
+            <Button variant="outline" disabled={isSubmittingCompra} onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={formData.productos.length === 0}>
-              Crear Compra
+            <Button type="submit" disabled={formData.productos.length === 0 || isSubmittingCompra}>
+              {isSubmittingCompra ? 'Guardando...' : 'Crear Compra'}
             </Button>
           </FormActions>
         </Form>
@@ -820,7 +973,7 @@ export function Compras() {
           setIsDetailModalOpen(false);
           setSelectedCompra(null);
         }}
-        title={`Detalle de Compra #${selectedCompra?.id}`}
+        title={`Detalle de Compra ${formatEntityCode('C', selectedCompra?.id)}`}
         size="lg"
       >
         {selectedCompra && (
@@ -928,7 +1081,7 @@ export function Compras() {
       >
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Cancelación de la compra <strong>#{selectedCompra?.id}</strong>. Indique el motivo.
+            Cancelación de la compra <strong>{formatEntityCode('C', selectedCompra?.id)}</strong>. Indique el motivo.
           </p>
 
           <FormField
@@ -954,8 +1107,8 @@ export function Compras() {
             >
               Cancelar
             </Button>
-            <Button onClick={confirmarCambioEstado}>
-              Confirmar Cambio
+            <Button onClick={() => void confirmarCambioEstado()} disabled={isSubmittingEstado}>
+              {isSubmittingEstado ? 'Guardando...' : 'Confirmar Cambio'}
             </Button>
           </FormActions>
         </div>

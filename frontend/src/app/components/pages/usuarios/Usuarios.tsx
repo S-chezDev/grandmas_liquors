@@ -1,9 +1,9 @@
-﻿import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { DataTable, Column } from '../../DataTable';
 import { Modal } from '../../Modal';
-import { Form, FormField, FormActions, FieldError, FieldSuccess } from '../../Form';
+import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
-import { Plus, Eye, Edit, Trash2 } from 'lucide-react';
+import { Plus, Eye, Edit, Trash2, X } from 'lucide-react';
 import { AlertDialog } from '../../AlertDialog';
 import { api } from '../../../services/api';
 import type { Usuario } from '../../../services/types';
@@ -25,6 +25,7 @@ export function Usuarios() {
   } | null>(null);
   const [motivoEstado, setMotivoEstado] = useState('');
   const [motivoEliminacion, setMotivoEliminacion] = useState('');
+  const [showPasswordNote, setShowPasswordNote] = useState(true);
   const [alertState, setAlertState] = useState({
     isOpen: false,
     title: '',
@@ -48,12 +49,7 @@ export function Usuarios() {
   const [searchDebounced, setSearchDebounced] = useState('');
   const [filtroRol, setFiltroRol] = useState<string>('Todos');
   const [filtroEstado, setFiltroEstado] = useState<string>('Todos');
-
-  // Estados para validaciones en tiempo real
-  const [emailValido, setEmailValido] = useState<boolean | null>(null);
-  const [telefonoValido, setTelefonoValido] = useState<boolean | null>(null);
-  const [documentoValido, setDocumentoValido] = useState<boolean | null>(null);
-  const [passwordValido, setPasswordValido] = useState<boolean | null>(null);
+  const [isSavingUsuario, setIsSavingUsuario] = useState(false);
 
   // Debounce de búsqueda para evitar saturar API
   useEffect(() => {
@@ -153,8 +149,10 @@ export function Usuarios() {
 
   // Filtro defensivo: aunque el backend ya excluye clientes, evitamos que
   // se muestren si por algún motivo llegaran en la respuesta.
-  const usuariosFiltrados = usuarios.filter(
-    (u) => String(u.rol || '').toLowerCase() !== 'cliente'
+  const usuariosFiltrados = useMemo(
+    () =>
+      usuarios.filter((u) => String(u.rol || '').toLowerCase() !== 'cliente'),
+    [usuarios]
   );
 
   // ----- Validacion en vivo de duplicados (documento, telefono, email) -----
@@ -313,11 +311,7 @@ export function Usuarios() {
       rol: rolesActivos[0]?.nombre ?? '',
       estado: 'activo'
     });
-    // Resetear validaciones
-    setEmailValido(null);
-    setTelefonoValido(null);
-    setDocumentoValido(null);
-    setPasswordValido(null);
+    setShowPasswordNote(true);
     setIsModalOpen(true);
   };
 
@@ -341,10 +335,6 @@ export function Usuarios() {
       rol: usuario.rol,
       estado: usuario.estado
     });
-    setEmailValido(validarEmail(usuario.email));
-    setTelefonoValido(validarTelefono(usuario.telefono));
-    setDocumentoValido(validarDocumento(usuario.numeroDocumento));
-    setPasswordValido(null);
     setIsModalOpen(true);
   };
 
@@ -394,13 +384,22 @@ export function Usuarios() {
     }
   };
 
-  const handleView = (usuario: Usuario) => {
+  const handleView = async (usuario: Usuario) => {
     setSelectedUsuario(usuario);
     setIsDetailModalOpen(true);
+    try {
+      const detalle = await api.usuarios.getFullDetail(usuario.id);
+      setSelectedUsuario((current) => (current?.id === usuario.id ? detalle : current));
+    } catch (error: any) {
+      toast.error('No se pudo cargar el detalle del usuario', {
+        description: error?.message || 'Intente nuevamente en unos segundos.',
+      });
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSavingUsuario) return;
 
     if (!formData.rol?.trim()) {
       toast.error('Seleccione un rol', {
@@ -463,6 +462,7 @@ export function Usuarios() {
     }
 
     try {
+      setIsSavingUsuario(true);
       if (selectedUsuario) {
         // Actualizar
         const updates: any = { ...formData };
@@ -490,6 +490,8 @@ export function Usuarios() {
       toast.error(selectedUsuario ? 'Error al actualizar usuario' : 'Error al crear usuario', {
         description: error.message
       });
+    } finally {
+      setIsSavingUsuario(false);
     }
   };
 
@@ -527,7 +529,7 @@ export function Usuarios() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar por nombre, email o documento... (mín. 2, máx. 50 caracteres)"
+              placeholder="Buscar ..."
               className="w-full px-4 py-2.5 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
               maxLength={50}
             />
@@ -638,48 +640,17 @@ export function Usuarios() {
               required
             />
 
-            {/* Número de Documento con validación visual */}
-            <div>
-              <label className="block text-sm font-medium mb-2">Número de Documento</label>
-              <input
-                type="text"
-                inputMode="numeric"
-                maxLength={12}
-                value={formData.numeroDocumento}
-                onChange={(e) => {
-                  const value = e.target.value.replace(/\D/g, '').slice(0, 12);
-                  setFormData({ ...formData, numeroDocumento: value });
-                  // Sin validación en vivo: ocultamos el feedback hasta el blur.
-                  setDocumentoValido(null);
-                }}
-                onBlur={(e) => {
-                  const value = e.target.value.replace(/\D/g, '');
-                  if (!value) {
-                    setDocumentoValido(null);
-                  } else {
-                    setDocumentoValido(validarDocumento(value));
-                  }
-                }}
-                placeholder="Entre 6 y 12 dígitos"
-                className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 transition-all ${
-                  documentoValido === null ? 'border-border focus:ring-primary' :
-                  documentoValido ? 'border-green-500 ring-1 ring-green-500/20 focus:ring-green-500'
-                                  : 'border-destructive ring-1 ring-destructive/20 focus:ring-destructive'
-                }`}
-                required
-              />
-              <div className="mt-1.5 space-y-1.5">
-                {documentoValido === false && (
-                  <FieldError>El documento debe tener entre 6 y 12 dígitos.</FieldError>
-                )}
-                {documentoValido === true && !documentoDuplicadoU && (
-                  <FieldSuccess>Documento válido.</FieldSuccess>
-                )}
-                {documentoDuplicadoU && (
-                  <FieldError>{documentoDuplicadoU}</FieldError>
-                )}
-              </div>
-            </div>
+            <FormField
+              label="Número de Documento"
+              name="numeroDocumento"
+              value={formData.numeroDocumento}
+              onChange={(value) => setFormData({ ...formData, numeroDocumento: value as string })}
+              placeholder="Ej: 1032456789"
+              required
+              inputDigitRule="documento6to12"
+              hideAutoHelper
+              error={documentoDuplicadoU || undefined}
+            />
           </div>
 
           <FormField
@@ -692,124 +663,58 @@ export function Usuarios() {
           />
 
           <div className="grid grid-cols-2 gap-4">
-            {/* Email con validación visual */}
-            <div>
-              <label className="block text-sm font-medium mb-2">Email</label>
-              <input
-                type="email"
-                value={formData.email}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setFormData({ ...formData, email: value });
-                  if (value) {
-                    setEmailValido(validarEmail(value));
-                  } else {
-                    setEmailValido(null);
-                  }
-                }}
-                placeholder="ejemplo@email.com"
-                className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 transition-all ${
-                  emailValido === null ? 'border-border focus:ring-primary' :
-                  emailValido ? 'border-green-500 ring-1 ring-green-500/20 focus:ring-green-500'
-                              : 'border-destructive ring-1 ring-destructive/20 focus:ring-destructive'
-                }`}
-                required
-              />
-              <div className="mt-1.5 space-y-1.5">
-                {emailValido === false && (
-                  <FieldError>Formato de correo electrónico inválido.</FieldError>
-                )}
-                {emailValido === true && !emailDuplicadoU && (
-                  <FieldSuccess>Correo electrónico válido.</FieldSuccess>
-                )}
-                {emailDuplicadoU && (
-                  <FieldError>{emailDuplicadoU}</FieldError>
-                )}
-              </div>
-            </div>
-
-            {/* Teléfono con validación visual */}
-            <div>
-              <label className="block text-sm font-medium mb-2">Teléfono</label>
-              <input
-                type="text"
-                inputMode="numeric"
-                maxLength={10}
-                value={formData.telefono}
-                onChange={(e) => {
-                  const value = e.target.value.replace(/\D/g, '').slice(0, 10);
-                  setFormData({ ...formData, telefono: value });
-                  if (value) {
-                    setTelefonoValido(validarTelefono(value));
-                  } else {
-                    setTelefonoValido(null);
-                  }
-                }}
-                placeholder="3001234567"
-                className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 transition-all ${
-                  telefonoValido === null ? 'border-border focus:ring-primary' :
-                  telefonoValido ? 'border-green-500 ring-1 ring-green-500/20 focus:ring-green-500'
-                                 : 'border-destructive ring-1 ring-destructive/20 focus:ring-destructive'
-                }`}
-                required
-              />
-              <div className="mt-1.5 space-y-1.5">
-                {telefonoValido === false && (
-                  <FieldError>El teléfono debe tener exactamente 10 dígitos.</FieldError>
-                )}
-                {telefonoValido === true && !telefonoDuplicadoU && (
-                  <FieldSuccess>Teléfono válido.</FieldSuccess>
-                )}
-                {telefonoDuplicadoU && (
-                  <FieldError>{telefonoDuplicadoU}</FieldError>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Contraseña con validación visual */}
-          <div>
-            <label className="block text-sm font-medium mb-2">
-              {selectedUsuario ? 'Contraseña (dejar vacío para no cambiar)' : 'Contraseña *'}
-            </label>
-            <input
-              type="password"
-              value={formData.password}
-              onChange={(e) => {
-                const value = e.target.value;
-                setFormData({ ...formData, password: value });
-                if (value) {
-                  setPasswordValido(validarPassword(value));
-                } else {
-                  setPasswordValido(null);
-                }
-              }}
-              placeholder="Mínimo 8 caracteres"
-              className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 transition-all ${
-                passwordValido === null ? 'border-border focus:ring-primary' :
-                passwordValido ? 'border-green-500 ring-1 ring-green-500/20 focus:ring-green-500'
-                               : 'border-destructive ring-1 ring-destructive/20 focus:ring-destructive'
-              }`}
-              required={!selectedUsuario}
+            <FormField
+              label="Email"
+              name="email"
+              type="email"
+              value={formData.email}
+              onChange={(value) => setFormData({ ...formData, email: value as string })}
+              placeholder="ejemplo@email.com"
+              required
+              error={emailDuplicadoU || undefined}
             />
-            <div className="mt-1.5">
-              {passwordValido === false && (
-                <FieldError>
-                  Debe tener al menos 8 caracteres con mayúsculas, minúsculas y números.
-                </FieldError>
-              )}
-              {passwordValido === true && (
-                <FieldSuccess>Contraseña segura.</FieldSuccess>
-              )}
-            </div>
+
+            <FormField
+              label="Teléfono"
+              name="telefono"
+              value={formData.telefono}
+              onChange={(value) => setFormData({ ...formData, telefono: value as string })}
+              placeholder="3001234567"
+              required
+              inputDigitRule="telefono10"
+              hideAutoHelper
+              error={telefonoDuplicadoU || undefined}
+            />
           </div>
 
-          {/* Nota informativa sobre contraseñas */}
-          <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
-            <p className="text-sm text-blue-700">
-              <strong>Nota:</strong> La contraseña debe tener al menos 8 caracteres e incluir mayúsculas, minúsculas y números para mayor seguridad.
-            </p>
-          </div>
+          <FormField
+            label={selectedUsuario ? 'Contraseña (dejar vacío para no cambiar)' : 'Contraseña'}
+            name="password"
+            type="password"
+            value={formData.password}
+            onChange={(value) => setFormData({ ...formData, password: value as string })}
+            placeholder="Mínimo 8 caracteres"
+            required={!selectedUsuario}
+            minLength={8}
+          />
+
+          {showPasswordNote ? (
+            <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-sm text-blue-700">
+                  <strong>Nota:</strong> La contraseña debe tener al menos 8 caracteres e incluir mayúsculas, minúsculas y números para mayor seguridad.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowPasswordNote(false)}
+                  className="rounded-md p-1 text-blue-700 transition-colors hover:bg-blue-100 hover:text-blue-900"
+                  aria-label="Cerrar nota informativa"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           <div className="grid grid-cols-2 gap-4">
             <FormField
@@ -843,11 +748,13 @@ export function Usuarios() {
           </div>
 
           <FormActions>
-            <Button variant="outline" onClick={() => setIsModalOpen(false)}>
+            <Button variant="outline" disabled={isSavingUsuario} onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
-            <Button type="submit">
-              {selectedUsuario ? 'Actualizar' : 'Crear'} Usuario
+            <Button type="submit" disabled={isSavingUsuario}>
+              {isSavingUsuario
+                ? 'Guardando...'
+                : `${selectedUsuario ? 'Actualizar' : 'Crear'} Usuario`}
             </Button>
           </FormActions>
         </Form>
@@ -897,6 +804,14 @@ export function Usuarios() {
                 }`}>
                   {selectedUsuario.estado === 'activo' ? 'Activo' : 'Inactivo'}
                 </span>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Último inicio de sesión</p>
+                <p className="font-medium">
+                  {selectedUsuario.ultimoInicioSesion
+                    ? new Date(selectedUsuario.ultimoInicioSesion).toLocaleString('es-CO')
+                    : 'Sin registros'}
+                </p>
               </div>
             </div>
 

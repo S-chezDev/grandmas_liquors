@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Producción -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">aplicationgl-env-1.eba-jyti25ie.us-east-2.elasticbeanstalk.com</domain>
+        <domain includeSubdomains="true">grandmas-api.us-east-2.elasticbeanstalk.com</domain>
+        <domain includeSubdomains="true">grandmas-api.us-east-1.elasticbeanstalk.com</domain>
+    </domain-config>
+    <!-- Dev: proxy Vite (npm run dev) en localhost / emulador / LAN -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">10.0.2.2</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>

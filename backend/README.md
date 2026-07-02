@@ -64,25 +64,128 @@ npm run setup-db
 #### Opción B: Importar manualmente en PostgreSQL
 
 ```bash
-psql -U postgres -d grandmas_liquors -f backend/db.pgsql
+psql -h localhost -p 5432 -U postgres -d grandmasliquorsdb -f backend/db.pgsql
 ```
 
 ### 3. Configurar Variables de Entorno
 
-Actualiza el archivo `.env` con tus credenciales:
+Actualiza el archivo `.env` (desarrollo) o `.env.production` (producción) con tus credenciales:
+
+#### Variables de Entorno - Desarrollo (.env)
 
 ```env
-# Configuración de Base de Datos (PostgreSQL)
+# Configuración de Base de Datos (PostgreSQL Local)
 DB_HOST=localhost
 DB_PORT=5432
 DB_USER=postgres
-DB_PASSWORD=your_password
+DB_PASSWORD=postgres
 DB_DATABASE=grandmas_liquors
+DB_SSL=false
 
-# Configuración del Servidor
+# Servidor
 PORT=3002
 NODE_ENV=development
+PUBLIC_BASE_URL=http://localhost:3002
+
+# CORS (Desarrollo - permite localhost)
+CORS_CLOUDFRONT_URL=
+CORS_CUSTOM_DOMAIN=
+CORS_ORIGINS=http://localhost:3000,http://localhost:3002
+
+# Uploads
+UPLOADS_ROOT=./uploads
+UPLOADS_PRODUCTOS_PREPARACION=./uploads/Productos/de preparacion
+UPLOADS_PRODUCTOS_TERMINADOS=./uploads/Productos/terminados
+
+# Authentication
+JWT_SECRET=dev_only_change_me_in_production
+JWT_ISSUER=grandmas-liquors-api
+JWT_AUDIENCE=grandmas-liquors-web
+AUTH_COOKIE_NAME=gl_session
+AUTH_COOKIE_SAME_SITE=lax
+AUTH_COOKIE_DOMAIN=
+JWT_CLIENTE_TTL_MS=3600000
+JWT_STAFF_TTL_MS=10800000
+JWT_LONG_SESSION_TTL_MS=604800000
+SESSION_IDLE_TIMEOUT_MS=1800000
+
+# Rate Limiting
+RATE_LIMIT_ENABLED=false
+
+# Email
+MAIL_HOST=smtp.gmail.com
+MAIL_PORT=587
+MAIL_SECURE=false
+MAIL_USER=grandmasliqueurs@gmail.com
+MAIL_PASSWORD=yrydvfjtwfdnjnyg
+MAIL_FROM="Grandma's Liquors <grandmasliqueurs@gmail.com>"
+
+# System Admin
+SYSTEM_ADMIN_EMAIL=admin@grandmas.com
 ```
+
+#### Variables de Entorno - Producción (.env.production)
+
+```env
+# Configuración de Base de Datos (PostgreSQL RDS)
+DB_HOST=database-grandmasdb.cat806m20igp.us-east-1.rds.amazonaws.com
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=password_123  # CAMBIAR por contraseña real de RDS
+DB_DATABASE=postgres
+DB_SSL=true
+
+# Servidor
+NODE_ENV=production
+PUBLIC_BASE_URL=https://aplicationgl-env-1.eba-jyti25ie.us-east-2.elasticbeanstalk.com
+
+# CORS (Configurar con dominio de CloudFront y dominio personalizado)
+CORS_CLOUDFRONT_URL=  # Agregar URL de CloudFront si se usa
+CORS_CUSTOM_DOMAIN=  # Agregar dominio personalizado si se tiene
+CORS_ORIGINS=https://aplicationgl-env-1.eba-jyti25ie.us-east-2.elasticbeanstalk.com
+
+# Uploads
+UPLOADS_ROOT=/var/app/current/uploads
+UPLOADS_PRODUCTOS_PREPARACION=/var/app/current/uploads/Productos/de preparacion
+UPLOADS_PRODUCTOS_TERMINADOS=/var/app/current/uploads/Productos/terminados
+
+# Authentication
+# Generar JWT_SECRET seguro con: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+JWT_SECRET=grandmas_liquors_dev_jwt_secret_min_32_chars  # CAMBIAR por secreto seguro
+JWT_ISSUER=grandmas-liquors-api
+JWT_AUDIENCE=grandmas-liquors-web
+AUTH_COOKIE_NAME=gl_session
+AUTH_COOKIE_SAME_SITE=lax
+AUTH_COOKIE_DOMAIN=
+JWT_CLIENTE_TTL_MS=3600000
+JWT_STAFF_TTL_MS=10800000
+JWT_LONG_SESSION_TTL_MS=604800000
+SESSION_IDLE_TIMEOUT_MS=1800000
+
+# Rate Limiting
+RATE_LIMIT_ENABLED=true
+
+# Email
+MAIL_HOST=smtp.gmail.com
+MAIL_PORT=587
+MAIL_SECURE=false
+MAIL_USER=grandmasliqueurs@gmail.com
+MAIL_PASSWORD=yrydvfjtwfdnjnyg
+MAIL_FROM="Grandma's Liquors <grandmasliqueurs@gmail.com>"
+
+# System Admin
+SYSTEM_ADMIN_EMAIL=admin@grandmas.com  # CAMBIAR por email real del administrador
+```
+
+#### Descripción de Variables Críticas
+
+| Variable | Descripción | Valor Requerido |
+|----------|-------------|-----------------|
+| `DB_HOST` | Host de PostgreSQL RDS | URL de RDS en producción |
+| `DB_PASSWORD` | Contraseña de base de datos | Contraseña segura de RDS |
+| `JWT_SECRET` | Secreto para firmar JWT | String aleatorio de 32+ caracteres |
+| `CORS_ORIGINS` | Orígenes permitidos para CORS | URLs del frontend separadas por coma |
+| `SYSTEM_ADMIN_EMAIL` | Email del administrador del sistema | Email real del admin |
 
 ---
 
@@ -468,16 +571,24 @@ DELETE /api/productos/:id       - Eliminar
 ## Variables de Entorno
 
 ```env
-# Base de Datos (PostgreSQL)
-DB_HOST          # Host del servidor PostgreSQL (default: localhost)
+# Base de Datos (PostgreSQL / AWS RDS)
+DB_HOST          # Host del servidor PostgreSQL (ej: localhost)
 DB_PORT          # Puerto PostgreSQL (default: 5432)
 DB_USER          # Usuario PostgreSQL (default: postgres)
 DB_PASSWORD      # Contraseña PostgreSQL
-DB_DATABASE      # Nombre de la base de datos (default: grandmas_liquors)
+DB_DATABASE      # Nombre de la base de datos (ej: grandmasliquorsdb)
 
 # Servidor
 PORT             # Puerto del servidor (default: 3002)
 NODE_ENV         # Ambiente: development, production (default: development)
+PUBLIC_BASE_URL  # URL pública del API en EB (opcional, para logs/enlaces)
+
+# Elastic Beanstalk / CORS (frontend en localhost:3000 o dominio de producción)
+CORS_ORIGINS     # Ej: http://localhost:3000,https://tu-dominio.com
+UPLOADS_ROOT     # Opcional: ruta escribible para /uploads (comprobantes, productos, perfiles)
+```
+
+Tras desplegar en EB, el endpoint `POST /api/pedidos/comprobante` (multipart, campo `comprobante`) guarda archivos en `{UPLOADS_ROOT o backend/uploads}/comprobantes/` y los sirve en `/uploads/comprobantes/...`.
 ```
 
 ---

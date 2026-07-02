@@ -6,7 +6,13 @@
  * lo importa. La fuente activa es este archivo modular.
  */
 const pool = require('../../../db');
-const { ensureMotivoEstado, checkInactivacionDependencias } = require('../shared/auditoria');
+const {
+  ensureMotivoEstado,
+  checkInactivacionDependencias,
+  ensureProductoTipoColumn,
+  ensureProductoInsumoMedidaColumns,
+  ensureEntregasInsumoProductoCatalogo,
+} = require('../shared/auditoria');
 
 const Insumos = {
   getAll: async () => {
@@ -153,7 +159,13 @@ const Insumos = {
     );
     return true;
   },
-  delete: async (id) => {
+  delete: async (id, options = {}) => {
+    const reason = typeof options.reason === 'string' ? options.reason.trim() : '';
+    if (!reason || reason.length < 10 || reason.length > 50) {
+      const error = new Error('El motivo de eliminacion es obligatorio y debe tener entre 10 y 50 caracteres');
+      error.statusCode = 400;
+      throw error;
+    }
     const current = await Insumos.getById(id);
     if (!current) {
       const error = new Error('Insumo no encontrado');
@@ -179,25 +191,45 @@ const Insumos = {
     return true;
   },
   getResumenGestion: async () => {
-    const result = await pool.query(`
-      SELECT i.id,
-             i.nombre,
-             i.cantidad,
-             i.unidad,
-             i.stock_minimo,
-             TRIM(CONCAT(COALESCE(u.nombre, ''), ' ', COALESCE(u.apellido, ''))) AS operario,
-             le.fecha AS fecha
-      FROM insumos i
-      LEFT JOIN LATERAL (
-        SELECT ei.fecha, ei.operario_id
-        FROM entregas_insumos ei
-        WHERE ei.insumo_id = i.id
-        ORDER BY ei.fecha DESC, ei.hora DESC NULLS LAST, ei.id DESC
-        LIMIT 1
-      ) le ON true
-      LEFT JOIN usuarios u ON u.id = le.operario_id
-      ORDER BY i.nombre
-    `);
+    await ensureProductoTipoColumn();
+    await ensureProductoInsumoMedidaColumns();
+    await ensureEntregasInsumoProductoCatalogo();
+    const result = await pool.query(
+      `
+        SELECT p.id AS id,
+               p.nombre,
+               p.stock::numeric AS cantidad,
+               'Unidades'::varchar AS unidad,
+               p.stock_minimo::numeric AS stock_minimo,
+               (
+                 SELECT NULLIF(TRIM(CONCAT(COALESCE(u.nombre, ''), ' ', COALESCE(u.apellido, ''))), '')
+                 FROM entregas_insumos ei
+                 LEFT JOIN usuarios u ON u.id = ei.operario_id
+                 WHERE ei.producto_catalogo_id = p.id
+                 ORDER BY ei.fecha DESC, ei.hora DESC NULLS LAST, ei.id DESC
+                 LIMIT 1
+               ) AS operario,
+               COALESCE(rc.fecha_ultima::date, p.updated_at::date, p.created_at::date) AS fecha,
+               p.id AS producto_catalogo_id,
+               c.nombre AS categoria_nombre,
+               p.insumo_cantidad_medida AS presentacion_cantidad,
+               p.insumo_unidad_medida AS presentacion_unidad,
+               'producto_insumo'::varchar AS origen_inventario
+        FROM productos p
+        LEFT JOIN categorias c ON c.id = p.categoria_id
+        LEFT JOIN (
+          SELECT dc.producto_id,
+                 MAX(COALESCE(cp.updated_at, cp.created_at, CURRENT_TIMESTAMP)) AS fecha_ultima
+          FROM detalle_compras dc
+          INNER JOIN compras cp ON cp.id = dc.compra_id
+          WHERE LOWER(TRIM(COALESCE(cp.estado, ''))) = 'recibida'
+          GROUP BY dc.producto_id
+        ) rc ON rc.producto_id = p.id
+        WHERE COALESCE(p.tipo_producto, 'terminado') = 'insumo'
+          AND LOWER(TRIM(COALESCE(p.estado, ''))) = 'activo'
+        ORDER BY p.nombre
+      `
+    );
     return result.rows;
   }
 };

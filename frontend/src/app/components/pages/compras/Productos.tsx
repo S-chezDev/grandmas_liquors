@@ -1,12 +1,28 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { DataTable, Column } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
 import { Button } from '../../Button';
 import { Plus, Eye, Edit, Trash2 } from 'lucide-react';
 import { api } from '../../../services/api';
-import type { Producto, Categoria } from '../../../services/types';
+import type { Producto, Categoria, FichaTecnicaInsumo } from '../../../services/types';
+import { INSUMO_UNIDADES_API } from '../../../services/types';
+import { formatMoneyInput, parseMoneyInput, MAX_MONEY_DIGITS } from '../../../services/mappers';
 import { toast } from '../../AlertDialog';
+
+/** Mensaje claro para el usuario; oculta errores técnicos del servidor. */
+const mensajeErrorGuardarProducto = (error: unknown, modo: 'editar' | 'nuevo'): string => {
+  const raw = error instanceof Error ? error.message : String(error ?? '');
+  const tecnico = /before initialization|is not defined|referenceerror|internal server error/i.test(raw);
+
+  if (tecnico || !raw.trim()) {
+    return modo === 'editar'
+      ? 'No se pudieron guardar los cambios. Revisa los datos e inténtalo de nuevo; si el problema continúa, recarga la página.'
+      : 'No se pudo registrar el producto. Revisa los datos e inténtalo de nuevo; si el problema continúa, recarga la página.';
+  }
+
+  return raw;
+};
 
 export function Productos() {
   const [productos, setProductos] = useState<Producto[]>([]);
@@ -32,20 +48,41 @@ export function Productos() {
     nombre: '',
     descripcion: '',
     categoriaId: 0,
-    typo: 'terminado' as 'terminado' | 'de preparacion',
+    typo: 'terminado' as 'terminado' | 'de preparacion' | 'insumo',
     precioVenta: 0,
     stockMinimo: 0,
-    estado: 'activo' as 'activo' | 'inactivo'
+    estado: 'activo' as 'activo' | 'inactivo',
+    insumoUnidadMedida: 'Unidades' as string,
+    insumoCantidadMedida: 1,
   });
+  const [precioVentaInput, setPrecioVentaInput] = useState('');
+  const [imagenArchivo, setImagenArchivo] = useState<File | null>(null);
+  const [imagenPreview, setImagenPreview] = useState<string | null>(null);
+  const [nombreErrorApi, setNombreErrorApi] = useState<string | undefined>();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [filtroCategoria, setFiltroCategoria] = useState<string>('Todos');
   const [filtroEstado, setFiltroEstado] = useState<string>('Todos');
   const [filtroTipo, setFiltroTipo] = useState<string>('Todos');
 
+  const [fichaTecnicaInsumos, setFichaTecnicaInsumos] = useState<FichaTecnicaInsumo[]>([]);
+  const [detailFichaTecnica, setDetailFichaTecnica] = useState<FichaTecnicaInsumo[]>([]);
+  const [loadingFicha, setLoadingFicha] = useState(false);
+
+  const insumosDisponibles = useMemo(() => {
+    return productos.filter(p => p.typo === 'insumo' && p.estado === 'activo');
+  }, [productos]);
+
   useEffect(() => {
     cargarDatos();
   }, []);
+
+  const normalizeInsumoUnidadMedida = (u: string | null | undefined): string => {
+    const s = String(u || '').trim();
+    if (INSUMO_UNIDADES_API.includes(s as (typeof INSUMO_UNIDADES_API)[number])) return s;
+    if (s === 'Litros') return 'Mililitros';
+    return 'Unidades';
+  };
 
   const cargarDatos = async () => {
     try {
@@ -71,35 +108,69 @@ export function Productos() {
     }).format(value);
   };
 
-  // Validar nombre único
-  const validarNombreUnico = (nombre: string, idActual?: number) => {
-    const existe = productos.find(p =>
-      p.nombre.toLowerCase() === nombre.toLowerCase() &&
-      p.id !== idActual
+  const etiquetaTipoProducto = (tipo: 'terminado' | 'de preparacion' | 'insumo') => {
+    if (tipo === 'de preparacion') return 'de preparación';
+    if (tipo === 'insumo') return 'insumo';
+    return 'terminado';
+  };
+
+  const productoIdEnFormulario =
+    productoFormularioModo === 'editar' ? selectedProducto?.id : undefined;
+
+  // Validar nombre único (mismo criterio que el backend: nombre + tipo)
+  const validarNombreUnico = (
+    nombre: string,
+    tipo: 'terminado' | 'de preparacion' | 'insumo',
+    idActual?: number
+  ) => {
+    const normalizado = nombre.trim().toLowerCase();
+    if (!normalizado) return true;
+    const existe = productos.some(
+      (p) =>
+        p.nombre.trim().toLowerCase() === normalizado &&
+        p.typo === tipo &&
+        p.id !== idActual
     );
     return !existe;
   };
 
+  const errorNombreProducto = useMemo(() => {
+    const nombre = formData.nombre.trim();
+    if (!nombre) return nombreErrorApi;
+    if (!validarNombreUnico(nombre, formData.typo, productoIdEnFormulario)) {
+      return `Ya existe un producto con el nombre "${nombre}" de tipo ${etiquetaTipoProducto(formData.typo)}. Elija otro nombre.`;
+    }
+    return nombreErrorApi;
+  }, [
+    formData.nombre,
+    formData.typo,
+    productos,
+    productoIdEnFormulario,
+    nombreErrorApi,
+  ]);
+
   // Filtrar productos
-  const productosFiltrados = productos.filter(p => {
-    const categoria = categorias.find(c => c.id === p.categoriaId);
+  const productosFiltrados = useMemo(() => (
+    productos.filter(p => {
+      const categoria = categorias.find(c => c.id === p.categoriaId);
 
-    const matchBusqueda = searchQuery.length < 2 ||
-      p.nombre.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.descripcion.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      categoria?.nombre.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchBusqueda = searchQuery.length < 2 ||
+        p.nombre.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        p.descripcion.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        categoria?.nombre.toLowerCase().includes(searchQuery.toLowerCase());
 
-    const matchCategoria = filtroCategoria === 'Todos' ||
-      categoria?.id.toString() === filtroCategoria;
+      const matchCategoria = filtroCategoria === 'Todos' ||
+        categoria?.id.toString() === filtroCategoria;
 
-    const matchEstado = filtroEstado === 'Todos' ||
-      (filtroEstado === 'Activo' && p.estado === 'activo') ||
-      (filtroEstado === 'Inactivo' && p.estado === 'inactivo');
+      const matchEstado = filtroEstado === 'Todos' ||
+        (filtroEstado === 'Activo' && p.estado === 'activo') ||
+        (filtroEstado === 'Inactivo' && p.estado === 'inactivo');
 
-    const matchTipo = filtroTipo === 'Todos' || p.typo === filtroTipo;
+      const matchTipo = filtroTipo === 'Todos' || p.typo === filtroTipo;
 
-    return matchBusqueda && matchCategoria && matchEstado && matchTipo;
-  });
+      return matchBusqueda && matchCategoria && matchEstado && matchTipo;
+    })
+  ), [productos, categorias, searchQuery, filtroCategoria, filtroEstado, filtroTipo]);
 
   const columns: Column[] = [
     { key: 'nombre', label: 'Producto' },
@@ -115,17 +186,28 @@ export function Productos() {
       key: 'typo',
       label: 'Tipo',
       render: (typo: string) => (
-        <span className={`px-2 py-1 rounded-full text-xs ${
-          typo === 'terminado' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
-        }`}>
-          {typo === 'terminado' ? 'Terminado' : 'De Preparación'}
+        <span
+          className={`px-2 py-1 rounded-full text-xs ${
+            typo === 'terminado'
+              ? 'bg-blue-100 text-blue-700'
+              : typo === 'insumo'
+                ? 'bg-amber-100 text-amber-800'
+                : 'bg-emerald-100 text-emerald-700'
+          }`}
+        >
+          {typo === 'terminado' ? 'Terminado' : typo === 'insumo' ? 'Insumo' : 'De Preparación'}
         </span>
       )
     },
     {
       key: 'precioVenta',
       label: 'Precio',
-      render: (precio: number) => formatCurrency(precio)
+      render: (precio: number, row: Producto) =>
+        row.typo === 'insumo' ? (
+          <span className="text-muted-foreground">—</span>
+        ) : (
+          formatCurrency(precio)
+        ),
     },
     {
       key: 'stock',
@@ -200,6 +282,32 @@ export function Productos() {
   const cerrarModalProductoFormulario = () => {
     setIsModalOpen(false);
     setProductoFormularioModo('nuevo');
+    setNombreErrorApi(undefined);
+    setImagenArchivo(null);
+    setImagenPreview(null);
+    setFichaTecnicaInsumos([]);
+  };
+
+  const handleImagenChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      setImagenArchivo(null);
+      setImagenPreview(null);
+      return;
+    }
+    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowed.includes(file.type)) {
+      toast.error('Formato no permitido', { description: 'Use JPG, PNG o WEBP' });
+      e.target.value = '';
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error('Imagen muy grande', { description: 'El tamaño máximo es 2 MB' });
+      e.target.value = '';
+      return;
+    }
+    setImagenArchivo(file);
+    setImagenPreview(URL.createObjectURL(file));
   };
 
   const handleAdd = () => {
@@ -212,12 +320,19 @@ export function Productos() {
       typo: 'terminado',
       precioVenta: 0,
       stockMinimo: 0,
-      estado: 'activo'
+      estado: 'activo',
+      insumoUnidadMedida: 'Unidades',
+      insumoCantidadMedida: 1,
     });
+    setPrecioVentaInput('');
+    setNombreErrorApi(undefined);
+    setImagenArchivo(null);
+    setImagenPreview(null);
+    setFichaTecnicaInsumos([]);
     setIsModalOpen(true);
   };
 
-  const handleEdit = (producto: Producto) => {
+  const handleEdit = async (producto: Producto) => {
     if (producto.estado === 'inactivo') {
       toast.warning('Producto inactivo', {
         description: 'No se puede editar un producto inactivo. Reactivelo primero.',
@@ -232,9 +347,49 @@ export function Productos() {
       categoriaId: producto.categoriaId,
       typo: producto.typo,
       precioVenta: producto.precioVenta,
-      stockMinimo: producto.stockMinimo,
-      estado: producto.estado
+      stockMinimo:
+        producto.typo === 'insumo'
+          ? Math.max(0, Math.floor(Number(producto.stockMinimo ?? 0)))
+          : producto.stockMinimo,
+      estado: producto.estado,
+      insumoUnidadMedida: normalizeInsumoUnidadMedida(producto.insumoUnidadMedida),
+      insumoCantidadMedida:
+        producto.typo === 'insumo'
+          ? Math.max(1, Math.round(Number(producto.insumoCantidadMedida) || 1))
+          : producto.insumoCantidadMedida != null && Number.isFinite(producto.insumoCantidadMedida)
+            ? producto.insumoCantidadMedida
+            : 1,
     });
+    setPrecioVentaInput(formatMoneyInput(Number(producto.precioVenta ?? 0)));
+    setNombreErrorApi(undefined);
+    setImagenArchivo(null);
+    setImagenPreview(producto.imagenUrl || null);
+    setFichaTecnicaInsumos([]);
+
+    if (producto.typo === 'de preparacion') {
+      try {
+        setLoadingFicha(true);
+        const res = await api.productos.getFichaTecnica(producto.id);
+        if (res && res.data && Array.isArray(res.data.insumos)) {
+          setFichaTecnicaInsumos(res.data.insumos.map((i: any) => {
+            const idInsumo = Number(i.producto_catalogo_id || i.insumo_id);
+            const catalogProduct = productos.find(p => p.id === idInsumo);
+            return {
+              producto_catalogo_id: idInsumo,
+              insumo_nombre: catalogProduct?.nombre || i.insumo_nombre || '',
+              cantidad: Number(i.cantidad) || 0,
+              unidad: catalogProduct?.insumoUnidadMedida || i.unidad || 'Unidades',
+            };
+          }));
+        }
+      } catch (error) {
+        console.error('Error al obtener ficha técnica:', error);
+        toast.error('Error al cargar la receta', { description: 'No se pudo cargar la receta del producto.' });
+      } finally {
+        setLoadingFicha(false);
+      }
+    }
+
     setIsModalOpen(true);
   };
 
@@ -266,23 +421,48 @@ export function Productos() {
       setSelectedProducto(null);
       cargarDatos();
     } catch (error: any) {
-      toast.error('Error al eliminar producto', { description: error.message });
+      const descripcion = String(error?.message || '').trim();
+      const titulo = descripcion.toLowerCase().startsWith('no se puede eliminar')
+        ? 'No se puede eliminar el producto'
+        : 'Error al eliminar producto';
+      toast.error(titulo, { description: descripcion || 'No se pudo eliminar el producto' });
     }
   };
 
-  const handleView = (producto: Producto) => {
+  const handleView = async (producto: Producto) => {
     setSelectedProducto(producto);
     setIsDetailModalOpen(true);
+    setDetailFichaTecnica([]);
+    if (producto.typo === 'de preparacion') {
+      try {
+        setLoadingFicha(true);
+        const res = await api.productos.getFichaTecnica(producto.id);
+        if (res && res.data && Array.isArray(res.data.insumos)) {
+          setDetailFichaTecnica(res.data.insumos);
+        }
+      } catch (error) {
+        console.error('Error al obtener la ficha técnica para ver:', error);
+      } finally {
+        setLoadingFicha(false);
+      }
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Validaciones
-    if (!validarNombreUnico(formData.nombre, productoFormularioModo === 'editar' ? selectedProducto?.id : undefined)) {
-      toast.error('Error de validación', {
-        description: 'Ya existe un producto con ese nombre'
-      });
+    const precioDesdeInput = parseMoneyInput(precioVentaInput);
+    const precioVentaNormalizado =
+      productoFormularioModo === 'editar' ||
+      (productoFormularioModo === 'nuevo' && formData.typo === 'de preparacion')
+        ? precioDesdeInput
+        : formData.precioVenta;
+
+    const requierePrecioEnFormulario =
+      productoFormularioModo === 'editar' ||
+      (productoFormularioModo === 'nuevo' && formData.typo === 'de preparacion');
+
+    if (errorNombreProducto) {
       return;
     }
 
@@ -293,32 +473,92 @@ export function Productos() {
       return;
     }
 
-    if (productoFormularioModo === 'editar' && formData.precioVenta < 0) {
+    if (requierePrecioEnFormulario && precioVentaInput.trim() === '') {
+      toast.error('Error de validación', {
+        description: 'El precio de venta es obligatorio'
+      });
+      return;
+    }
+
+    if (requierePrecioEnFormulario && String(precioVentaNormalizado).replace(/\D/g, '').length > MAX_MONEY_DIGITS) {
+      toast.error('Error de validación', {
+        description: `El precio no puede superar ${MAX_MONEY_DIGITS} dígitos`,
+      });
+      return;
+    }
+
+    if (requierePrecioEnFormulario && precioVentaNormalizado < 0) {
       toast.error('Error de validación', {
         description: 'El precio no puede ser negativo'
       });
       return;
     }
 
-    if (formData.stockMinimo < 0) {
+    if (productoFormularioModo === 'nuevo' && formData.typo === 'de preparacion' && precioVentaNormalizado <= 0) {
+      toast.error('Error de validación', {
+        description: 'Indique un precio de venta mayor a 0 para producto de preparación',
+      });
+      return;
+    }
+
+    if ((formData.typo === 'terminado' || formData.typo === 'insumo') && formData.stockMinimo < 0) {
       toast.error('Error de validación', {
         description: 'El stock mínimo no puede ser negativo'
       });
       return;
     }
 
+    if (formData.typo === 'insumo') {
+      if (!INSUMO_UNIDADES_API.includes(formData.insumoUnidadMedida as (typeof INSUMO_UNIDADES_API)[number])) {
+        toast.error('Error de validación', { description: 'Seleccione una unidad de presentación válida' });
+        return;
+      }
+      const med = Number(formData.insumoCantidadMedida);
+      if (!Number.isInteger(med) || med < 1) {
+        toast.error('Error de validación', {
+          description: 'El volumen / unidad debe ser un número entero mayor o igual a 1',
+        });
+        return;
+      }
+    }
+
+    // Validación de ficha técnica para productos de preparación
+    if (formData.typo === 'de preparacion') {
+      const insumosValidos = fichaTecnicaInsumos.filter(i => i.producto_catalogo_id && Number(i.cantidad) > 0);
+      if (insumosValidos.length === 0) {
+        toast.error('Receta requerida', {
+          description: 'Debe agregar al menos un insumo con cantidad válida a la receta del producto de preparación.',
+        });
+        return;
+      }
+      const ids = insumosValidos.map(i => i.producto_catalogo_id);
+      const hayDuplicados = ids.some((id, idx) => ids.indexOf(id) !== idx);
+      if (hayDuplicados) {
+        toast.error('Insumos duplicados', {
+          description: 'La receta contiene el mismo insumo más de una vez. Por favor, elimine los duplicados.',
+        });
+        return;
+      }
+    }
+
     try {
+      let productoId: number | undefined;
       if (productoFormularioModo === 'editar' && selectedProducto) {
-        await api.productos.update(selectedProducto.id, formData, 'Actualización de datos');
+        productoId = selectedProducto.id;
+        await api.productos.update(selectedProducto.id, {
+          ...formData,
+          precioVenta: precioVentaNormalizado,
+          stockMinimo: formData.typo === 'de preparacion' ? 0 : formData.stockMinimo,
+        }, 'Actualización de datos');
 
         toast.success('Producto actualizado', {
           description: 'Los datos del producto han sido actualizados exitosamente'
         });
       } else {
-        // Al crear, stock 0 y precio de venta 0 hasta registrar compra al proveedor
-        await api.productos.create({
+        productoId = await api.productos.create({
           ...formData,
-          precioVenta: 0,
+          stockMinimo: formData.typo === 'de preparacion' ? 0 : formData.stockMinimo,
+          precioVenta: formData.typo === 'de preparacion' ? precioVentaNormalizado : 0,
           precioCompra: 0,
           ganancia: 0
         });
@@ -328,12 +568,53 @@ export function Productos() {
         });
       }
 
+      if (imagenArchivo && productoId) {
+        try {
+          await api.productos.uploadImagen(productoId, imagenArchivo);
+        } catch (uploadError: unknown) {
+          const uploadMsg =
+            uploadError instanceof Error ? uploadError.message : 'No se pudo guardar la imagen del producto.';
+          toast.error('Imagen no guardada', { description: uploadMsg });
+          if (import.meta.env.DEV) {
+            console.error('Error al subir imagen de producto', uploadError);
+          }
+          cerrarModalProductoFormulario();
+          cargarDatos();
+          return;
+        }
+      }
+
+      // Guardar ficha técnica para productos de preparación
+      if (formData.typo === 'de preparacion' && productoId) {
+        const insumosValidos = fichaTecnicaInsumos.filter(i => i.producto_catalogo_id && Number(i.cantidad) > 0);
+        try {
+          await api.productos.saveFichaTecnica(productoId, { insumos: insumosValidos });
+        } catch (fichaError: unknown) {
+          const fichaMsg = fichaError instanceof Error ? fichaError.message : 'No se pudo guardar la receta.';
+          toast.error('Receta no guardada', { description: fichaMsg });
+          if (import.meta.env.DEV) {
+            console.error('Error al guardar ficha técnica', fichaError);
+          }
+        }
+      }
+
       cerrarModalProductoFormulario();
       cargarDatos();
-    } catch (error: any) {
-      toast.error(productoFormularioModo === 'editar' ? 'Error al actualizar producto' : 'Error al crear producto', {
-        description: error.message
+    } catch (error: unknown) {
+      const esEdicion = productoFormularioModo === 'editar';
+      const raw = error instanceof Error ? error.message : String(error ?? '');
+      if (/ya existe un producto/i.test(raw)) {
+        setNombreErrorApi(
+          `Ya existe un producto con el nombre "${formData.nombre.trim()}" de tipo ${etiquetaTipoProducto(formData.typo)}. Elija otro nombre.`
+        );
+        return;
+      }
+      toast.error(esEdicion ? 'No se pudo actualizar el producto' : 'No se pudo crear el producto', {
+        description: mensajeErrorGuardarProducto(error, esEdicion ? 'editar' : 'nuevo'),
       });
+      if (import.meta.env.DEV) {
+        console.error(esEdicion ? 'Error al actualizar producto' : 'Error al crear producto', error);
+      }
     }
   };
 
@@ -369,7 +650,7 @@ export function Productos() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar... (mín. 2, máx. 50 caracteres)"
+              placeholder="Buscar ..."
               className="w-full px-4 py-2.5 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
               maxLength={50}
             />
@@ -401,7 +682,8 @@ export function Productos() {
             >
               <option value="Todos">Filtrar por tipo</option>
               <option value="terminado">Terminado</option>
-              <option value="de preparación">De preparación</option>
+              <option value="de preparacion">De preparación</option>
+              <option value="insumo">Insumo</option>
             </select>
             <Button
               variant="outline"
@@ -458,22 +740,17 @@ export function Productos() {
             name="nombre"
             value={formData.nombre}
             onChange={(value) => {
+              setNombreErrorApi(undefined);
               setFormData({ ...formData, nombre: value as string });
-              if (
-                value &&
-                !validarNombreUnico(
-                  value as string,
-                  productoFormularioModo === 'editar' ? selectedProducto?.id : undefined
-                )
-              ) {
-                toast.warning('Advertencia', {
-                  description: 'Ya existe un producto con ese nombre',
-                  duration: 2000
-                });
-              }
             }}
             placeholder="Ej: Licor de Café Artesanal"
             required
+            error={errorNombreProducto}
+            helperText={
+              errorNombreProducto
+                ? undefined
+                : 'El nombre debe ser único dentro del mismo tipo (terminado, preparación o insumo).'
+            }
           />
 
           <FormField
@@ -482,11 +759,33 @@ export function Productos() {
             type="textarea"
             value={formData.descripcion}
             onChange={(value) => setFormData({ ...formData, descripcion: value as string })}
-            placeholder="Descripción del producto (10-50 caracteres)"
+            placeholder="Descripción del producto"
             required
             minLength={10}
             maxLength={50}
           />
+
+          <div className="space-y-2">
+            <label htmlFor="imagenProducto" className="block text-sm font-medium">
+              Imagen del producto
+            </label>
+            <input
+              id="imagenProducto"
+              name="imagenProducto"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={handleImagenChange}
+              className="w-full text-sm file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-primary file:text-primary-foreground"
+            />
+            <p className="text-xs text-muted-foreground">JPG, PNG o WEBP. Máximo 2 MB.</p>
+            {imagenPreview && (
+              <img
+                src={imagenPreview}
+                alt="Vista previa"
+                className="mt-2 h-32 w-32 object-cover rounded-lg border border-border"
+              />
+            )}
+          </div>
 
           <div className="grid grid-cols-2 gap-4">
             <FormField
@@ -510,51 +809,285 @@ export function Productos() {
               name="typo"
               type="select"
               value={formData.typo}
-              onChange={(value) => setFormData({ ...formData, typo: value as any })}
+              disabled={productoFormularioModo === 'editar'}
+              onChange={(value) => {
+                const next = value as 'terminado' | 'de preparacion' | 'insumo';
+                setNombreErrorApi(undefined);
+                setFormData({
+                  ...formData,
+                  typo: next,
+                  stockMinimo: next === 'de preparacion' ? 0 : formData.stockMinimo,
+                  insumoUnidadMedida: next === 'insumo' ? formData.insumoUnidadMedida || 'Unidades' : 'Unidades',
+                  insumoCantidadMedida:
+                    next === 'insumo'
+                      ? (formData.insumoUnidadMedida || 'Unidades') === 'Unidades'
+                        ? 1
+                        : formData.insumoCantidadMedida || 1
+                      : 1,
+                });
+              }}
               options={[
                 { value: 'terminado', label: 'Terminado' },
-                { value: 'de preparacion', label: 'De Preparación' }
+                { value: 'de preparacion', label: 'De Preparación' },
+                { value: 'insumo', label: 'Insumo' },
               ]}
               required
             />
           </div>
 
-          <div className={`grid gap-4 ${productoFormularioModo === 'editar' ? 'grid-cols-2' : 'grid-cols-1'}`}>
-            {productoFormularioModo === 'editar' && (
+          {formData.typo === 'insumo' && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <FormField
-                label="Precio de Venta"
-                name="precioVenta"
+                label="Unidad de presentación"
+                name="insumoUnidadMedida"
+                type="select"
+                selectPlaceholder={false}
+                value={formData.insumoUnidadMedida}
+                onChange={(v) => {
+                  const unidad = v as string;
+                  setFormData({
+                    ...formData,
+                    insumoUnidadMedida: unidad,
+                    insumoCantidadMedida: unidad === 'Unidades' ? 1 : formData.insumoCantidadMedida,
+                  });
+                }}
+                options={INSUMO_UNIDADES_API.map((u) => ({ value: u, label: u }))}
+                required
+              />
+              <FormField
+                label="Volumen / unidad"
+                name="insumoCantidadMedida"
                 type="number"
-                value={formData.precioVenta}
-                onChange={(value) => setFormData({ ...formData, precioVenta: parseInt(value as string) || 0 })}
+                value={
+                  formData.insumoUnidadMedida === 'Unidades'
+                    ? 1
+                    : formData.insumoCantidadMedida === 0
+                      ? ''
+                      : formData.insumoCantidadMedida
+                }
+                onChange={(value) => {
+                  if (formData.insumoUnidadMedida === 'Unidades') return;
+                  const raw = String(value ?? '').trim();
+                  if (raw === '') {
+                    setFormData({ ...formData, insumoCantidadMedida: 0 });
+                    return;
+                  }
+                  const n = parseInt(raw, 10);
+                  if (Number.isFinite(n) && n >= 0) {
+                    setFormData({ ...formData, insumoCantidadMedida: n });
+                  }
+                }}
+                min={1}
+                step={1}
+                disabled={formData.insumoUnidadMedida === 'Unidades'}
+                required
+              />
+              <FormField
+                label="Stock mínimo"
+                name="stockMinimo"
+                type="number"
+                value={formData.stockMinimo === 0 ? '' : formData.stockMinimo}
+                onChange={(value) => {
+                  const num = parseInt(value as string) || 0;
+                  if (num < 0) {
+                    toast.warning('No se permiten números negativos');
+                    return;
+                  }
+                  setFormData({ ...formData, stockMinimo: num });
+                }}
+                min={0}
+                required
+              />
+            </div>
+          )}
+
+          <div
+            className={`grid gap-4 ${
+              (productoFormularioModo === 'editar' ||
+                (productoFormularioModo === 'nuevo' && formData.typo === 'de preparacion')) &&
+              formData.typo === 'terminado'
+                ? 'sm:grid-cols-2'
+                : 'grid-cols-1'
+            }`}
+          >
+            {(productoFormularioModo === 'editar' ||
+              (productoFormularioModo === 'nuevo' && formData.typo === 'de preparacion')) && (
+              <div className="space-y-2">
+                <label htmlFor="precioVenta" className="block">
+                  Precio de Venta <span className="text-destructive">*</span>
+                </label>
+                <input
+                  id="precioVenta"
+                  name="precioVenta"
+                  type="text"
+                  inputMode="numeric"
+                  value={precioVentaInput}
+                  onChange={(e) => {
+                    const num = parseMoneyInput(e.target.value);
+                    setPrecioVentaInput(formatMoneyInput(num));
+                    setFormData({
+                      ...formData,
+                      precioVenta: num,
+                    });
+                  }}
+                  placeholder="Ingrese el precio de venta"
+                  className="w-full px-4 py-2 bg-input-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring transition-all"
+                  required
+                />
+              </div>
+            )}
+
+            {formData.typo === 'terminado' && (
+              <FormField
+                label="Stock Mínimo"
+                name="stockMinimo"
+                type="number"
+                value={formData.stockMinimo === 0 ? '' : formData.stockMinimo}
+                onChange={(value) => {
+                  const digits = String(value ?? '').replace(/\D/g, '').slice(0, 6);
+                  const num = digits ? Number(digits) : 0;
+                  setFormData({ ...formData, stockMinimo: num });
+                }}
                 min={0}
                 required
               />
             )}
-
-            <FormField
-              label="Stock Mínimo"
-              name="stockMinimo"
-              type="number"
-              value={formData.stockMinimo === 0 ? '' : formData.stockMinimo}
-              onChange={(value) => {
-                const num = parseInt(value as string) || 0;
-                if (num < 0) {
-                  toast.warning('No se permiten números negativos');
-                  return;
-                }
-                setFormData({ ...formData, stockMinimo: num });
-              }}
-              min={0}
-              required
-            />
           </div>
 
-          {productoFormularioModo === 'nuevo' && (
-            <p className="text-xs text-muted-foreground bg-blue-50 p-3 rounded-lg">
-              ℹ️ El stock actual inicia en 0 y se incrementa al recibir compras. El precio de venta inicia en $0 y se
-              define al registrar la compra al proveedor (precio de compra y margen).
+          {productoFormularioModo === 'nuevo' && formData.typo === 'insumo' && (
+            <p className="text-xs text-muted-foreground bg-amber-50/80 p-3 rounded-lg border border-amber-200">
+              ℹ️ Producto insumo: el precio de venta no aplica (no se vende al cliente). El stock inicia en 0 y aumenta
+              con compras a proveedor. En la tabla de gestión el precio se muestra vacío hasta que exista costo por
+              compra.
             </p>
+          )}
+
+          {/* ── Ficha Técnica ── solo para productos de preparación */}
+          {formData.typo === 'de preparacion' && (
+            <div className="space-y-3 border border-border rounded-xl p-4 bg-accent/30">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-semibold text-sm text-foreground flex items-center gap-1">
+                    Ficha Técnica
+                  </h4>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Define los insumos necesarios para producir una unidad de este producto.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setFichaTecnicaInsumos(prev => [
+                      ...prev,
+                      { producto_catalogo_id: undefined as any, insumo_nombre: '', cantidad: 0, unidad: 'Unidades' },
+                    ])
+                  }
+                  className="flex items-center gap-1 text-xs px-3 py-1.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+                >
+                  <Plus className="w-3 h-3" /> Agregar insumo
+                </button>
+              </div>
+
+              {loadingFicha && (
+                <p className="text-xs text-muted-foreground text-center py-2">Cargando receta...</p>
+              )}
+
+              {!loadingFicha && fichaTecnicaInsumos.length === 0 && (
+                <p className="text-xs text-muted-foreground text-center py-3 border border-dashed border-border rounded-lg">
+                  No hay insumos en la receta. Haz clic en "Agregar insumo" para comenzar.
+                </p>
+              )}
+
+              {!loadingFicha && fichaTecnicaInsumos.length > 0 && (
+                <div className="space-y-2">
+                  {/* Header */}
+                  <div className="grid grid-cols-12 gap-2 text-xs font-medium text-muted-foreground px-1">
+                    <span className="col-span-6">Insumo</span>
+                    <span className="col-span-3">Cantidad</span>
+                    <span className="col-span-2">Unidad</span>
+                    <span className="col-span-1"></span>
+                  </div>
+                  {fichaTecnicaInsumos.map((fila, idx) => {
+                    const insumoSeleccionado = productos.find(
+                      p => p.id === Number(fila.producto_catalogo_id)
+                    );
+                    const unidadLabel = insumoSeleccionado?.insumoUnidadMedida || fila.unidad || 'Unidades';
+                    return (
+                      <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                        {/* Selector de insumo */}
+                        <div className="col-span-6">
+                          <select
+                            value={fila.producto_catalogo_id ?? ''}
+                            onChange={e => {
+                              const pid = Number(e.target.value);
+                              const prod = insumosDisponibles.find(p => p.id === pid);
+                              setFichaTecnicaInsumos(prev =>
+                                prev.map((r, i) =>
+                                  i === idx
+                                    ? {
+                                        ...r,
+                                        producto_catalogo_id: pid || undefined,
+                                        insumo_nombre: prod?.nombre || '',
+                                        unidad: prod?.insumoUnidadMedida || 'Unidades',
+                                      }
+                                    : r
+                                )
+                              );
+                            }}
+                            className="w-full text-sm px-2 py-1.5 border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+                            required
+                          >
+                            <option value="">Seleccione un insumo</option>
+                            {insumosDisponibles.map(p => (
+                              <option key={p.id} value={p.id}>
+                                {p.nombre}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        {/* Cantidad */}
+                        <div className="col-span-3">
+                          <input
+                            type="number"
+                            min={0.001}
+                            step={0.001}
+                            value={fila.cantidad || ''}
+                            onChange={e => {
+                              const val = parseFloat(e.target.value) || 0;
+                              setFichaTecnicaInsumos(prev =>
+                                prev.map((r, i) => (i === idx ? { ...r, cantidad: val } : r))
+                              );
+                            }}
+                            placeholder="0"
+                            className="w-full text-sm px-2 py-1.5 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
+                            required
+                          />
+                        </div>
+                        {/* Unidad */}
+                        <div className="col-span-2">
+                          <span className="text-xs text-muted-foreground bg-gray-100 rounded px-2 py-1.5 block text-center truncate">
+                            {unidadLabel}
+                          </span>
+                        </div>
+                        {/* Eliminar */}
+                        <div className="col-span-1 flex justify-center">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setFichaTecnicaInsumos(prev => prev.filter((_, i) => i !== idx))
+                            }
+                            className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded transition-colors"
+                            title="Eliminar insumo"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           )}
 
           <FormField
@@ -574,12 +1107,13 @@ export function Productos() {
             <Button variant="outline" type="button" onClick={() => cerrarModalProductoFormulario()}>
               Cancelar
             </Button>
-            <Button type="submit">
+            <Button type="submit" disabled={Boolean(errorNombreProducto)}>
               {productoFormularioModo === 'editar' ? 'Actualizar' : 'Crear'} Producto
             </Button>
           </FormActions>
         </Form>
       </Modal>
+
 
       {/* Modal Detalle */}
       <Modal
@@ -610,23 +1144,49 @@ export function Productos() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Tipo</p>
-                <span className={`px-2 py-1 rounded-full text-xs ${
-                  selectedProducto.typo === 'terminado' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
-                }`}>
-                  {selectedProducto.typo === 'terminado' ? 'Terminado' : 'De Preparación'}
+                <span
+                  className={`px-2 py-1 rounded-full text-xs ${
+                    selectedProducto.typo === 'terminado'
+                      ? 'bg-blue-100 text-blue-700'
+                      : selectedProducto.typo === 'insumo'
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-emerald-100 text-emerald-700'
+                  }`}
+                >
+                  {selectedProducto.typo === 'terminado'
+                    ? 'Terminado'
+                    : selectedProducto.typo === 'insumo'
+                      ? 'Insumo'
+                      : 'De Preparación'}
                 </span>
               </div>
+              {selectedProducto.typo === 'insumo' && (
+                <div className="col-span-2">
+                  <p className="text-sm text-muted-foreground">Presentación (volumen / unidad)</p>
+                  <p className="font-medium">
+                    {selectedProducto.insumoCantidadMedida != null &&
+                    selectedProducto.insumoUnidadMedida != null &&
+                    selectedProducto.insumoUnidadMedida !== ''
+                      ? `${selectedProducto.insumoCantidadMedida} ${selectedProducto.insumoUnidadMedida}`
+                      : '—'}
+                  </p>
+                </div>
+              )}
               <div>
                 <p className="text-sm text-muted-foreground">Precio de Compra</p>
-                <p className="font-medium">{formatCurrency(selectedProducto.precioCompra)}</p>
+                <p className="font-medium">
+                  {selectedProducto.typo === 'insumo' ? '—' : formatCurrency(selectedProducto.precioCompra)}
+                </p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Precio de Venta</p>
-                <p className="font-medium">{formatCurrency(selectedProducto.precioVenta)}</p>
+                <p className="font-medium">
+                  {selectedProducto.typo === 'insumo' ? '—' : formatCurrency(selectedProducto.precioVenta)}
+                </p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Ganancia</p>
-                <p className="font-medium">{selectedProducto.ganancia}%</p>
+                <p className="font-medium">{selectedProducto.typo === 'insumo' ? '—' : `${selectedProducto.ganancia}%`}</p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Stock Actual</p>
@@ -647,6 +1207,42 @@ export function Productos() {
                 </span>
               </div>
             </div>
+
+            {/* Ficha Técnica en detalle — solo para productos de preparación */}
+            {selectedProducto.typo === 'de preparacion' && (
+              <div className="border border-border rounded-xl p-4 bg-accent/30">
+                <h4 className="font-semibold text-sm text-foreground mb-3 flex items-center gap-1">
+                  Ficha Técnica
+                </h4>
+                {loadingFicha ? (
+                  <p className="text-xs text-muted-foreground text-center py-2">Cargando receta...</p>
+                ) : detailFichaTecnica.length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-2 italic">
+                    No hay receta configurada para este producto.
+                  </p>
+                ) : (
+                  <div className="space-y-1">
+                    <div className="grid grid-cols-12 gap-2 text-xs font-medium text-muted-foreground mb-1 px-1">
+                      <span className="col-span-6">Insumo</span>
+                      <span className="col-span-3">Cantidad</span>
+                      <span className="col-span-3">Unidad</span>
+                    </div>
+                    {detailFichaTecnica.map((ins, idx) => {
+                      const idInsumo = ins.producto_catalogo_id || ins.insumo_id;
+                      const catalogProduct = productos.find(p => p.id === Number(idInsumo));
+                      const unidadLabel = catalogProduct?.insumoUnidadMedida || ins.unidad || 'Unidades';
+                      return (
+                        <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-white rounded-lg px-3 py-2 border border-border text-sm">
+                          <span className="col-span-6 font-medium truncate">{ins.insumo_nombre || '—'}</span>
+                          <span className="col-span-3 text-muted-foreground">{ins.cantidad}</span>
+                          <span className="col-span-3 text-muted-foreground capitalize">{unidadLabel}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Historial de cambios */}
             {selectedProducto.historialCambios && selectedProducto.historialCambios.length > 0 && (

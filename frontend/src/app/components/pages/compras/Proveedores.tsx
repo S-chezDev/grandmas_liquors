@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { DataTable, Column } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions } from '../../Form';
@@ -44,6 +44,16 @@ export function Proveedores() {
   const [filtroTipo, setFiltroTipo] = useState<string>('Todos');
   const [filtroEstado, setFiltroEstado] = useState<string>('Todos');
   const [filtroPreferente, setFiltroPreferente] = useState<string>('Todos');
+  const [isSavingProveedor, setIsSavingProveedor] = useState(false);
+
+  const sanitizeNitInput = (value: string) => {
+    // Permite escribir desde teclado: números, guiones, comas, slash, asteriscos
+    return String(value || '')
+      .replace(/[^0-9,/*\-.\s]/g, '')
+      .replace(/([,/*-]){2,}/g, '$1')
+      .replace(/^[,/*-]+|[,/*-]+$/g, '')
+      .slice(0, 30);
+  };
 
   useEffect(() => {
     cargarProveedores();
@@ -62,27 +72,29 @@ export function Proveedores() {
   };
 
   // Filtrar proveedores
-  const proveedoresFiltrados = proveedores.filter(p => {
-    const matchBusqueda = searchQuery.length < 2 ||
-      p.nombreRazonSocial.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      String(p.nit || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.email.toLowerCase().includes(searchQuery.toLowerCase());
+  const proveedoresFiltrados = useMemo(() => (
+    proveedores.filter(p => {
+      const matchBusqueda = searchQuery.length < 2 ||
+        p.nombreRazonSocial.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        String(p.nit || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+        p.email.toLowerCase().includes(searchQuery.toLowerCase());
 
-    const matchTipo = filtroTipo === 'Todos' || p.tipo === filtroTipo;
-    const matchEstado = filtroEstado === 'Todos' ||
-      (filtroEstado === 'Activo' && p.estado === 'activo') ||
-      (filtroEstado === 'Inactivo' && p.estado === 'inactivo');
-    const matchPreferente = filtroPreferente === 'Todos' ||
-      (filtroPreferente === 'Si' && p.preferente) ||
-      (filtroPreferente === 'No' && !p.preferente);
+      const matchTipo = filtroTipo === 'Todos' || p.tipo === filtroTipo;
+      const matchEstado = filtroEstado === 'Todos' ||
+        (filtroEstado === 'Activo' && p.estado === 'activo') ||
+        (filtroEstado === 'Inactivo' && p.estado === 'inactivo');
+      const matchPreferente = filtroPreferente === 'Todos' ||
+        (filtroPreferente === 'Si' && p.preferente) ||
+        (filtroPreferente === 'No' && !p.preferente);
 
-    return matchBusqueda && matchTipo && matchEstado && matchPreferente;
-  });
+      return matchBusqueda && matchTipo && matchEstado && matchPreferente;
+    })
+  ), [proveedores, searchQuery, filtroTipo, filtroEstado, filtroPreferente]);
 
   const nitDigits = String(formData.nit || '').replace(/\D/g, '');
   const nitDuplicadoEnLista = useMemo(() => {
     if (selectedProveedor) return '';
-    if (nitDigits.length < 6 || nitDigits.length > 12) return '';
+    if (nitDigits.length < 6 || nitDigits.length > 15) return '';
     const dup = proveedores.some((p) => String(p.nit || '').replace(/\D/g, '') === nitDigits);
     return dup
       ? 'Este NIT o documento ya está en la lista de proveedores. Use otro número o edite el existente.'
@@ -197,8 +209,9 @@ export function Proveedores() {
 
   const confirmarCambioEstado = async () => {
     if (!proveedorEstadoPendiente) return;
+    const motivoTrim = motivoEstado.trim();
 
-    if (motivoEstado.length < 10 || motivoEstado.length > 50) {
+    if (motivoTrim.length < 10 || motivoTrim.length > 50) {
       toast.error('Error de validación', {
         description: 'El motivo debe tener entre 10 y 50 caracteres'
       });
@@ -209,7 +222,7 @@ export function Proveedores() {
       await api.proveedores.changeEstado(
         proveedorEstadoPendiente.proveedor.id,
         proveedorEstadoPendiente.nuevoEstado,
-        motivoEstado
+        motivoTrim
       );
 
       toast.success('Estado actualizado', {
@@ -307,6 +320,7 @@ export function Proveedores() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSavingProveedor) return;
 
     if (formData.tipo === 'Juridica') {
       if (!formData.nombreRazonSocial.trim()) {
@@ -341,9 +355,9 @@ export function Proveedores() {
       return;
     }
 
-    if (nitDigits.length < 6 || nitDigits.length > 12) {
+    if (nitDigits.length < 6 || nitDigits.length > 15) {
       toast.error('NIT o documento inválido', {
-        description: 'El NIT/Documento debe tener entre 6 y 12 dígitos.',
+        description: 'El NIT/Documento debe tener entre 6 y 15 dígitos.',
       });
       return;
     }
@@ -362,6 +376,7 @@ export function Proveedores() {
     }
 
     try {
+      setIsSavingProveedor(true);
       if (selectedProveedor) {
         await api.proveedores.update(selectedProveedor.id, formData, 'Actualización de datos');
 
@@ -397,6 +412,8 @@ export function Proveedores() {
           description: msg || 'Intente de nuevo o contacte al administrador.',
         });
       }
+    } finally {
+      setIsSavingProveedor(false);
     }
   };
 
@@ -432,7 +449,7 @@ export function Proveedores() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar... (mín. 2, máx. 50 caracteres)"
+              placeholder="Buscar ..."
               className="w-full px-4 py-2.5 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
               maxLength={50}
             />
@@ -484,6 +501,8 @@ export function Proveedores() {
       <DataTable
         columns={columns}
         data={proveedoresFiltrados}
+        pageSize={10}
+        getRowKey={(row) => row.id}
         actions={[
           {
             label: 'Ver',
@@ -570,13 +589,13 @@ export function Proveedores() {
             value={formData.nit}
             onChange={(value) => {
               if (selectedProveedor) return;
-              setFormData({ ...formData, nit: value as string });
+              setFormData({ ...formData, nit: sanitizeNitInput(value as string) });
             }}
-            placeholder="Entre 6 y 12 dígitos"
+            placeholder="Ej: 900-123/456*7"
             required
             disabled={!!selectedProveedor}
-            inputDigitRule="documento6to12"
             error={nitDuplicadoEnLista || undefined}
+            maxLength={25}
           />
 
           {selectedProveedor && (
@@ -594,6 +613,7 @@ export function Proveedores() {
               placeholder="6015551000"
               required
               inputDigitRule="telefono10"
+              hideAutoHelper
               error={telefonoDuplicadoProv || undefined}
             />
 
@@ -646,11 +666,13 @@ export function Proveedores() {
           </div>
 
           <FormActions>
-            <Button variant="outline" onClick={() => setIsModalOpen(false)}>
+            <Button variant="outline" disabled={isSavingProveedor} onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
-            <Button type="submit">
-              {selectedProveedor ? 'Actualizar' : 'Crear'} Proveedor
+            <Button type="submit" disabled={isSavingProveedor}>
+              {isSavingProveedor
+                ? 'Guardando...'
+                : `${selectedProveedor ? 'Actualizar' : 'Crear'} Proveedor`}
             </Button>
           </FormActions>
         </Form>

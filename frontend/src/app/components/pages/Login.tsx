@@ -1,15 +1,62 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card } from '../Card';
 import { Form, FormField, FormActions } from '../Form';
 import { Button } from '../Button';
-import { LogIn, UserPlus, KeyRound } from 'lucide-react';
+import { LogIn, UserPlus, KeyRound, ArrowLeft } from 'lucide-react';
 import { Modal } from '../Modal';
 import { AlertDialog } from '../AlertDialog';
 import { useAuth } from '../AuthContext';
-import { api } from '../../services/api';
+import { api, newPasswordPolicyMessage } from '../../services/api';
 
 // Logo local - using favicon from public folder
 const LOGO_URL = '/favicon/apple-touch-icon.png';
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function validateEmail(email: string, required = true): string | undefined {
+  const v = String(email || '').trim();
+  if (!v) return required ? 'El correo es obligatorio' : undefined;
+  if (!EMAIL_RE.test(v)) return 'Ingresa un correo electrónico válido';
+  return undefined;
+}
+
+function validateLoginPassword(password: string): string | undefined {
+  if (!password) return 'La contraseña es obligatoria';
+  return undefined;
+}
+
+function validateRegisterPassword(password: string): string | undefined {
+  if (!password) return 'La contraseña es obligatoria';
+  return newPasswordPolicyMessage(password) || undefined;
+}
+
+function validateName(value: string, label: string): string | undefined {
+  const v = String(value || '').trim();
+  if (!v) return `${label} es obligatorio`;
+  if (v.length < 2) return `${label} debe tener al menos 2 caracteres`;
+  return undefined;
+}
+
+function validateDocumento(value: string): string | undefined {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return 'El documento es obligatorio';
+  if (digits.length < 6 || digits.length > 12) return 'El documento debe tener entre 6 y 12 dígitos';
+  return undefined;
+}
+
+function validateTelefono(value: string): string | undefined {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return 'El teléfono es obligatorio';
+  if (digits.length !== 10) return 'El teléfono debe tener exactamente 10 dígitos';
+  return undefined;
+}
+
+function validateDireccion(value: string): string | undefined {
+  const v = String(value || '').trim();
+  if (!v) return 'La dirección es obligatoria';
+  if (v.length < 5) return 'Ingresa una dirección más completa';
+  return undefined;
+}
 
 interface LoginProps {
   onLogin: (email: string, password: string) => Promise<void>;
@@ -22,6 +69,7 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
   const [activeTab, setActiveTab] = useState<'login' | 'register'>(initialTab);
   const [isResetPasswordOpen, setIsResetPasswordOpen] = useState(false);
   const [resetEmail, setResetEmail] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   
   // Estados para alertas
   const [alertState, setAlertState] = useState({
@@ -32,6 +80,11 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
     onConfirm: () => {}
   });
   
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const markTouched = (field: string) => setTouched((prev) => ({ ...prev, [field]: true }));
+  const fieldError = (field: string, message: string | undefined) =>
+    touched[field] ? message : undefined;
+
   const [loginData, setLoginData] = useState({ email: '', password: '' });
   const [registerData, setRegisterData] = useState({ 
     tipoDocumento: 'CC' as 'CC' | 'CE' | 'Pasaporte',
@@ -44,10 +97,96 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
     password: '', 
     confirmPassword: ''
   });
+  const [registerDocumentoDuplicate, setRegisterDocumentoDuplicate] = useState('');
+  const [registerEmailDuplicate, setRegisterEmailDuplicate] = useState('');
+
+  const loginEmailErr = validateEmail(loginData.email);
+  const loginPasswordErr = validateLoginPassword(loginData.password);
+  const registerConfirmErr =
+    registerData.confirmPassword.trim() &&
+    registerData.password !== registerData.confirmPassword
+      ? 'Las contraseñas no coinciden'
+      : undefined;
+
+  useEffect(() => {
+    if (activeTab !== 'register') {
+      setRegisterDocumentoDuplicate('');
+      return;
+    }
+
+    const documento = String(registerData.numeroDocumento || '').replace(/\D/g, '');
+    if (documento.length < 6 || documento.length > 12) {
+      setRegisterDocumentoDuplicate('');
+      return;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const availability = await api.auth.checkRegisterAvailability({ documento });
+        if (!cancelled) {
+          setRegisterDocumentoDuplicate(
+            availability.documentoExists
+              ? 'Este documento ya está registrado. Usa otro número o inicia sesión con tu cuenta existente.'
+              : ''
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setRegisterDocumentoDuplicate('');
+        }
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [activeTab, registerData.numeroDocumento]);
+
+  useEffect(() => {
+    if (activeTab !== 'register') {
+      setRegisterEmailDuplicate('');
+      return;
+    }
+
+    const email = String(registerData.email || '').trim().toLowerCase();
+    if (!email || validateEmail(email)) {
+      setRegisterEmailDuplicate('');
+      return;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const availability = await api.auth.checkRegisterAvailability({ email });
+        if (!cancelled) {
+          setRegisterEmailDuplicate(
+            availability.emailExists
+              ? 'Este correo ya está registrado. Usa otro correo o inicia sesión con tu cuenta existente.'
+              : ''
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setRegisterEmailDuplicate('');
+        }
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [activeTab, registerData.email]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading) return;
+    setTouched((prev) => ({ ...prev, loginEmail: true, loginPassword: true }));
+    if (loginEmailErr || loginPasswordErr) return;
 
+    setIsLoading(true);
     try {
       await onLogin(loginData.email, loginData.password);
 
@@ -65,6 +204,7 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
     } catch (error: any) {
       // Bloqueo por demasiados intentos: el backend devuelve status 429 con mensaje claro.
       const status = Number(error?.status || 0);
+      const code = String(error?.code || '');
       const details = (error && typeof error === 'object' ? (error as any).details : null) || {};
       const isBlocked = status === 429 || details?.blocked === true;
 
@@ -82,29 +222,72 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
         return;
       }
 
+      if (status === 403 || code === 'INACTIVE_ACCOUNT') {
+        setAlertState({
+          isOpen: true,
+          title: 'Cuenta inactiva',
+          description:
+            error.message ||
+            'Tu cuenta está inactiva. Comunícate con los administradores de la aplicación para reactivar el acceso.',
+          type: 'warning',
+          onConfirm: () => {},
+        });
+        return;
+      }
+
+      if (status === 401 || code === 'INVALID_CREDENTIALS') {
+        setAlertState({
+          isOpen: true,
+          title: 'Credenciales no válidas',
+          description:
+            error.message ||
+            'No encontramos un usuario activo con esas credenciales. Verifica tus datos o regístrate en la aplicación.',
+          type: 'danger',
+          onConfirm: () => {},
+        });
+        return;
+      }
+
       setAlertState({
         isOpen: true,
         title: 'Error de autenticación',
-        description: error.message || 'Credenciales incorrectas. Por favor verifica tu email y contraseña.',
+        description: error.message || 'No fue posible completar el inicio de sesión.',
         type: 'danger',
         onConfirm: () => {}
       });
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (registerData.password !== registerData.confirmPassword) {
-      setAlertState({
-        isOpen: true,
-        title: 'Error en el registro',
-        description: 'Las contraseñas no coinciden',
-        type: 'danger',
-        onConfirm: () => {}
-      });
-      return;
-    }
+    if (isLoading) return;
+    setTouched({
+      regTipoDocumento: true,
+      regNumeroDocumento: true,
+      regNombre: true,
+      regApellido: true,
+      regDireccion: true,
+      regTelefono: true,
+      regEmail: true,
+      regPassword: true,
+      regConfirmPassword: true,
+    });
 
+    const regErrors = [
+      registerDocumentoDuplicate || validateDocumento(registerData.numeroDocumento),
+      validateName(registerData.nombre, 'El nombre'),
+      validateName(registerData.apellido, 'El apellido'),
+      validateDireccion(registerData.direccion),
+      validateTelefono(registerData.telefono),
+      registerEmailDuplicate || validateEmail(registerData.email),
+      validateRegisterPassword(registerData.password),
+      registerConfirmErr,
+    ].filter(Boolean);
+    if (regErrors.length > 0) return;
+
+    setIsLoading(true);
     try {
       await register(registerData);
 
@@ -127,12 +310,18 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
         type: 'danger',
         onConfirm: () => {}
       });
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+    if (isLoading) return;
+    setTouched((prev) => ({ ...prev, resetEmail: true }));
+    if (validateEmail(resetEmail)) return;
+
+    setIsLoading(true);
     try {
       await api.auth.requestPasswordReset(resetEmail);
       setAlertState({
@@ -153,32 +342,35 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
         type: 'danger',
         onConfirm: () => {}
       });
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen relative flex items-center justify-center p-6">
-      {/* Imagen de fondo */}
-      <div className="absolute inset-0 z-0">
+    <div className="relative min-h-dvh w-full">
+      {/* Fondo fijo: evita franja blanca al hacer scroll (min-h-screen + items-center en móvil) */}
+      <div className="fixed inset-0 z-0">
         <img
           src="https://images.unsplash.com/photo-1569529465841-dfecdab7503b?w=1920&h=1080&fit=crop"
           alt="Background"
-          className="w-full h-full object-cover"
+          className="h-full w-full object-cover"
         />
-        <div className="absolute inset-0 bg-gradient-to-br from-primary/90 via-primary/80 to-black/90"></div>
+        <div className="absolute inset-0 bg-gradient-to-br from-primary/90 via-primary/80 to-black/90" />
       </div>
 
-      <div className="w-full max-w-md relative z-10">
-        {/* Botón volver al inicio */}
+      <div className="relative z-10 flex min-h-dvh w-full flex-col items-center justify-start px-6 py-8 sm:justify-center sm:py-10">
+      <div
+        className={`w-full transition-[max-width] ${activeTab === 'register' ? 'max-w-2xl' : 'max-w-md'}`}
+      >
         {onBackToLanding && (
-          <div className="mb-6">
+          <div className="mb-4">
             <button
+              type="button"
               onClick={onBackToLanding}
               className="flex items-center gap-2 text-white hover:text-white/80 transition-colors bg-white/10 backdrop-blur-sm px-4 py-2 rounded-lg"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-              </svg>
+              <ArrowLeft className="w-5 h-5" aria-hidden />
               <span>Volver al inicio</span>
             </button>
           </div>
@@ -234,15 +426,19 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
                 </div>
               </div>
 
-              <Form onSubmit={handleLogin}>
+              <Form onSubmit={handleLogin} noValidate>
                 <FormField
                   label="Correo Electrónico"
                   name="email"
                   type="email"
                   value={loginData.email}
-                  onChange={(value) => setLoginData({ ...loginData, email: value as string })}
+                  onChange={(value) => {
+                    markTouched('loginEmail');
+                    setLoginData({ ...loginData, email: value as string });
+                  }}
                   placeholder="usuario@example.com"
                   required
+                  error={fieldError('loginEmail', loginEmailErr)}
                 />
                 
                 <FormField
@@ -250,14 +446,23 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
                   name="password"
                   type="password"
                   value={loginData.password}
-                  onChange={(value) => setLoginData({ ...loginData, password: value as string })}
+                  onChange={(value) => {
+                    markTouched('loginPassword');
+                    setLoginData({ ...loginData, password: value as string });
+                  }}
                   placeholder="••••••••"
                   required
+                  error={fieldError('loginPassword', loginPasswordErr)}
                 />
 
                 <FormActions>
-                  <Button type="submit" className="w-full" icon={<LogIn className="w-5 h-5" />}>
-                    Iniciar Sesión
+                  <Button
+                    type="submit"
+                    className="w-full"
+                    icon={<LogIn className="w-5 h-5" />}
+                    disabled={isLoading || Boolean(loginEmailErr || loginPasswordErr)}
+                  >
+                    {isLoading ? 'Iniciando sesión...' : 'Iniciar Sesión'}
                   </Button>
                 </FormActions>
               </Form>
@@ -289,14 +494,17 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
               </div>
             </div>
 
-            <Form onSubmit={handleRegister}>
-              <div className="grid grid-cols-2 gap-4">
+            <Form onSubmit={handleRegister} noValidate>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
                 <FormField
                   label="Tipo de Documento"
                   name="tipoDocumento"
                   type="select"
                   value={registerData.tipoDocumento}
-                  onChange={(value) => setRegisterData({ ...registerData, tipoDocumento: value as any })}
+                  onChange={(value) => {
+                    markTouched('regTipoDocumento');
+                    setRegisterData({ ...registerData, tipoDocumento: value as any });
+                  }}
                   options={[
                     { value: 'CC', label: 'Cédula de Ciudadanía' },
                     { value: 'CE', label: 'Cédula de Extranjería' },
@@ -304,92 +512,145 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
                   ]}
                   required
                 />
-                
+
                 <FormField
                   label="Número de Documento"
                   name="numeroDocumento"
                   value={registerData.numeroDocumento}
-                  onChange={(value) => setRegisterData({ ...registerData, numeroDocumento: value as string })}
-                  placeholder="Entre 6 y 12 dígitos"
+                  onChange={(value) => {
+                    markTouched('regNumeroDocumento');
+                    setRegisterDocumentoDuplicate('');
+                    setRegisterData({ ...registerData, numeroDocumento: value as string });
+                  }}
+                  placeholder="Ingresa tu documento"
                   required
                   inputDigitRule="documento6to12"
+                  hideAutoHelper
+                  error={fieldError('regNumeroDocumento', registerDocumentoDuplicate || validateDocumento(registerData.numeroDocumento))}
                 />
-              </div>
 
-              <div className="grid grid-cols-2 gap-4">
                 <FormField
                   label="Nombre"
                   name="nombre"
                   value={registerData.nombre}
-                  onChange={(value) => setRegisterData({ ...registerData, nombre: value as string })}
+                  onChange={(value) => {
+                    markTouched('regNombre');
+                    setRegisterData({ ...registerData, nombre: value as string });
+                  }}
                   placeholder="Juan"
                   required
+                  error={fieldError('regNombre', validateName(registerData.nombre, 'El nombre'))}
                 />
                 
                 <FormField
                   label="Apellido"
                   name="apellido"
                   value={registerData.apellido}
-                  onChange={(value) => setRegisterData({ ...registerData, apellido: value as string })}
+                  onChange={(value) => {
+                    markTouched('regApellido');
+                    setRegisterData({ ...registerData, apellido: value as string });
+                  }}
                   placeholder="Pérez"
                   required
+                  error={fieldError('regApellido', validateName(registerData.apellido, 'El apellido'))}
                 />
-              </div>
-              
-              <FormField
-                label="Dirección"
-                name="direccion"
-                value={registerData.direccion}
-                onChange={(value) => setRegisterData({ ...registerData, direccion: value as string })}
-                placeholder="Calle 104 # 79D - 65"
-                required
-              />
-              
-              <FormField
-                label="Teléfono"
-                name="telefono"
-                value={registerData.telefono}
-                onChange={(value) => setRegisterData({ ...registerData, telefono: value as string })}
-                placeholder="3001234567"
-                required
-                inputDigitRule="telefono10"
-              />
-              
-              <FormField
-                label="Correo Electrónico"
-                name="email"
-                type="email"
-                value={registerData.email}
-                onChange={(value) => setRegisterData({ ...registerData, email: value as string })}
-                placeholder="usuario@example.com"
-                required
-              />
-              
-              <FormField
-                label="Contraseña"
-                name="password"
-                type="password"
-                value={registerData.password}
-                onChange={(value) => setRegisterData({ ...registerData, password: value as string })}
-                placeholder="••••••••"
-                required
-              />
-              
-              <FormField
-                label="Confirmar Contraseña"
-                name="confirmPassword"
-                type="password"
-                value={registerData.confirmPassword}
-                onChange={(value) => setRegisterData({ ...registerData, confirmPassword: value as string })}
-                placeholder="••••••••"
-                required
-              />
 
-              <FormActions>
-                <Button type="submit" className="w-full" icon={<UserPlus className="w-5 h-5" />}>
-                  Crear Cuenta
-                </Button>
-              </FormActions>
+                <FormField
+                  label="Dirección"
+                  name="direccion"
+                  value={registerData.direccion}
+                  onChange={(value) => {
+                    markTouched('regDireccion');
+                    setRegisterData({ ...registerData, direccion: value as string });
+                  }}
+                  placeholder="Calle 104 # 79D - 65"
+                  required
+                  error={fieldError('regDireccion', validateDireccion(registerData.direccion))}
+                />
+
+                <FormField
+                  label="Teléfono"
+                  name="telefono"
+                  value={registerData.telefono}
+                  onChange={(value) => {
+                    markTouched('regTelefono');
+                    setRegisterData({ ...registerData, telefono: value as string });
+                  }}
+                  placeholder="3001234567"
+                  required
+                  inputDigitRule="telefono10"
+                  hideAutoHelper
+                  error={fieldError('regTelefono', validateTelefono(registerData.telefono))}
+                />
+
+                <FormField
+                  label="Correo Electrónico"
+                  name="email"
+                  type="email"
+                  value={registerData.email}
+                  onChange={(value) => {
+                    markTouched('regEmail');
+                    setRegisterEmailDuplicate('');
+                    setRegisterData({ ...registerData, email: value as string });
+                  }}
+                  placeholder="usuario@example.com"
+                  required
+                  error={fieldError('regEmail', registerEmailDuplicate || validateEmail(registerData.email))}
+                />
+
+                <FormField
+                  label="Contraseña"
+                  name="password"
+                  type="password"
+                  value={registerData.password}
+                  onChange={(value) => {
+                    markTouched('regPassword');
+                    setRegisterData({ ...registerData, password: value as string });
+                  }}
+                  placeholder="••••••••"
+                  required
+                  error={fieldError('regPassword', validateRegisterPassword(registerData.password))}
+                  helperText="Mínimo 8 caracteres, una mayúscula, una minúscula y un número."
+                />
+
+                <FormField
+                  label="Confirmar Contraseña"
+                  name="confirmPassword"
+                  type="password"
+                  value={registerData.confirmPassword}
+                  onChange={(value) => {
+                    markTouched('regConfirmPassword');
+                    setRegisterData({ ...registerData, confirmPassword: value as string });
+                  }}
+                  placeholder="••••••••"
+                  required
+                  error={fieldError('regConfirmPassword', registerConfirmErr)}
+                />
+
+                <div className="sm:col-span-2 pt-2">
+                  <FormActions>
+                    <Button
+                      type="submit"
+                      className="w-full"
+                      icon={<UserPlus className="w-5 h-5" />}
+                      disabled={isLoading || Boolean(
+                        registerDocumentoDuplicate ||
+                        registerEmailDuplicate ||
+                        validateDocumento(registerData.numeroDocumento) ||
+                        validateName(registerData.nombre, 'El nombre') ||
+                        validateName(registerData.apellido, 'El apellido') ||
+                        validateDireccion(registerData.direccion) ||
+                        validateTelefono(registerData.telefono) ||
+                        validateEmail(registerData.email) ||
+                        validateRegisterPassword(registerData.password) ||
+                        registerConfirmErr
+                      )}
+                    >
+                      {isLoading ? 'Creando cuenta...' : 'Crear Cuenta'}
+                    </Button>
+                  </FormActions>
+                </div>
+              </div>
             </Form>
           </div>
         )}
@@ -398,6 +659,7 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
           <p>Calle 104 # 79D – 65, Medellín, Laureles</p>
           <p>Tel: 324 610 2339</p>
         </div>
+      </div>
       </div>
 
       {/* Modal de Restablecer Contraseña */}
@@ -421,15 +683,19 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
           </div>
         </div>
 
-        <Form onSubmit={handleResetPassword}>
+        <Form onSubmit={handleResetPassword} noValidate>
           <FormField
             label="Correo Electrónico"
             name="resetEmail"
             type="email"
             value={resetEmail}
-            onChange={(value) => setResetEmail(value as string)}
+            onChange={(value) => {
+              markTouched('resetEmail');
+              setResetEmail(value as string);
+            }}
             placeholder="usuario@example.com"
             required
+            error={fieldError('resetEmail', validateEmail(resetEmail))}
           />
 
           <FormActions>
@@ -439,8 +705,12 @@ export function Login({ onLogin, initialTab = 'login', onBackToLanding }: LoginP
             }}>
               Cancelar
             </Button>
-            <Button type="submit" icon={<KeyRound className="w-5 h-5" />}>
-              Enviar Enlace
+            <Button
+              type="submit"
+              icon={<KeyRound className="w-5 h-5" />}
+              disabled={isLoading || Boolean(validateEmail(resetEmail))}
+            >
+              {isLoading ? 'Enviando...' : 'Enviar Enlace'}
             </Button>
           </FormActions>
         </Form>

@@ -1,12 +1,14 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DataTable, Column, commonActions, openPrintablePdf } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Button } from '../../Button';
 import { Form, FormField, FormActions } from '../../Form';
 import { Plus, Minus, Trash2, Search, Package, ShoppingCart } from 'lucide-react';
 import { api } from '../../../services/api';
+import { settledValue } from '../../../services/routePermissions';
+import { formatEntityCode } from '../../../services/mappers';
 import { toast } from '../../AlertDialog';
-import type { Pedido, Cliente, Producto, PedidoProducto } from '../../../services/types';
+import type { Pedido, Cliente, Producto, PedidoProducto, OrdenProduccion } from '../../../services/types';
 import { MotivoModal } from '../../MotivoModal';
 import { AlertDialog } from '../../AlertDialog';
 
@@ -26,6 +28,8 @@ export function Pedidos() {
   const [pedidos, setPedidos] = useState<PedidoView[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
+  /** Orden de producción por pedido_id (si existe). */
+  const [ordenPorPedidoId, setOrdenPorPedidoId] = useState<Map<number, OrdenProduccion>>(new Map());
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [pedidoPending, setPedidoPending] = useState<{
@@ -52,6 +56,7 @@ export function Pedidos() {
     direccion: '',
     telefono: ''
   });
+  const [isSubmittingPedido, setIsSubmittingPedido] = useState(false);
 
   useEffect(() => {
     cargarDatos();
@@ -61,26 +66,43 @@ export function Pedidos() {
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
-      if (!target.closest('.relative')) {
+      if (!target.closest('.pedido-cliente-picker')) {
         setMostrarListaClientes(false);
+      }
+      if (!target.closest('.pedido-producto-picker')) {
         setMostrarListaProductos(false);
       }
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('mousedown', handleClickOutside, true);
+    return () => document.removeEventListener('mousedown', handleClickOutside, true);
   }, []);
 
   const cargarDatos = async () => {
     try {
-      const [pedidosData, clientesData, productosData] = await Promise.all([
+      const [pedidosR, clientesR, productosR, produccionR] = await Promise.allSettled([
         api.pedidos.getAll(),
         api.clientes.getAll(),
-        api.productos.getAll()
+        api.productos.getAll(),
+        api.produccion.getAll(),
       ]);
 
+      if (pedidosR.status === 'rejected') {
+        console.error('[Pedidos] Error al cargar pedidos:', pedidosR.reason);
+        toast.error('Error al cargar datos', {
+          description:
+            pedidosR.reason instanceof Error ? pedidosR.reason.message : 'No autorizado o error de red',
+        });
+        return;
+      }
+
+      const pedidosData = pedidosR.value;
+      const clientesData = settledValue(clientesR, [] as Cliente[], 'clientes');
+      const productosData = settledValue(productosR, [] as Producto[], 'productos');
+      const ordenesProd = settledValue(produccionR, [] as OrdenProduccion[], 'producción');
+
       setClientes(clientesData.filter(c => c.estado === 'activo'));
-      setProductos(productosData.filter(p => p.estado === 'activo'));
+      setProductos(productosData.filter(p => p.estado === 'activo' && p.typo !== 'insumo'));
 
       const pedidosConInfo = pedidosData.map(pedido => {
         const cliente = clientesData.find(c => c.id === pedido.clienteId);
@@ -91,9 +113,22 @@ export function Pedidos() {
       });
 
       setPedidos(pedidosConInfo);
+
+      const mapOrden = new Map<number, OrdenProduccion>();
+      for (const o of ordenesProd) {
+        const pid = o.pedidoId != null ? Number(o.pedidoId) : 0;
+        if (pid > 0) mapOrden.set(pid, o);
+      }
+      setOrdenPorPedidoId(mapOrden);
     } catch (error) {
       toast.error('Error al cargar datos');
     }
+  };
+
+  const pedidoTieneOrdenPendiente = (pedidoId: number) => {
+    const orden = ordenPorPedidoId.get(pedidoId);
+    if (!orden) return false;
+    return orden.estado !== 'completada' && orden.estado !== 'cancelada';
   };
 
   const formatCurrency = (value: number) => {
@@ -105,7 +140,8 @@ export function Pedidos() {
   };
 
   const pedidoEstadoOpciones = (
-    estado: Pedido['estado']
+    estado: Pedido['estado'],
+    pedidoId: number
   ): { v: Pedido['estado']; l: string }[] => {
     if (estado === 'pendiente') {
       return [
@@ -115,11 +151,14 @@ export function Pedidos() {
       ];
     }
     if (estado === 'en proceso') {
-      return [
+      const opts: { v: Pedido['estado']; l: string }[] = [
         { v: 'en proceso', l: 'En Proceso' },
-        { v: 'completado', l: 'Completado' },
-        { v: 'cancelado', l: 'Cancelado' }
+        { v: 'cancelado', l: 'Cancelado' },
       ];
+      if (!pedidoTieneOrdenPendiente(pedidoId)) {
+        opts.splice(1, 0, { v: 'completado', l: 'Completado' });
+      }
+      return opts;
     }
     if (estado === 'completado') {
       return [{ v: 'completado', l: 'Completado' }];
@@ -161,6 +200,13 @@ export function Pedidos() {
       return;
     }
     if (to === 'completado') {
+      if (pedidoTieneOrdenPendiente(pedido.id)) {
+        toast.error('No puede completar el pedido', {
+          description:
+            'La orden de producción aún no está completada. Finalícela en Producción; el pedido pasará a Completado automáticamente.',
+        });
+        return;
+      }
       setPedidoPending({ pedido, to });
       return;
     }
@@ -186,7 +232,7 @@ export function Pedidos() {
     {
       key: 'id',
       label: 'ID Pedido',
-      render: (value: number) => `#${String(value).padStart(4, '0')}`
+      render: (value: number) => formatEntityCode('P', value)
     },
     {
       key: 'clienteNombre',
@@ -218,7 +264,7 @@ export function Pedidos() {
       key: 'estado',
       label: 'Estado',
       render: (_: string, row: PedidoView) => {
-        const opts = pedidoEstadoOpciones(row.estado);
+        const opts = pedidoEstadoOpciones(row.estado, row.id);
         const locked = opts.length === 1;
         const bg =
           row.estado === 'completado'
@@ -282,16 +328,23 @@ export function Pedidos() {
     }
 
     const completo = await cargarPedidoCompleto(pedido);
+    const cliente = clientes.find((c) => c.id === completo.clienteId);
+    const nombreCliente = cliente
+      ? `${cliente.nombre} ${cliente.apellido}`.trim()
+      : String(completo.clienteNombre || '').trim();
+
     setSelectedPedido(completo);
     setFormData({
       clienteId: completo.clienteId,
       metodoPago: completo.metodoPago,
       porcentajeAbono: completo.porcentajeAbono,
-      fechaPedido: completo.fechaPedido,
-      fechaEntrega: completo.fechaEntrega,
+      fechaPedido: String(completo.fechaPedido || '').split('T')[0],
+      fechaEntrega: String(completo.fechaEntrega || '').split('T')[0],
       direccion: completo.direccion || '',
       telefono: completo.telefono || ''
     });
+    setBusquedaCliente(nombreCliente);
+    setMostrarListaClientes(false);
 
     const productosForm: ProductoEnForm[] = completo.productos.map(p => {
       const producto = productos.find(prod => prod.id === p.productoId);
@@ -334,7 +387,7 @@ export function Pedidos() {
   const buildPedidoPdf = (pedido: PedidoView) => {
     const cliente = clientes.find((c) => c.id === pedido.clienteId);
     const opened = openPrintablePdf({
-      title: `Pedido #${String(pedido.id).padStart(4, '0')}`,
+      title: `Pedido ${formatEntityCode('P', pedido.id)}`,
       subtitle: `Generado el ${new Date().toLocaleString('es-CO')}`,
       sections: [
         {
@@ -477,6 +530,7 @@ export function Pedidos() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingPedido) return;
 
     if (!formData.clienteId) {
       toast.error('Seleccione un cliente');
@@ -499,7 +553,8 @@ export function Pedidos() {
       return;
     }
 
-    if (new Date(formData.fechaEntrega) < new Date(formData.fechaPedido)) {
+    // Permitir que la fecha de entrega sea igual o mayor a la fecha del pedido (incluye entrega el mismo día)
+    if (formData.fechaEntrega < formData.fechaPedido) {
       toast.error('La fecha de entrega debe ser mayor o igual a la fecha del pedido');
       return;
     }
@@ -528,14 +583,12 @@ export function Pedidos() {
     }));
 
     try {
+      setIsSubmittingPedido(true);
       if (selectedPedido) {
         await api.pedidos.update(selectedPedido.id, {
-          clienteId: formData.clienteId,
           productos: productosPedido,
           total,
           metodoPago: formData.metodoPago,
-          porcentajeAbono: formData.porcentajeAbono,
-          montoAbonado,
           fechaPedido: formData.fechaPedido,
           fechaEntrega: formData.fechaEntrega,
           direccion: formData.direccion,
@@ -563,6 +616,8 @@ export function Pedidos() {
       cargarDatos();
     } catch (error: any) {
       toast.error(error.message || 'Error al guardar pedido');
+    } finally {
+      setIsSubmittingPedido(false);
     }
   };
 
@@ -585,18 +640,36 @@ export function Pedidos() {
     setMostrarListaClientes(false);
   };
 
-  const pedidosFiltrados = pedidos.filter(pedido => {
-    const matchBusqueda = busqueda.length === 0 ||
-      busqueda.length >= 2 &&
-      (pedido.clienteNombre?.toLowerCase().includes(busqueda.toLowerCase()) ||
-       String(pedido.id).includes(busqueda));
+  const pedidoEstadoOrden = (estado: Pedido['estado']) => {
+    if (estado === 'pendiente') return 0;
+    if (estado === 'en proceso') return 1;
+    if (estado === 'completado') return 3;
+    if (estado === 'cancelado') return 4;
+    return 2;
+  };
 
-    const matchEstado = !filtroEstado || pedido.estado === filtroEstado;
-    const matchMetodoPago = !filtroMetodoPago || pedido.metodoPago === filtroMetodoPago;
-    const matchFecha = !filtroFecha || pedido.fechaPedido === filtroFecha;
+  const pedidosFiltrados = pedidos
+    .filter((pedido) => {
+      const matchBusqueda =
+        busqueda.length === 0 ||
+        (busqueda.length >= 2 &&
+          (pedido.clienteNombre?.toLowerCase().includes(busqueda.toLowerCase()) ||
+            String(pedido.id).includes(busqueda)));
 
-    return matchBusqueda && matchEstado && matchMetodoPago && matchFecha;
-  });
+      const matchEstado = !filtroEstado || pedido.estado === filtroEstado;
+      const matchMetodoPago = !filtroMetodoPago || pedido.metodoPago === filtroMetodoPago;
+      const matchFecha = !filtroFecha || pedido.fechaPedido === filtroFecha;
+
+      return matchBusqueda && matchEstado && matchMetodoPago && matchFecha;
+    })
+    .sort((a, b) => {
+      const porEstado = pedidoEstadoOrden(a.estado) - pedidoEstadoOrden(b.estado);
+      if (porEstado !== 0) return porEstado;
+      const ta = new Date(a.createdAt || a.fechaPedido || 0).getTime();
+      const tb = new Date(b.createdAt || b.fechaPedido || 0).getTime();
+      if (tb !== ta) return tb - ta;
+      return Number(b.id) - Number(a.id);
+    });
 
   return (
     <div className="space-y-6">
@@ -617,7 +690,7 @@ export function Pedidos() {
               type="text"
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
-              placeholder="Buscar... (mín. 2, máx. 50 caracteres)"
+              placeholder="Buscar ..."
               className="w-full px-4 py-2.5 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
               maxLength={50}
             />
@@ -693,7 +766,7 @@ export function Pedidos() {
             <>
               <p>
                 <strong>Pedido:</strong> #
-                {String(pedidoPending.pedido.id).padStart(4, '0')}
+                {formatEntityCode('P', pedidoPending.pedido.id)}
               </p>
               <p className="text-muted-foreground">
                 Estado actual: {pedidoPending.pedido.estado}
@@ -729,21 +802,32 @@ export function Pedidos() {
         <Form onSubmit={handleSubmit}>
           <div className="grid grid-cols-2 gap-4">
             {/* Campo de búsqueda de Cliente */}
-            <div className="relative">
+            <div className="relative pedido-cliente-picker">
               <label className="block text-sm font-medium mb-2">Cliente *</label>
               <input
                 type="text"
                 value={busquedaCliente}
                 onChange={(e) => {
+                  if (selectedPedido) return;
                   setBusquedaCliente(e.target.value);
                   setMostrarListaClientes(true);
                 }}
-                onFocus={() => setMostrarListaClientes(true)}
+                onFocus={() => {
+                  if (!selectedPedido) setMostrarListaClientes(true);
+                }}
                 placeholder="Escribe ID, nombre o documento del cliente..."
-                className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-muted disabled:cursor-not-allowed disabled:opacity-70"
+                maxLength={60}
                 required
+                disabled={Boolean(selectedPedido)}
+                readOnly={Boolean(selectedPedido)}
               />
-              {mostrarListaClientes && busquedaCliente && (
+              {selectedPedido && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  El cliente no se puede modificar en pedidos existentes.
+                </p>
+              )}
+              {mostrarListaClientes && busquedaCliente && !selectedPedido && (
                 <div className="absolute z-10 w-full mt-1 bg-white border border-border rounded-lg shadow-lg max-h-60 overflow-y-auto">
                   {clientesFiltrados.length > 0 ? (
                     clientesFiltrados.map(c => (
@@ -805,7 +889,7 @@ export function Pedidos() {
             </div>
 
             <FormField
-              label="Fecha Entrega * (solo fechas futuras)"
+              label="Fecha Entrega *"
               name="fechaEntrega"
               type="date"
               value={formData.fechaEntrega}
@@ -821,7 +905,7 @@ export function Pedidos() {
                 }
                 setFormData({ ...formData, fechaEntrega: fechaEnt });
               }}
-              min={new Date().toISOString().split('T')[0]}
+              allowPastDates={true}
               required
             />
 
@@ -840,10 +924,12 @@ export function Pedidos() {
                   { value: 100, label: '100%' }
                 ]}
                 required
+                disabled={Boolean(selectedPedido)}
               />
               {formData.porcentajeAbono > 0 && (
                 <p className="text-xs text-muted-foreground mt-1">
                   Monto a abonar: {formatCurrency(calcularMontoAbonado(calcularTotal(), formData.porcentajeAbono))}
+                  {selectedPedido ? ' (no editable en pedidos existentes)' : ''}
                 </p>
               )}
             </div>
@@ -851,7 +937,7 @@ export function Pedidos() {
 
           <div className="space-y-4">
             {/* Buscador de productos (mismo diseno que "Agregar Productos" en Nueva Venta) */}
-            <div className="relative">
+            <div className="relative pedido-producto-picker">
               <label className="block text-sm font-medium mb-2 flex items-center gap-2">
                 <ShoppingCart className="w-4 h-4" />
                 Agregar Productos *
@@ -868,13 +954,14 @@ export function Pedidos() {
                   onFocus={() => setMostrarListaProductos(true)}
                   placeholder="Busca por nombre o ID, o haz clic para ver todos los productos..."
                   className="w-full pl-10 pr-4 py-3 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-base"
+                  maxLength={60}
                 />
               </div>
               {mostrarListaProductos && (
                 <div className="absolute z-10 w-full mt-1 bg-white border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
                   {productosFiltrados.length > 0 ? (
                     <>
-                      <div className="sticky top-0 bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
+                      <div className="bg-primary/10 px-4 py-2 border-b border-border font-medium text-sm">
                         {busquedaProducto.trim() === ''
                           ? `Todos los productos (${productosFiltrados.length})`
                           : `${productosFiltrados.length} producto(s) encontrado(s)`}
@@ -1001,11 +1088,13 @@ export function Pedidos() {
           </div>
 
           <FormActions>
-            <Button variant="outline" onClick={() => setIsModalOpen(false)}>
+            <Button variant="outline" disabled={isSubmittingPedido} onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
-            <Button type="submit">
-              {selectedPedido ? 'Actualizar' : 'Crear'} Pedido
+            <Button type="submit" disabled={isSubmittingPedido}>
+              {isSubmittingPedido
+                ? 'Guardando...'
+                : `${selectedPedido ? 'Actualizar' : 'Crear'} Pedido`}
             </Button>
           </FormActions>
         </Form>
@@ -1022,7 +1111,7 @@ export function Pedidos() {
           <div className="space-y-6">
             <div className="flex items-center justify-between p-4 bg-accent rounded-lg">
               <div>
-                <h3 className="text-lg">Pedido #{String(selectedPedido.id).padStart(4, '0')}</h3>
+                <h3 className="text-lg">Pedido {formatEntityCode('P', selectedPedido.id)}</h3>
                 <p className="text-sm text-muted-foreground">{selectedPedido.clienteNombre}</p>
               </div>
               <span className={`px-4 py-2 rounded-full text-sm ${

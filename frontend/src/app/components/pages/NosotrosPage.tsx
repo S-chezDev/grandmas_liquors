@@ -5,9 +5,10 @@ import { Button } from '../Button';
 interface NosotrosPageProps {
   onNavigateToRegister: () => void;
   onBackToHome: () => void;
+  onViewCatalog: () => void;
 }
 
-export function NosotrosPage({ onNavigateToRegister, onBackToHome }: NosotrosPageProps) {
+export function NosotrosPage({ onNavigateToRegister, onBackToHome, onViewCatalog }: NosotrosPageProps) {
   return (
     <div className="min-h-screen bg-background">
       {/* Hero Section */}
@@ -227,43 +228,34 @@ export function NosotrosPage({ onNavigateToRegister, onBackToHome }: NosotrosPag
       </section>
 
       {/* Call to Action */}
-      <section className="py-16 bg-primary text-white">
+      <section className="py-16 bg-background">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h2 className="text-white mb-4">Únete a la Familia Grandma's</h2>
-          <p className="text-xl text-white/90 mb-8">
+          <h2 className="text-primary mb-4">Únete a la Familia Grandma's</h2>
+          <p className="text-xl text-muted-foreground mb-8">
             Descubre por qué miles de personas en Medellín confían en nosotros para sus celebraciones
           </p>
 
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Button
-              onClick={onNavigateToRegister}
-              size="lg"
-              className="bg-white text-primary hover:bg-white/90"
-            >
+            <Button onClick={onNavigateToRegister} size="lg">
               Crear mi Cuenta
             </Button>
-            <Button
-              onClick={onBackToHome}
-              size="lg"
-              variant="outline"
-              className="border-white text-white hover:bg-white/10"
-            >
+            <Button onClick={onViewCatalog} size="lg" variant="outline">
               Ver Catálogo
             </Button>
           </div>
 
-          <div className="mt-12 grid grid-cols-3 gap-8 pt-8 border-t border-white/20">
+          <div className="mt-12 grid grid-cols-3 gap-8 pt-8 border-t border-border">
             <div>
-              <p className="text-3xl mb-1">12</p>
-              <p className="text-white/80 text-sm">Colaboradores</p>
+              <p className="text-3xl mb-1 text-primary">12</p>
+              <p className="text-muted-foreground text-sm">Colaboradores</p>
             </div>
             <div>
-              <p className="text-3xl mb-1">5000+</p>
-              <p className="text-white/80 text-sm">Clientes Satisfechos</p>
+              <p className="text-3xl mb-1 text-primary">5000+</p>
+              <p className="text-muted-foreground text-sm">Clientes Satisfechos</p>
             </div>
             <div>
-              <p className="text-3xl mb-1">11+</p>
-              <p className="text-white/80 text-sm">Años de Experiencia</p>
+              <p className="text-3xl mb-1 text-primary">11+</p>
+              <p className="text-muted-foreground text-sm">Años de Experiencia</p>
             </div>
           </div>
         </div>

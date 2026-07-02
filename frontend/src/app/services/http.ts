@@ -1,3 +1,6 @@
+import { formatOutgoingTextPayload } from './mappers';
+import { resolveApiPath } from './resolve';
+
 export type ApiEnvelope<T = unknown> = {
   success?: boolean;
   message?: string;
@@ -5,6 +8,16 @@ export type ApiEnvelope<T = unknown> = {
   id?: number;
   details?: unknown;
 };
+
+const AUTH_EVENT_NAME = 'grandmas:session-invalidated';
+const AUTH_EVENT_EXCLUDED_PATHS = new Set([
+  '/api/auth/login',
+  '/api/auth/me',
+  '/api/auth/logout',
+  '/api/auth/logout-all',
+  '/api/auth/register-cliente',
+  '/api/auth/password-reset-request',
+]);
 
 export async function apiFetch<T = unknown>(
   path: string,
@@ -14,15 +27,34 @@ export async function apiFetch<T = unknown>(
   let body: BodyInit | undefined = init?.body as BodyInit | undefined;
   if (init && 'json' in init && init.json !== undefined) {
     headers['Content-Type'] = 'application/json';
-    body = JSON.stringify(init.json);
+    body = JSON.stringify(formatOutgoingTextPayload(init.json));
   }
 
-  const res = await fetch(path, {
-    ...init,
-    credentials: 'include',
-    headers,
-    body,
-  });
+  const resolvedPath = resolveApiPath(path);
+
+  let res: Response;
+  try {
+    res = await fetch(resolvedPath, {
+      ...init,
+      credentials: 'include',
+      headers,
+      body,
+    });
+  } catch (networkError: unknown) {
+    const isDev = import.meta.env.DEV;
+    const hint =
+      path.startsWith('/api/') && isDev
+        ? ' Verifique que Elastic Beanstalk tenga desplegada la última versión del backend, que CORS_ORIGINS incluya http://localhost:3000 y reinicie el frontend (proxy VITE_API_PROXY_TARGET).'
+        : '';
+    const base =
+      networkError instanceof Error && networkError.message
+        ? networkError.message
+        : 'No se pudo conectar con el servidor.';
+    if (isDev) {
+      console.error('[apiFetch] Error de red', resolvedPath, networkError);
+    }
+    throw Object.assign(new Error(`${base}${hint}`), { status: 0, code: 'NETWORK_ERROR' });
+  }
 
   const raw = await res.text();
   let json: ApiEnvelope<T> = {};
@@ -33,12 +65,38 @@ export async function apiFetch<T = unknown>(
   }
 
   if (!res.ok) {
-    const msg = typeof json.message === 'string' ? json.message : res.statusText;
-    throw Object.assign(new Error(msg), { status: res.status, details: json.details });
+    let msg = typeof json.message === 'string' ? json.message : res.statusText;
+    if (/<html|gateway time-out|504/i.test(msg)) {
+      msg =
+        res.status === 504
+          ? 'El servidor tardó demasiado en responder. Intente de nuevo en unos segundos.'
+          : 'Error de comunicación con el servidor. Intente de nuevo.';
+    }
+    if (
+      res.status === 401 &&
+      typeof window !== 'undefined' &&
+      !AUTH_EVENT_EXCLUDED_PATHS.has(path)
+    ) {
+      window.dispatchEvent(
+        new CustomEvent(AUTH_EVENT_NAME, {
+          detail: {
+            message: msg || 'Tu sesión fue cerrada porque la cuenta ya no está activa.',
+          },
+        })
+      );
+    }
+    throw Object.assign(new Error(msg), {
+      status: res.status,
+      details: json.details,
+      code: (json as { code?: string }).code,
+    });
   }
   if (json.success === false) {
     const msg = typeof json.message === 'string' ? json.message : 'Error en la solicitud';
-    throw Object.assign(new Error(msg), { details: json.details });
+    throw Object.assign(new Error(msg), {
+      details: json.details,
+      code: (json as { code?: string }).code,
+    });
   }
   return json;
 }

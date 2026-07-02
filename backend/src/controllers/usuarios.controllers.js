@@ -5,16 +5,25 @@ const models = {
   Usuarios: require('../models/usuarios/usuarios'),
 };
 const bcrypt = require('bcryptjs');
-const pool = require('../../db');
 const { normalizeUsuarioPayload } = require('./normalizador-http');
 const { generateTempPassword, isStrongPassword } = require('../utils/credentials');
 const {
   sendTemporaryPasswordEmail,
   sendEmailChangeNotification,
+  sendPasswordChangeNotification,
   sendUserStatusChangeNotification,
+  sendAccountDeletedNotification,
   sendWelcomeEmail,
 } = require('../services/email.service');
+const pool = require('../../db');
 const { isClienteUser } = require('../utils/selfServiceAccess');
+const { roleGrantsPermission } = require('../models/shared/auditoria');
+
+const getRolePermissions = async (req) => {
+  if (!req.user?.rol_id) return [];
+  const roleResult = await pool.query('SELECT permisos FROM roles WHERE id = $1', [req.user.rol_id]);
+  return Array.isArray(roleResult.rows[0]?.permisos) ? roleResult.rows[0].permisos : [];
+};
 
 module.exports = {
   getAll: async (req, res) => {
@@ -40,6 +49,20 @@ module.exports = {
         fechaHasta: typeof req.query?.fecha_hasta === 'string' ? req.query.fecha_hasta : null,
         limit: req.query?.limit ? Number(req.query.limit) : undefined,
       };
+
+      // Producción / entregas: listar solo productores sin conceder gestión completa de usuarios.
+      if (req.user?.rol !== 'Administrador') {
+        const permisos = await getRolePermissions(req);
+        if (!roleGrantsPermission(permisos, 'Ver Usuarios')) {
+          const prodRole = await pool.query(
+            `SELECT id FROM roles WHERE LOWER(TRIM(nombre)) = 'productor' LIMIT 1`
+          );
+          const prodRolId = Number(prodRole.rows[0]?.id);
+          if (Number.isFinite(prodRolId) && prodRolId > 0) {
+            filters.rolId = prodRolId;
+          }
+        }
+      }
 
       const usuarios = await models.Usuarios.getAll(filters);
       res.json({ success: true, data: usuarios });
@@ -89,14 +112,6 @@ module.exports = {
       const usuario = await models.Usuarios.getById(req.params.id);
       if (!usuario) {
         return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
-      }
-
-      const motivo = typeof req.body?.motivo === 'string' ? req.body.motivo.trim() : '';
-      if (!motivo || motivo.length < 10 || motivo.length > 50) {
-        return res.status(400).json({
-          success: false,
-          message: 'El motivo es obligatorio y debe tener entre 10 y 50 caracteres',
-        });
       }
 
       const limit = Number(req.query?.limit || 80);
@@ -171,17 +186,20 @@ module.exports = {
       const passwordToHash = useManualPassword ? rawPassword : tempPassword;
       const password_hash = await bcrypt.hash(passwordToHash, 10);
       const id = await models.Usuarios.create({ ...payload, password_hash, actor_id: req.user?.id || null });
+      await models.Usuarios.storePasswordHistory(id, password_hash);
 
       // Correo de bienvenida con credenciales (siempre que el alta sea correcta).
       // - Para alta hecha por admin se envian Email + Contrasena para iniciar sesion.
-      void sendWelcomeEmail({
-        to: payload.email,
-        name: `${payload.nombre} ${payload.apellido}`.trim(),
-        email: payload.email,
-        password: passwordToHash,
-      }).catch((error) => {
+      try {
+        await sendWelcomeEmail({
+          to: payload.email,
+          name: `${payload.nombre} ${payload.apellido}`.trim(),
+          email: payload.email,
+          password: passwordToHash,
+        });
+      } catch (error) {
         console.error('Error enviando correo de bienvenida (usuario):', error);
-      });
+      }
 
       res.status(201).json({
         success: true,
@@ -224,31 +242,28 @@ module.exports = {
         normalized.data.email.trim().toLowerCase() !== String(previousEmail || '').trim().toLowerCase();
 
       if (normalizedEmail) {
-        const existingEmail = await pool.query(
-          'SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1) AND id <> $2 LIMIT 1',
-          [normalizedEmail, Number(req.params.id)]
-        );
-        if (existingEmail.rows.length > 0) {
+        const emailTaken = await models.Usuarios.existsEmailExcept(normalizedEmail, Number(req.params.id));
+        if (emailTaken) {
           return res.status(409).json({ success: false, message: 'El correo ya esta registrado' });
         }
       }
 
       if (typeof normalized.data.documento === 'string' && normalized.data.documento.trim()) {
-        const existingDoc = await pool.query(
-          'SELECT id FROM usuarios WHERE documento = $1 AND id <> $2 LIMIT 1',
-          [normalized.data.documento.trim(), Number(req.params.id)]
+        const docTaken = await models.Usuarios.existsDocumentoExcept(
+          normalized.data.documento.trim(),
+          Number(req.params.id)
         );
-        if (existingDoc.rows.length > 0) {
+        if (docTaken) {
           return res.status(409).json({ success: false, message: 'El documento ya esta registrado' });
         }
       }
 
       if (typeof normalized.data.telefono === 'string' && normalized.data.telefono.trim()) {
-        const existingPhone = await pool.query(
-          'SELECT id FROM usuarios WHERE telefono = $1 AND id <> $2 LIMIT 1',
-          [normalized.data.telefono.trim(), Number(req.params.id)]
+        const phoneTaken = await models.Usuarios.existsTelefonoExcept(
+          normalized.data.telefono.trim(),
+          Number(req.params.id)
         );
-        if (existingPhone.rows.length > 0) {
+        if (phoneTaken) {
           return res.status(409).json({ success: false, message: 'El telefono ya esta registrado' });
         }
       }
@@ -260,21 +275,47 @@ module.exports = {
         });
       }
 
+      const passwordChanged =
+        normalized.data.password && typeof normalized.data.password === 'string' && normalized.data.password.trim();
+
       await models.Usuarios.update(req.params.id, { ...normalized.data, actor_id: req.user?.id || null });
-      if (normalized.data.password && typeof normalized.data.password === 'string') {
-        const newHash = await bcrypt.hash(normalized.data.password, 10);
+      if (passwordChanged) {
+        const newHash = await bcrypt.hash(normalized.data.password.trim(), 10);
         await models.Usuarios.updatePasswordHash(req.params.id, newHash);
+        await models.Usuarios.storePasswordHistory(req.params.id, newHash);
       }
 
+      const userName = `${normalized.data.nombre || currentUsuario.nombre || ''} ${normalized.data.apellido || currentUsuario.apellido || ''}`.trim();
+
       if (emailChanged) {
-        void sendEmailChangeNotification({
-          to: normalized.data.email,
-          name: `${normalized.data.nombre || currentUsuario.nombre || ''} ${normalized.data.apellido || currentUsuario.apellido || ''}`.trim(),
-          previousEmail,
-          currentEmail: normalized.data.email,
-        }).catch((error) => {
+        void Promise.all([
+          sendEmailChangeNotification({
+            to: previousEmail,
+            name: userName,
+            previousEmail: previousEmail,
+            currentEmail: normalized.data.email,
+          }),
+          sendEmailChangeNotification({
+            to: normalized.data.email,
+            name: userName,
+            previousEmail: previousEmail,
+            currentEmail: normalized.data.email,
+          })
+        ]).catch((error) => {
           console.error('Error notificando cambio de correo:', error);
         });
+      }
+
+      if (passwordChanged) {
+        const notifyEmail = (normalized.data.email || currentUsuario.email || '').trim();
+        if (notifyEmail) {
+          void sendPasswordChangeNotification({
+            to: notifyEmail,
+            name: userName,
+          }).catch((error) => {
+            console.error('Error notificando cambio de contraseña:', error);
+          });
+        }
       }
 
       res.json({ success: true, message: 'Usuario actualizado exitosamente' });
@@ -384,10 +425,28 @@ module.exports = {
         });
       }
 
+      const usuario = await models.Usuarios.getById(req.params.id);
+      if (!usuario) {
+        return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
+      }
+
       const result = await models.Usuarios.delete(req.params.id, {
         actor_id: req.user?.id || null,
         reason: motivo,
       });
+
+      if (usuario.email) {
+        void sendAccountDeletedNotification({
+          to: usuario.email,
+          name: `${usuario.nombre || ''} ${usuario.apellido || ''}`.trim(),
+          motivo,
+          changedBy: req.user?.email || null,
+          accountType: 'cuenta de usuario',
+        }).catch((notifyError) => {
+          console.error('No se pudo enviar la notificación de eliminación de usuario:', notifyError.message);
+        });
+      }
+
       res.json({
         success: true,
         message: 'Usuario eliminado exitosamente de la base de datos',

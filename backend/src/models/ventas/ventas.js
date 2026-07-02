@@ -10,10 +10,13 @@ const { parseMoneyCO } = require('../../controllers/normalizador-http');
 const {
   ensureVentasMoneyColumns,
   ensureProductoTipoColumn,
-  nextNumeroVenta,
+  normalizeProductoTipoValue,
+  reserveEntityIdAndCode,
   groupRowsBy,
 } = require('../shared/auditoria');
 const Clientes = require('./clientes');
+
+const ALLOWED_PAYMENT_METHODS = ['Efectivo', 'Tarjeta', 'Transferencia', 'Contraentrega', 'Nequi', 'Daviplata'];
 
 /**
  * Quita inventario del producto y registra línea en detalle_ventas (uso dentro de transacción).
@@ -24,6 +27,7 @@ const aplicarDescuentoStockYLíneaDetalleVenta = async (
   productoId,
   cantidadRaw,
   precioUnitarioRaw,
+  options = {},
 ) => {
   const qty = Number(cantidadRaw);
   const price = parseMoneyCO(precioUnitarioRaw);
@@ -47,7 +51,8 @@ const aplicarDescuentoStockYLíneaDetalleVenta = async (
   }
 
   const pRes = await client.query(
-    `SELECT id, nombre, COALESCE(stock, 0)::bigint AS stock, estado
+    `SELECT id, nombre, COALESCE(stock, 0)::bigint AS stock, estado,
+            COALESCE(tipo_producto, 'terminado') AS tipo_producto
      FROM productos WHERE id = $1 FOR UPDATE`,
     [productoId],
   );
@@ -67,27 +72,40 @@ const aplicarDescuentoStockYLíneaDetalleVenta = async (
     throw error;
   }
 
-  const available = Number(row.stock || 0);
-  if (!Number.isFinite(available)) {
-    const error = new Error(`No hay stock disponible para "${nombre}".`);
-    error.statusCode = 409;
+  if (String(row.tipo_producto || '').toLowerCase() === 'insumo') {
+    const error = new Error(`No se puede vender "${nombre}": es un producto tipo insumo (solo compras a proveedor).`);
+    error.statusCode = 400;
     throw error;
   }
 
-  if (available < qty) {
-    const mensaje =
-      available <= 0
-        ? `No hay stock disponible para "${nombre}".`
-        : `Stock insuficiente para "${nombre}". Disponible: ${available}, solicitado: ${qty}.`;
-    const error = new Error(mensaje);
-    error.statusCode = 409;
-    throw error;
-  }
+  const tipoNorm = normalizeProductoTipoValue(row.tipo_producto);
+  const esPreparacion =
+    tipoNorm === 'preparacion' ||
+    (options.pedidoId != null && options.preparacionIds?.has(Number(productoId)));
 
-  await client.query(
-    `UPDATE productos SET stock = COALESCE(stock, 0) - $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
-    [qty, productoId],
-  );
+  if (!esPreparacion) {
+    const available = Number(row.stock || 0);
+    if (!Number.isFinite(available)) {
+      const error = new Error(`No hay stock disponible para "${nombre}".`);
+      error.statusCode = 409;
+      throw error;
+    }
+
+    if (available < qty) {
+      const mensaje =
+        available <= 0
+          ? `No hay stock disponible para "${nombre}".`
+          : `Stock insuficiente para "${nombre}". Disponible: ${available}, solicitado: ${qty}.`;
+      const error = new Error(mensaje);
+      error.statusCode = 409;
+      throw error;
+    }
+
+    await client.query(
+      `UPDATE productos SET stock = COALESCE(stock, 0) - $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+      [qty, productoId],
+    );
+  }
 
   const subtotal = qty * price;
   await client.query(
@@ -237,10 +255,7 @@ const Ventas = {
         throw error;
       }
 
-      const numero_venta =
-        typeof data.numero_venta === 'string' && String(data.numero_venta).trim().length > 0
-          ? String(data.numero_venta).trim()
-          : nextNumeroVenta();
+      const reserved = await reserveEntityIdAndCode(pool, 'public.ventas', 'V');
 
       const totalGuardado = parseMoneyCO(data.total);
       if (totalGuardado === undefined || !Number.isFinite(totalGuardado) || totalGuardado < 0) {
@@ -249,9 +264,9 @@ const Ventas = {
         throw error;
       }
 
-      // Validar método de pago
+      // Validar método de pago con el mismo catálogo aceptado por el normalizador HTTP.
       const metodo_pago = String(data?.metodo_pago || data?.metodopago || 'Efectivo').trim();
-      if (!['Efectivo', 'Transferencia'].includes(metodo_pago)) {
+      if (!ALLOWED_PAYMENT_METHODS.includes(metodo_pago)) {
         const error = new Error(`Método de pago inválido: ${metodo_pago}`);
         error.statusCode = 400;
         throw error;
@@ -263,9 +278,10 @@ const Ventas = {
       const fechaVenta = fechaRaw ? fechaRaw.split('T')[0] : new Date().toISOString().split('T')[0];
 
       const result = await pool.query(
-        'INSERT INTO ventas (numero_venta, tipo, cliente_id, pedido_id, fecha, metodopago, total, estado, metodo_pago, abono_recibido) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
+        'INSERT INTO ventas (id, numero_venta, tipo, cliente_id, pedido_id, fecha, metodopago, total, estado, metodo_pago, abono_recibido) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id',
         [
-          numero_venta,
+          reserved.id,
+          reserved.code,
           data.tipo,
           data.cliente_id,
           data.pedido_id || null,
@@ -288,12 +304,8 @@ const Ventas = {
    */
   createCompleta: async (data, detailLines) => {
     await ensureVentasMoneyColumns();
+    await ensureProductoTipoColumn();
     await Ventas.validateClienteActivo(data.cliente_id);
-
-    const numero_venta =
-      typeof data.numero_venta === 'string' && String(data.numero_venta).trim().length > 0
-        ? String(data.numero_venta).trim()
-        : nextNumeroVenta();
 
     if (!Array.isArray(detailLines) || detailLines.length === 0) {
       const error = new Error('La venta debe incluir al menos un producto.');
@@ -315,6 +327,11 @@ const Ventas = {
     const metodo_pago = String(data?.metodo_pago || data?.metodopago || metodopagoCol || 'Efectivo').trim();
     if (!metodo_pago) {
       const error = new Error('Método de pago obligatorio');
+      error.statusCode = 400;
+      throw error;
+    }
+    if (!ALLOWED_PAYMENT_METHODS.includes(metodo_pago)) {
+      const error = new Error(`Método de pago inválido: ${metodo_pago}`);
       error.statusCode = 400;
       throw error;
     }
@@ -370,13 +387,15 @@ const Ventas = {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      const reserved = await reserveEntityIdAndCode(client, 'public.ventas', 'V');
 
       const inserted = await client.query(
-        `INSERT INTO ventas (numero_venta, tipo, cliente_id, pedido_id, fecha, metodopago, total, estado, metodo_pago, abono_recibido)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `INSERT INTO ventas (id, numero_venta, tipo, cliente_id, pedido_id, fecha, metodopago, total, estado, metodo_pago, abono_recibido)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING id`,
         [
-          numero_venta,
+          reserved.id,
+          reserved.code,
           data.tipo,
           data.cliente_id,
           data.pedido_id ?? null,
@@ -391,6 +410,20 @@ const Ventas = {
 
       const ventaId = inserted.rows[0].id;
 
+      const pedidoId = data.pedido_id ?? data.pedidoId ?? null;
+      let preparacionIds = null;
+      if (pedidoId != null) {
+        const prepRes = await client.query(
+          `SELECT DISTINCT pr.id
+           FROM detalle_pedidos dp
+           INNER JOIN productos pr ON pr.id = dp.producto_id
+           WHERE dp.pedido_id = $1
+             AND COALESCE(pr.tipo_producto, 'terminado') = 'preparacion'`,
+          [pedidoId],
+        );
+        preparacionIds = new Set(prepRes.rows.map((r) => Number(r.id)));
+      }
+
       for (const line of lines) {
         await aplicarDescuentoStockYLíneaDetalleVenta(
           client,
@@ -398,6 +431,7 @@ const Ventas = {
           line.productoId,
           line.cantidad,
           line.precioUnitario,
+          { pedidoId, preparacionIds },
         );
       }
 
@@ -416,6 +450,7 @@ const Ventas = {
   },
   addDetalle: async (ventaId, productoId, cantidad, precioUnitario) => {
     await ensureVentasMoneyColumns();
+    await ensureProductoTipoColumn();
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -454,15 +489,22 @@ const Ventas = {
     const mergedData = {
       ...current,
       ...data,
+      numero_venta: current.numero_venta,
     };
 
     await pool.query(
-      'UPDATE ventas SET numero_venta = $1, tipo = $2, cliente_id = $3, pedido_id = $4, fecha = $5, metodopago = $6, total = $7, estado = $8 WHERE id = $9',
-      [mergedData.numero_venta, mergedData.tipo, mergedData.cliente_id, mergedData.pedido_id, mergedData.fecha, mergedData.metodopago, mergedData.total, mergedData.estado, id]
+      'UPDATE ventas SET tipo = $1, cliente_id = $2, pedido_id = $3, fecha = $4, metodopago = $5, total = $6, estado = $7, updated_at = CURRENT_TIMESTAMP WHERE id = $8',
+      [mergedData.tipo, mergedData.cliente_id, mergedData.pedido_id, mergedData.fecha, mergedData.metodopago, mergedData.total, mergedData.estado, id]
     );
     return true;
   },
-  delete: async (id) => {
+  delete: async (id, options = {}) => {
+    const reason = typeof options.reason === 'string' ? options.reason.trim() : '';
+    if (!reason || reason.length < 10 || reason.length > 50) {
+      const error = new Error('El motivo de eliminacion es obligatorio y debe tener entre 10 y 50 caracteres');
+      error.statusCode = 400;
+      throw error;
+    }
     await pool.query('DELETE FROM detalle_ventas WHERE venta_id = $1', [id]);
     await pool.query('DELETE FROM ventas WHERE id = $1', [id]);
     return true;

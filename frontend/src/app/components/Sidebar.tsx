@@ -1,7 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ChevronDown,
-  ChevronRight,
   Users,
   ShoppingCart,
   Package,
@@ -18,9 +17,7 @@ import {
   Receipt,
   CreditCard,
   ClipboardList,
-  Settings,
-  Store,
-  User
+  Settings
 } from 'lucide-react';
 import { useAuth } from './AuthContext';
 
@@ -32,6 +29,7 @@ interface SubMenuItem {
   icon: React.ReactNode;
   path: string;
   module: string;
+  roles?: string[];
 }
 
 interface MenuItem {
@@ -49,7 +47,7 @@ const menuItems: MenuItem[] = [
     icon: <BarChart3 className="w-5 h-5" />,
     path: '/dashboard',
     module: 'dashboard',
-    roles: ['Administrador', 'Asesor', 'Productor', 'Repartidor']
+    roles: ['Administrador', 'Asesor']
   },
   {
     name: 'Configuración',
@@ -73,23 +71,23 @@ const menuItems: MenuItem[] = [
     name: 'Compras',
     icon: <ShoppingCart className="w-5 h-5" />,
     module: 'compras',
-    roles: ['Administrador', 'Asesor', 'Productor'],
+    roles: ['Administrador', 'Asesor'],
     subItems: [
-      { name: 'Proveedores', icon: <Building2 className="w-4 h-4" />, path: '/compras/proveedores', module: 'compras' },
-      { name: 'Compras', icon: <ShoppingCart className="w-4 h-4" />, path: '/compras/compras', module: 'compras' },
+      { name: 'Proveedores', icon: <Building2 className="w-4 h-4" />, path: '/compras/proveedores', module: 'compras/proveedores' },
+      { name: 'Compras', icon: <ShoppingCart className="w-4 h-4" />, path: '/compras/compras', module: 'compras/compras' },
       { name: 'Productos', icon: <Package className="w-4 h-4" />, path: '/compras/productos', module: 'compras/productos' },
-      { name: 'Categorías de Producto', icon: <Tags className="w-4 h-4" />, path: '/compras/categorias', module: 'compras' }
+      { name: 'Categorías de Producto', icon: <Tags className="w-4 h-4" />, path: '/compras/categorias', module: 'compras/categorias' }
     ]
   },
   {
     name: 'Producción',
     icon: <Factory className="w-5 h-5" />,
     module: 'produccion',
-    roles: ['Administrador', 'Productor'],
+    roles: ['Administrador', 'Asesor', 'Productor'],
     subItems: [
-      { name: 'Producción', icon: <Boxes className="w-4 h-4" />, path: '/produccion/produccion', module: 'produccion' },
-      { name: 'Entrega de Insumos', icon: <Truck className="w-4 h-4" />, path: '/produccion/entrega-insumos', module: 'produccion' },
-      { name: 'Insumos', icon: <Package className="w-4 h-4" />, path: '/produccion/insumos', module: 'produccion' }
+      { name: 'Producción', icon: <Boxes className="w-4 h-4" />, path: '/produccion/produccion', module: 'produccion/produccion', roles: ['Administrador', 'Asesor', 'Productor'] },
+      { name: 'Entrega de Insumos', icon: <Truck className="w-4 h-4" />, path: '/produccion/entrega-insumos', module: 'produccion/entrega-insumos', roles: ['Administrador', 'Asesor', 'Productor'] },
+      { name: 'Insumos', icon: <Package className="w-4 h-4" />, path: '/produccion/insumos', module: 'produccion/insumos', roles: ['Administrador', 'Asesor'] }
     ]
   },
   {
@@ -98,34 +96,12 @@ const menuItems: MenuItem[] = [
     module: 'ventas',
     roles: ['Administrador', 'Asesor', 'Repartidor'],
     subItems: [
-      { name: 'Clientes', icon: <UserCircle className="w-4 h-4" />, path: '/ventas/clientes', module: 'ventas' },
-      { name: 'Ventas', icon: <Receipt className="w-4 h-4" />, path: '/ventas/ventas', module: 'ventas' },
-      { name: 'Abonos', icon: <CreditCard className="w-4 h-4" />, path: '/ventas/abonos', module: 'ventas' },
-      { name: 'Pedidos', icon: <ClipboardList className="w-4 h-4" />, path: '/ventas/pedidos', module: 'ventas/pedidos' },
-      { name: 'Domicilios', icon: <Truck className="w-4 h-4" />, path: '/ventas/domicilios', module: 'ventas/domicilios' }
+      { name: 'Clientes', icon: <UserCircle className="w-4 h-4" />, path: '/ventas/clientes', module: 'ventas/clientes', roles: ['Administrador', 'Asesor'] },
+      { name: 'Ventas', icon: <Receipt className="w-4 h-4" />, path: '/ventas/ventas', module: 'ventas/ventas', roles: ['Administrador', 'Asesor'] },
+      { name: 'Abonos', icon: <CreditCard className="w-4 h-4" />, path: '/ventas/abonos', module: 'ventas/abonos', roles: ['Administrador', 'Asesor'] },
+      { name: 'Pedidos', icon: <ClipboardList className="w-4 h-4" />, path: '/ventas/pedidos', module: 'ventas/pedidos', roles: ['Administrador', 'Asesor'] },
+      { name: 'Domicilios', icon: <Truck className="w-4 h-4" />, path: '/ventas/domicilios', module: 'ventas/domicilios', roles: ['Administrador', 'Asesor', 'Repartidor'] }
     ]
-  },
-  // Menú exclusivo para Cliente
-  {
-    name: 'Tienda',
-    icon: <Store className="w-5 h-5" />,
-    path: '/cliente/tienda',
-    module: 'cliente',
-    roles: ['Cliente']
-  },
-  {
-    name: 'Mis Pedidos',
-    icon: <ClipboardList className="w-5 h-5" />,
-    path: '/cliente/pedidos',
-    module: 'cliente',
-    roles: ['Cliente']
-  },
-  {
-    name: 'Mi Perfil',
-    icon: <User className="w-5 h-5" />,
-    path: '/cliente/perfil',
-    module: 'cliente',
-    roles: ['Cliente']
   }
 ];
 
@@ -135,9 +111,27 @@ interface SidebarProps {
 }
 
 export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
-  const [expandedItems, setExpandedItems] = useState<string[]>(['Usuarios', 'Compras', 'Producción', 'Ventas', 'Configuración']);
+  const [expandedItems, setExpandedItems] = useState<string[]>([]);
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [hoverCollapseEnabled, setHoverCollapseEnabled] = useState(false);
   const { hasPermission, user } = useAuth();
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const mediaQuery = window.matchMedia('(hover: hover) and (pointer: fine)');
+    const syncCollapseMode = () => {
+      const enableHoverCollapse = mediaQuery.matches;
+      setHoverCollapseEnabled(enableHoverCollapse);
+      setIsCollapsed(enableHoverCollapse);
+    };
+
+    syncCollapseMode();
+    mediaQuery.addEventListener('change', syncCollapseMode);
+    return () => {
+      mediaQuery.removeEventListener('change', syncCollapseMode);
+    };
+  }, []);
 
   const toggleItem = (itemName: string) => {
     setExpandedItems(prev =>
@@ -174,19 +168,29 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
       }
 
       // Filtro real por permisos (respeta roles personalizados creados en BD).
+      if (item.subItems && item.subItems.length > 0) {
+        // Si hay sub-items, filtrarlos por permiso
+        item.subItems = item.subItems.filter((subItem) => hasPermission(subItem.module));
+        // Si quedan sub-items, mostrar el padre aunque no tenga permiso directo
+        return item.subItems.length > 0;
+      }
+
+      // Si no hay sub-items, verificar permiso del módulo padre
       if (item.module && !hasPermission(item.module)) {
         return false;
       }
 
-      if (item.subItems) {
-        item.subItems = item.subItems.filter((subItem) => hasPermission(subItem.module));
-        return item.subItems.length > 0;
-      }
       return true;
     });
 
   return (
     <div
+      onMouseEnter={() => {
+        if (hoverCollapseEnabled) setIsCollapsed(false);
+      }}
+      onMouseLeave={() => {
+        if (hoverCollapseEnabled) setIsCollapsed(true);
+      }}
       className={`bg-sidebar text-sidebar-foreground min-h-screen h-full flex flex-col border-r border-sidebar-border transition-all duration-300 flex-shrink-0 ${
         isCollapsed ? 'w-12 sm:w-16' : 'w-48 sm:w-56 md:w-64'
       }`}
@@ -219,16 +223,10 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
             </div>
           </div>
         )}
-        <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="w-full flex items-center justify-center p-2 hover:bg-sidebar-accent rounded-lg transition-colors"
-        >
-          <ChevronRight className={`w-5 h-5 transition-transform ${isCollapsed ? '' : 'rotate-180'}`} />
-        </button>
       </div>
 
       {/* Menu Items */}
-      <nav className="flex-1 overflow-y-auto p-1 sm:p-2">
+      <nav className="sidebar-menu-scroll flex-1 overflow-y-auto p-1 sm:p-2">
         {filteredMenuItems.map((item) => (
           <div key={item.name} className="mb-1">
             {item.subItems ? (

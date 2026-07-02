@@ -2,7 +2,11 @@
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
+const rateLimit = require('express-rate-limit');
+const jwt = require('jsonwebtoken');
+const fs = require('fs');
 const path = require('path');
+const { z } = require('zod');
 const config = require('./config');
 const db = require('./db');
 const routes = require('./src/routes');
@@ -47,7 +51,42 @@ const ensureAdminUnblocked = async () => {
   }
 };
 
+const clearApiRateLimitLog = async () => {
+  if (process.env.RATE_LIMIT_ENABLED === 'true') return;
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS api_rate_limit_log (
+        id BIGSERIAL PRIMARY KEY,
+        route_key VARCHAR(120) NOT NULL,
+        identifier VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    const cleared = await pool.query('DELETE FROM api_rate_limit_log');
+    if (cleared.rowCount > 0) {
+      console.log(`🔓 Registros de rate limit eliminados (${cleared.rowCount})`);
+    }
+  } catch (err) {
+    console.warn('⚠️  No se pudo limpiar api_rate_limit_log:', err.message);
+  }
+};
+
 const app = express();
+const UNLIMITED_RATE_LIMIT_ROLES = new Set(['Administrador']);
+const ApiResponseSchema = z
+  .object({
+    success: z.boolean(),
+    message: z.string().optional(),
+    data: z.unknown().optional(),
+    id: z.union([z.number(), z.string()]).optional(),
+    code: z.string().optional(),
+    details: z.unknown().optional(),
+    path: z.string().optional(),
+    timestamp: z.string().optional(),
+    retryAfter: z.number().optional(),
+    stack: z.array(z.string()).optional(),
+  })
+  .passthrough();
 
 if (config.server.env === 'production') {
   app.set('trust proxy', 1);
@@ -56,6 +95,39 @@ if (config.server.env === 'production') {
 const corsOptions = {
   credentials: true,
   origin: (origin, callback) => {
+    const isProduction = config.server.env === 'production';
+
+    // En producción, nunca permitir '*' y siempre validar que corsOrigins tenga al menos un origen
+    if (isProduction) {
+      if (!config.auth.corsOrigins.length) {
+        console.error('CORS: No hay orígenes configurados en producción. Configure CORS_ORIGINS en .env.production');
+        return callback(new Error('Configuración de CORS inválida: No hay orígenes permitidos'));
+      }
+
+      // Apps móviles nativas (Flutter) suelen omitir Origin; permitir sin bloquear la API.
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      // Allow explicit configured origins
+      if (config.auth.corsOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      console.warn(`CORS: rejected origin ${origin}. Allowed: ${config.auth.corsOrigins.join(', ')}`);
+      return callback(new Error(`Origen no permitido por CORS: ${origin}`));
+    }
+
+    // En desarrollo, permitir localhost y orígenes configurados
+    if (config.auth.corsOrigins.includes('*')) {
+      return callback(null, true);
+    }
+
+    if (!config.auth.corsOrigins.length) {
+      return callback(null, true);
+    }
+
+    // Apps móviles nativas (Flutter) suelen omitir Origin; permitir sin bloquear la API.
     if (!origin) {
       return callback(null, true);
     }
@@ -65,17 +137,14 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    // In non-production, allow localhost/127.0.0.1 with any port (useful for Flutter web dev servers)
-    if (config.server.env !== 'production') {
-      try {
-        const lc = origin.toLowerCase();
-        if (/^https?:\/\/localhost(:\d+)?$/.test(lc) || /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(lc)) {
-          console.log(`CORS: allowing local dev origin ${origin}`);
-          return callback(null, true);
-        }
-      } catch (e) {
-        // fallthrough to reject
+    // Flutter web y Vite dev: localhost/127.0.0.1 con cualquier puerto
+    try {
+      const lc = origin.toLowerCase();
+      if (/^https?:\/\/localhost(:\d+)?$/.test(lc) || /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(lc)) {
+        return callback(null, true);
       }
+    } catch (e) {
+      // fallthrough to reject
     }
 
     console.warn(`CORS: rejected origin ${origin}. Allowed: ${config.auth.corsOrigins.join(', ')}`);
@@ -83,17 +152,89 @@ const corsOptions = {
   },
 };
 
-// Middleware
-app.use(cors(corsOptions));
+// Middleware y manejo de diversas rutas para guardar la imagen
+app.options('*', cors(corsOptions));
 app.use(cookieParser());
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+const getTokenFromRequest = (req) => {
+  const cookieToken = req.cookies?.[config.auth.cookieName];
+  if (cookieToken) return cookieToken;
+  const authHeader = String(req.headers.authorization || '');
+  if (authHeader.startsWith('Bearer ')) {
+    return authHeader.slice('Bearer '.length).trim();
+  }
+  return null;
+};
+
+const isUnlimitedRoleRequest = (req) => {
+  try {
+    const token = getTokenFromRequest(req);
+    if (!token) return false;
+    const payload = jwt.verify(token, config.auth.jwtSecret, {
+      algorithms: ['HS256'],
+      issuer: config.auth.jwtIssuer,
+      audience: config.auth.jwtAudience,
+    });
+    const role = String(payload?.rol || '').trim();
+    return UNLIMITED_RATE_LIMIT_ROLES.has(role);
+  } catch (_error) {
+    return false;
+  }
+};
+
+// Límite global desactivado por defecto (RATE_LIMIT_ENABLED=true en .env para activar).
+const rateLimitEnabled = process.env.RATE_LIMIT_ENABLED === 'true';
+if (rateLimitEnabled) {
+  const globalApiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: config.server.env === 'production' ? 400 : 10000,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => isUnlimitedRoleRequest(req),
+    message: { success: false, message: 'Demasiadas solicitudes. Intenta de nuevo más tarde.' },
+  });
+  app.use('/api', globalApiLimiter);
+}
+
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ limit: '2mb', extended: true }));
+const uploadsRoot = config.uploads.root;
+fs.mkdirSync(config.uploads.comprobantesDir, { recursive: true });
+fs.mkdirSync(config.uploads.perfilesDir, { recursive: true });
+fs.mkdirSync(config.uploads.productosDir, { recursive: true });
+fs.mkdirSync(config.uploads.productosPreparacionDir, { recursive: true });
+fs.mkdirSync(config.uploads.productosTerminadosDir, { recursive: true });
+app.use('/uploads', express.static(uploadsRoot));
+
+// Contrato formal de salida: todas las respuestas JSON deben cumplir un esquema base.
+app.use((req, res, next) => {
+  const originalJson = res.json.bind(res);
+  res.json = (body) => {
+    let payload = body;
+    if (payload === null || payload === undefined || typeof payload !== 'object' || Array.isArray(payload)) {
+      payload = { success: res.statusCode < 400, data: payload };
+    }
+    if (typeof payload.success !== 'boolean') {
+      payload = { ...payload, success: res.statusCode < 400 };
+    }
+    const validated = ApiResponseSchema.safeParse(payload);
+    if (!validated.success) {
+      return originalJson({
+        success: false,
+        code: 'RESPONSE_SCHEMA_ERROR',
+        message: 'La respuesta del servidor no cumple el contrato esperado.',
+        details: validated.error.flatten(),
+      });
+    }
+    return originalJson(validated.data);
+  };
+  return next();
+});
 
 // ===== RUTAS =====
 // Ruta de health check
 app.get('/api/health', (req, res) => {
-  res.json({ 
+  res.json({
     success: true,
     message: 'Backend funcionando correctamente',
     timestamp: new Date().toISOString()
@@ -112,21 +253,55 @@ app.use((req, res) => {
   });
 });
 
-// Manejador de errores global
+// Manejador de errores global (mejorado)
 app.use((err, req, res, next) => {
-  console.error('Error:', err);
-  res.status(err.status || 500).json({
-    success: false,
-    message: err.message || 'Error interno del servidor',
-    error: config.server.env === 'development' ? err : {}
+  const isDevelopment = config.server.env === 'development';
+
+  // Log del error
+  console.error('❌ Error:', {
+    message: err.message,
+    status: err.status || 500,
+    code: err.code,
+    path: req.path,
+    method: req.method,
+    timestamp: new Date().toISOString(),
+    ...(isDevelopment && { stack: err.stack })
   });
+
+  // Determinar status code
+  let statusCode = err.status || err.statusCode || 500;
+  if (statusCode < 100 || statusCode > 599) statusCode = 500;
+
+  // Mensaje de error seguro
+  let message = err.message || 'Error interno del servidor';
+  if (statusCode === 500 && !isDevelopment) {
+    message = 'Error interno del servidor. Contacte al administrador.';
+  }
+
+  const payload = {
+    success: false,
+    code: err.code || 'INTERNAL_ERROR',
+    message,
+  };
+  if (err.details !== undefined) {
+    payload.details = err.details;
+  }
+  if (isDevelopment && err.stack) {
+    payload.stack = err.stack.split('\n').slice(0, 8);
+  }
+
+  return res.status(statusCode).json(payload);
 });
 
 // ===== INICIAR SERVIDOR =====
 const PORT = config.server.port;
+const publicBaseUrl =
+  process.env.PUBLIC_BASE_URL ||
+  (config.server.env === 'production' ? '(configure PUBLIC_BASE_URL para mostrar la URL publica)' : `http://localhost:${PORT}`);
 
 app.listen(PORT, async () => {
   await ensureAdminUnblocked();
+  await clearApiRateLimitLog();
   console.log(`\n`);
   console.log(`╔════════════════════════════════════════════════════════════╗`);
   console.log(`║        LIQUEUR SALES MANAGEMENT APP - BACKEND              ║`);
@@ -137,22 +312,25 @@ app.listen(PORT, async () => {
   console.log(`✓ Ambiente: ${config.server.env}`);
   console.log(`✓ Base de Datos: Conectada`);
   console.log(`✓ Conexión App-Backend: Establecida`);
-  console.log(`\n📋 ENDPOINTS DISPONIBLES:`);
-  console.log(`   - GET    /api/health                 (Verificar estado)`);
-  console.log(`   - GET    /api/categorias             (Listar categorías)`);
-  console.log(`   - GET    /api/productos              (Listar productos)`);
-  console.log(`   - GET    /api/clientes               (Listar clientes)`);
-  console.log(`   - GET    /api/proveedores            (Listar proveedores)`);
-  console.log(`   - GET    /api/pedidos                (Listar pedidos)`);
-  console.log(`   - GET    /api/ventas                 (Listar ventas)`);
-  console.log(`   - GET    /api/abonos                 (Listar abonos)`);
-  console.log(`   - GET    /api/domicilios             (Listar domicilios)`);
-  console.log(`   - GET    /api/compras                (Listar compras)`);
-  console.log(`   - GET    /api/insumos                (Listar insumos)`);
-  console.log(`   - GET    /api/entregas-insumos       (Listar entregas)`);
-  console.log(`   - GET    /api/produccion             (Listar producción)`);
-  console.log(`   - GET    /api/producto-insumos       (Recetas producto–insumo)`);
-  console.log(`\n🌐 URL Base: http://localhost:${PORT}`);
+  if (config.server.env !== 'production') {
+    console.log(`\n📋 ENDPOINTS DISPONIBLES:`);
+    console.log(`   - GET    /api/health                 (Verificar estado)`);
+    console.log(`   - GET    /api/categorias             (Listar categorías)`);
+    console.log(`   - GET    /api/productos              (Listar productos)`);
+    console.log(`   - GET    /api/clientes               (Listar clientes)`);
+    console.log(`   - GET    /api/proveedores            (Listar proveedores)`);
+    console.log(`   - GET    /api/pedidos                (Listar pedidos)`);
+    console.log(`   - POST   /api/pedidos/comprobante    (Subir comprobante transferencia)`);
+    console.log(`   - GET    /api/ventas                 (Listar ventas)`);
+    console.log(`   - GET    /api/abonos                 (Listar abonos)`);
+    console.log(`   - GET    /api/domicilios             (Listar domicilios)`);
+    console.log(`   - GET    /api/compras                (Listar compras)`);
+    console.log(`   - GET    /api/insumos                (Listar insumos)`);
+    console.log(`   - GET    /api/entregas-insumos       (Listar entregas)`);
+    console.log(`   - GET    /api/produccion             (Listar producción)`);
+    console.log(`   - GET    /api/producto-insumos       (Recetas producto–insumo)`);
+  }
+  console.log(`\n🌐 URL Base: ${publicBaseUrl}`);
   console.log(`\n════════════════════════════════════════════════════════════\n`);
 });
 

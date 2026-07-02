@@ -6,6 +6,7 @@
  * lo importa. La fuente activa es este archivo modular.
  */
 const pool = require('../../../db');
+const logger = require('../../utils/logger');
 
 // ------- Bloque inicial: helpers globales (ensure*, sync*, normalize*, etc.) -------
 let ventasMoneyColumnsReady = null;
@@ -31,7 +32,35 @@ const ensureVentasMoneyColumns = async () => {
   }
 };
 
-const nextNumeroVenta = () => `VTA-${Date.now()}-${Math.floor(Math.random() * 9000 + 1000)}`;
+const formatPrefixedCode = (prefix, numericValue, padLength = 3) => {
+  const safeNumber = Number(numericValue);
+  if (!Number.isFinite(safeNumber) || safeNumber <= 0) {
+    return `${prefix}${'0'.repeat(padLength)}`;
+  }
+  return `${prefix}${String(Math.trunc(safeNumber)).padStart(padLength, '0')}`;
+};
+
+const reserveEntityIdAndCode = async (clientOrPool, tableName, prefix, padLength = 3) => {
+  const executor = clientOrPool || pool;
+  const sequenceResult = await executor.query(
+    `SELECT pg_get_serial_sequence($1, 'id') AS seq`,
+    [tableName]
+  );
+  const sequenceName = sequenceResult.rows[0]?.seq;
+  if (!sequenceName) {
+    const error = new Error(`No se encontró la secuencia serial para ${tableName}.`);
+    error.statusCode = 500;
+    throw error;
+  }
+  const nextIdResult = await executor.query(`SELECT nextval($1::regclass) AS id`, [sequenceName]);
+  const id = Number(nextIdResult.rows[0]?.id);
+  if (!Number.isFinite(id) || id <= 0) {
+    const error = new Error(`No se pudo reservar un consecutivo válido para ${tableName}.`);
+    error.statusCode = 500;
+    throw error;
+  }
+  return { id, code: formatPrefixedCode(prefix, id, padLength) };
+};
 
 let productoImageColumnReady = null;
 let categoriaProductCountColumnReady = null;
@@ -48,22 +77,99 @@ const ensureProductoImageColumn = async () => {
   }
 };
 
+let productoTipoCheckAllowsInsumoReady = null;
+const ensureProductoTipoCheckAllowsInsumo = async () => {
+  if (!productoTipoCheckAllowsInsumoReady) {
+    productoTipoCheckAllowsInsumoReady = (async () => {
+      await pool.query(`
+DO $$
+DECLARE r RECORD;
+BEGIN
+  FOR r IN (
+    SELECT c.conname
+    FROM pg_constraint c
+    JOIN pg_class t ON c.conrelid = t.oid
+    WHERE t.relname = 'productos' AND c.contype = 'c'
+      AND pg_get_constraintdef(c.oid) ILIKE '%tipo_producto%'
+  ) LOOP
+    EXECUTE format('ALTER TABLE productos DROP CONSTRAINT IF EXISTS %I', r.conname);
+  END LOOP;
+END $$;
+`);
+      await pool.query(`
+ALTER TABLE productos
+ADD CONSTRAINT productos_tipo_producto_check
+CHECK (tipo_producto IN ('terminado','preparacion','insumo'))
+`);
+    })();
+  }
+  try {
+    await productoTipoCheckAllowsInsumoReady;
+  } catch (_e) {
+    productoTipoCheckAllowsInsumoReady = null;
+  }
+};
+
 let productoTipoColumnReady = null;
+let productoTipoPrecioColumnReady = null;
+let productoFichaTecnicaColumnReady = null;
 const ensureProductoTipoColumn = async () => {
   if (!productoTipoColumnReady) {
-    productoTipoColumnReady = pool.query(
-      `ALTER TABLE productos ADD COLUMN IF NOT EXISTS tipo_producto VARCHAR(30) NOT NULL DEFAULT 'terminado'`
-    );
+    productoTipoColumnReady = (async () => {
+      await pool.query(
+        `ALTER TABLE productos ADD COLUMN IF NOT EXISTS tipo_producto VARCHAR(30) NOT NULL DEFAULT 'terminado'`
+      );
+    })();
   }
   try {
     await productoTipoColumnReady;
   } catch (_error) {
-    // ignore
+    productoTipoColumnReady = null;
+  }
+  if (!productoTipoPrecioColumnReady) {
+    productoTipoPrecioColumnReady = pool.query(
+      `ALTER TABLE productos ALTER COLUMN precio TYPE NUMERIC(18,2)`
+    );
   }
   try {
-    await pool.query(`ALTER TABLE productos ALTER COLUMN precio TYPE NUMERIC(18,2)`);
+    await productoTipoPrecioColumnReady;
   } catch (_e) {
-    /* ya ampliado o permisos */
+    productoTipoPrecioColumnReady = null;
+  }
+  if (!productoFichaTecnicaColumnReady) {
+    productoFichaTecnicaColumnReady = pool.query(
+      `ALTER TABLE productos ADD COLUMN IF NOT EXISTS ficha_tecnica JSONB`
+    );
+  }
+  try {
+    await productoFichaTecnicaColumnReady;
+  } catch (_e) {
+    productoFichaTecnicaColumnReady = null;
+  }
+  try {
+    await pool.query(
+      `ALTER TABLE productos ADD COLUMN IF NOT EXISTS porcentaje_ganancia NUMERIC(12,2) DEFAULT 0`
+    );
+  } catch (_e) {}
+  await ensureProductoTipoCheckAllowsInsumo();
+};
+
+let productoInsumoMedidaColumnsReady = null;
+/** Presentación física del producto tipo insumo (unidad + cantidad); NULL en otros tipos. */
+const ensureProductoInsumoMedidaColumns = async () => {
+  if (!productoInsumoMedidaColumnsReady) {
+    productoInsumoMedidaColumnsReady = (async () => {
+      await pool.query(`
+        ALTER TABLE productos
+          ADD COLUMN IF NOT EXISTS insumo_unidad_medida VARCHAR(30),
+          ADD COLUMN IF NOT EXISTS insumo_cantidad_medida NUMERIC(12,4)
+      `);
+    })();
+  }
+  try {
+    await productoInsumoMedidaColumnsReady;
+  } catch (_e) {
+    productoInsumoMedidaColumnsReady = null;
   }
 };
 
@@ -90,12 +196,56 @@ const ensureProductoInsumosTable = async () => {
   }
 };
 
+let entregasInsumoProductoCatalogoReady = null;
+/** Entregas pueden referir inventario tipo insumo vía productos (producto_catalogo_id) o la tabla legacy insumos (insumo_id). */
+const ensureEntregasInsumoProductoCatalogo = async () => {
+  if (!entregasInsumoProductoCatalogoReady) {
+    entregasInsumoProductoCatalogoReady = (async () => {
+      await pool.query(`
+        ALTER TABLE entregas_insumos
+          ADD COLUMN IF NOT EXISTS producto_catalogo_id INTEGER REFERENCES productos(id) ON DELETE RESTRICT
+      `);
+      await pool.query('ALTER TABLE entregas_insumos ALTER COLUMN insumo_id DROP NOT NULL');
+      const chk = await pool.query(
+        `SELECT 1 FROM pg_constraint WHERE conname = 'entregas_insumos_catalogo_xor_chk'`
+      );
+      if (!chk.rows[0]) {
+        await pool.query(`
+          ALTER TABLE entregas_insumos
+            ADD CONSTRAINT entregas_insumos_catalogo_xor_chk CHECK (
+              (insumo_id IS NOT NULL AND producto_catalogo_id IS NULL)
+              OR (insumo_id IS NULL AND producto_catalogo_id IS NOT NULL)
+            )
+        `);
+      }
+      await pool.query(`
+        ALTER TABLE entregas_insumos
+          ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      `);
+      await pool.query(`
+        ALTER TABLE entregas_insumos
+          ADD COLUMN IF NOT EXISTS anulada BOOLEAN NOT NULL DEFAULT FALSE
+      `);
+      await pool.query(`
+        ALTER TABLE entregas_insumos
+          ADD COLUMN IF NOT EXISTS motivo_anulacion VARCHAR(50)
+      `);
+    })();
+  }
+  try {
+    await entregasInsumoProductoCatalogoReady;
+  } catch (_e) {
+    entregasInsumoProductoCatalogoReady = null;
+  }
+};
+
 const normalizeProductoTipoValue = (raw) => {
   const compact = String(raw ?? 'terminado')
     .trim()
     .toLowerCase()
     .replace(/[\s-]+/g, '_');
   if (compact === 'preparacion' || compact === 'de_preparacion') return 'preparacion';
+  if (compact === 'insumo' || compact === 'insumos') return 'insumo';
   return 'terminado';
 };
 
@@ -213,7 +363,7 @@ const registerProductoAudit = async ({ productoId, accion, usuarioId = null, cam
     );
   } catch (err) {
     // La auditoría nunca debe romper la operación principal
-    console.warn('⚠️  No se pudo registrar auditoría de producto:', err.message);
+    logger.warn('⚠️  No se pudo registrar auditoría de producto: ' + err.message);
   }
 };
 
@@ -241,7 +391,7 @@ const registerCategoriaAudit = async ({ categoriaId, accion, usuarioId = null, c
       [categoriaId, accion, usuarioId, JSON.stringify(cambios || {})]
     );
   } catch (err) {
-    console.warn('⚠️  No se pudo registrar auditoría de categoría:', err.message);
+    logger.warn('⚠️  No se pudo registrar auditoría de categoría: ' + err.message);
   }
 };
 
@@ -269,7 +419,7 @@ const registerClienteAudit = async ({ clienteId, accion, usuarioId = null, cambi
       [clienteId, accion, usuarioId, JSON.stringify(cambios || {})]
     );
   } catch (err) {
-    console.warn('⚠️  No se pudo registrar auditoría de cliente:', err.message);
+    logger.warn('⚠️  No se pudo registrar auditoría de cliente: ' + err.message);
   }
 };
 
@@ -411,6 +561,21 @@ const ensureUserLoginAttemptsTable = async () => {
   await userLoginAttemptsTableReady;
 };
 
+let usuariosPasswordEmailExpiresReady = null;
+/** Caducidad opcional para credenciales comunicadas solo por correo (p. ej. alta desde gestión de clientes). */
+const ensureUsuariosPasswordEmailExpiresColumn = async () => {
+  if (!usuariosPasswordEmailExpiresReady) {
+    usuariosPasswordEmailExpiresReady = pool.query(
+      `ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS password_email_expires_at TIMESTAMP NULL`
+    );
+  }
+  try {
+    await usuariosPasswordEmailExpiresReady;
+  } catch (_e) {
+    usuariosPasswordEmailExpiresReady = null;
+  }
+};
+
 // ------- Helpers Usuarios (sesiones, password history, reset, login attempts) -------
 const registerUserSession = async ({ usuarioId, jti, expiresAt, ipAddress = null, userAgent = null }) => {
   await ensureUserSessionTable();
@@ -538,6 +703,74 @@ const revokeUserSession = async (jti) => {
   await ensureUserSessionTable();
   await pool.query(
     'UPDATE usuarios_sesiones SET revoked_at = CURRENT_TIMESTAMP, last_seen_at = CURRENT_TIMESTAMP WHERE jti = $1',
+    [jti]
+  );
+};
+
+const revokeAllUserSessions = async (usuarioId) => {
+  if (!Number.isFinite(Number(usuarioId))) return 0;
+  await ensureUserSessionTable();
+  const result = await pool.query(
+    `UPDATE usuarios_sesiones
+        SET revoked_at = CURRENT_TIMESTAMP,
+            last_seen_at = CURRENT_TIMESTAMP
+      WHERE usuario_id = $1
+        AND revoked_at IS NULL
+        AND expires_at > CURRENT_TIMESTAMP`,
+    [Number(usuarioId)]
+  );
+  return Number(result.rowCount || 0);
+};
+
+const getLatestUserStatusReason = async (usuarioId, estado = null) => {
+  if (!Number.isFinite(Number(usuarioId))) return null;
+  await ensureUserAuditTable();
+  const params = [Number(usuarioId)];
+  let estadoFilter = '';
+  if (typeof estado === 'string' && estado.trim()) {
+    params.push(String(estado).trim().toLowerCase());
+    estadoFilter =
+      ` AND LOWER(COALESCE(ua.cambios->'after'->>'estado', '')) = $${params.length}`;
+  }
+  const result = await pool.query(
+    `SELECT COALESCE(ua.cambios->>'reason', ua.cambios->>'motivo', '') AS reason
+       FROM usuarios_auditoria ua
+      WHERE ua.usuario_id = $1
+        AND COALESCE((ua.cambios->>'statusChange')::boolean, false) = true
+        ${estadoFilter}
+      ORDER BY ua.created_at DESC
+      LIMIT 1`,
+    params
+  );
+  const reason = String(result.rows[0]?.reason || '').trim();
+  return reason || null;
+};
+
+const isUserSessionActive = async (usuarioId, jti) => {
+  if (!jti || !Number.isFinite(Number(usuarioId))) return false;
+  await ensureUserSessionTable();
+  const result = await pool.query(
+    `SELECT 1
+     FROM usuarios_sesiones
+     WHERE usuario_id = $1
+       AND jti = $2
+       AND revoked_at IS NULL
+       AND expires_at > CURRENT_TIMESTAMP
+     LIMIT 1`,
+    [Number(usuarioId), jti]
+  );
+  return result.rows.length > 0;
+};
+
+const touchUserSession = async (jti) => {
+  if (!jti) return;
+  await ensureUserSessionTable();
+  await pool.query(
+    `UPDATE usuarios_sesiones
+     SET last_seen_at = CURRENT_TIMESTAMP
+     WHERE jti = $1
+       AND revoked_at IS NULL
+       AND expires_at > CURRENT_TIMESTAMP`,
     [jti]
   );
 };
@@ -726,7 +959,7 @@ const registerUserAudit = async ({ usuarioId, accion, actorId, cambios }) => {
       [usuarioId, accion, actorId, JSON.stringify(cambios)]
     );
   } catch (error) {
-    console.error('Error registering user audit:', error.message);
+    logger.error('Error registering user audit: ' + error.message);
     // No throw - audit failure shouldn't block the main operation
   }
 };
@@ -786,16 +1019,411 @@ const getRoleChanges = (before, after) => {
 
 const CLIENT_ROLE_NAME = 'cliente';
 const CLIENT_ALLOWED_PERMISSIONS = [
+  'Cliente',
   'Ver Dashboard',
   'Ver Tienda',
   'Ver Mis Pedidos',
-  'Ver Mis Lista de Compras',
-  'Ver Mis Compras',
-  'Ver Mis Domicilios',
 ];
+
+/** Prefijo almacenado en BD para acceso completo a una gestión del backoffice. */
+const GESTION_PERMISSION_PREFIX = 'Gestion:';
+
+const PERMISSION_ALIASES_FOR_GRANTS = {
+  'Crear Compras': ['Registrar Compras'],
+  'Crear Ventas': ['Registrar Ventas'],
+  'Crear Abonos': ['Registrar Abonos'],
+  'Editar Domicilios': ['Gestionar Domicilios'],
+  'Eliminar Compras': ['Anular Compras'],
+  'Eliminar Ventas': ['Anular Ventas'],
+};
+
+const getEquivalentPermissionsForGrant = (permission) => {
+  const aliases = PERMISSION_ALIASES_FOR_GRANTS[permission] || [];
+  return [permission, ...aliases];
+};
+
+/**
+ * Módulos del backoffice y sub-gestiones (pantallas/áreas).
+ * id de sub-gestión: "Modulo.SubGestion". El id del módulo agrupa todas sus sub-gestiones.
+ */
+const STAFF_MODULE_CATALOG = [
+  {
+    id: 'Dashboard',
+    label: 'Dashboard',
+    subGestiones: [{ id: 'Dashboard.Panel', label: 'Dashboard', permisos: ['Ver Dashboard'] }],
+  },
+  {
+    id: 'Configuración',
+    label: 'Configuración',
+    subGestiones: [
+      {
+        id: 'Configuración.Roles',
+        label: 'Gestión de roles',
+        permisos: ['Ver Roles', 'Crear Roles', 'Editar Roles', 'Eliminar Roles', 'Asignar Permisos'],
+      },
+    ],
+  },
+  {
+    id: 'Usuarios',
+    label: 'Usuarios',
+    subGestiones: [
+      {
+        id: 'Usuarios.Usuarios',
+        label: 'Gestión de usuarios',
+        permisos: [
+          'Ver Usuarios',
+          'Crear Usuarios',
+          'Editar Usuarios',
+          'Eliminar Usuarios',
+          'Asignar Roles',
+        ],
+      },
+    ],
+  },
+  {
+    id: 'Compras',
+    label: 'Compras',
+    subGestiones: [
+      {
+        id: 'Compras.Proveedores',
+        label: 'Proveedores',
+        permisos: [
+          'Ver Proveedores',
+          'Crear Proveedores',
+          'Editar Proveedores',
+          'Eliminar Proveedores',
+        ],
+      },
+      {
+        id: 'Compras.Compras',
+        label: 'Compras',
+        permisos: [
+          'Ver Compras',
+          'Crear Compras',
+          'Registrar Compras',
+          'Editar Compras',
+          'Eliminar Compras',
+          'Anular Compras',
+        ],
+      },
+      {
+        id: 'Compras.Productos',
+        label: 'Productos',
+        permisos: [
+          'Ver Productos',
+          'Crear Productos',
+          'Editar Productos',
+          'Eliminar Productos',
+          'Ver Producto-Insumos',
+          'Crear Producto-Insumos',
+          'Editar Producto-Insumos',
+          'Eliminar Producto-Insumos',
+        ],
+      },
+      {
+        id: 'Compras.Categorías',
+        label: 'Categorías',
+        permisos: [
+          'Ver Categorías',
+          'Crear Categorías',
+          'Editar Categorías',
+          'Eliminar Categorías',
+        ],
+      },
+    ],
+  },
+  {
+    id: 'Producción',
+    label: 'Producción',
+    subGestiones: [
+      {
+        id: 'Producción.Ordenes',
+        label: 'Producción',
+        permisos: ['Ver Producción', 'Registrar Producción'],
+      },
+      {
+        id: 'Producción.EntregaInsumos',
+        label: 'Entrega de insumos',
+        permisos: ['Entregar Insumos', 'Ver Insumos'],
+      },
+      {
+        id: 'Producción.Insumos',
+        label: 'Insumos',
+        permisos: ['Ver Insumos', 'Crear Insumos', 'Editar Insumos', 'Eliminar Insumos'],
+      },
+    ],
+  },
+  {
+    id: 'Ventas',
+    label: 'Ventas',
+    subGestiones: [
+      {
+        id: 'Ventas.Clientes',
+        label: 'Clientes',
+        permisos: ['Ver Clientes', 'Crear Clientes', 'Editar Clientes', 'Eliminar Clientes'],
+      },
+      {
+        id: 'Ventas.Ventas',
+        label: 'Ventas',
+        permisos: [
+          'Ver Ventas',
+          'Crear Ventas',
+          'Registrar Ventas',
+          'Editar Ventas',
+          'Eliminar Ventas',
+          'Anular Ventas',
+        ],
+      },
+      {
+        id: 'Ventas.Pedidos',
+        label: 'Pedidos',
+        permisos: ['Ver Pedidos', 'Crear Pedidos', 'Editar Pedidos', 'Eliminar Pedidos'],
+      },
+      {
+        id: 'Ventas.Abonos',
+        label: 'Abonos',
+        permisos: ['Ver Abonos', 'Crear Abonos', 'Editar Abonos', 'Eliminar Abonos'],
+      },
+      {
+        id: 'Ventas.Domicilios',
+        label: 'Domicilios',
+        permisos: [
+          'Ver Domicilios',
+          'Crear Domicilios',
+          'Editar Domicilios',
+          'Eliminar Domicilios',
+          'Gestionar Domicilios',
+        ],
+      },
+    ],
+  },
+];
+
+const SUB_GESTION_BY_ID = {};
+const MODULE_BY_SUB_ID = {};
+for (const mod of STAFF_MODULE_CATALOG) {
+  for (const sub of mod.subGestiones) {
+    SUB_GESTION_BY_ID[sub.id] = { ...sub, moduleId: mod.id, moduleLabel: mod.label };
+    MODULE_BY_SUB_ID[sub.id] = mod.id;
+  }
+}
+
+/** Lecturas auxiliares para que cada gestión cargue datos relacionados en pantalla. */
+const SUB_GESTION_READ_DEPS = {
+  'Ventas.Ventas': ['Ver Clientes', 'Ver Productos', 'Ver Pedidos'],
+  'Ventas.Pedidos': ['Ver Clientes', 'Ver Productos', 'Ver Producción'],
+  'Ventas.Abonos': ['Ver Pedidos', 'Ver Clientes'],
+  'Ventas.Domicilios': ['Ver Pedidos', 'Ver Clientes', 'Ver Productos', 'Ver Usuarios'],
+  'Compras.Compras': ['Ver Productos', 'Ver Proveedores'],
+  'Producción.Ordenes': ['Ver Insumos', 'Ver Productos', 'Ver Pedidos'],
+  'Producción.EntregaInsumos': ['Ver Insumos', 'Ver Usuarios'],
+};
+
+const mergeSubBundle = (subId, basePerms) => {
+  const merged = new Set(basePerms || []);
+  for (const dep of SUB_GESTION_READ_DEPS[subId] || []) {
+    merged.add(dep);
+  }
+  return [...merged];
+};
+
+const buildModuleBundle = (moduleId) => {
+  const mod = STAFF_MODULE_CATALOG.find((m) => m.id === moduleId);
+  if (!mod) return [];
+  const perms = new Set();
+  for (const sub of mod.subGestiones) {
+    for (const p of mergeSubBundle(sub.id, sub.permisos || [])) perms.add(p);
+  }
+  return [...perms];
+};
+
+const GESTION_BUNDLES_BY_ID = {};
+for (const mod of STAFF_MODULE_CATALOG) {
+  GESTION_BUNDLES_BY_ID[mod.id] = buildModuleBundle(mod.id);
+  for (const sub of mod.subGestiones) {
+    GESTION_BUNDLES_BY_ID[sub.id] = mergeSubBundle(sub.id, sub.permisos || []);
+  }
+}
+
+/** Compatibilidad con código que iteraba GESTION_DEFINITIONS plano */
+const GESTION_DEFINITIONS = STAFF_MODULE_CATALOG.flatMap((mod) =>
+  mod.subGestiones.map((sub) => ({
+    id: sub.id,
+    label: sub.label,
+    moduleId: mod.id,
+    permisos: sub.permisos,
+  }))
+);
+
+const isModuleId = (id) => STAFF_MODULE_CATALOG.some((m) => m.id === id);
+
+const resolveExpansionTargets = (rawId) => {
+  const id = String(rawId || '').trim();
+  if (!id) return [];
+  if (isModuleId(id)) {
+    const mod = STAFF_MODULE_CATALOG.find((m) => m.id === id);
+    return mod ? mod.subGestiones.map((s) => s.id) : [];
+  }
+  if (SUB_GESTION_BY_ID[id]) return [id];
+  return [];
+};
+
+const gestionMarker = (gestionId) => `${GESTION_PERMISSION_PREFIX}${String(gestionId || '').trim()}`;
+
+const parseGestionMarker = (permission) => {
+  const raw = String(permission || '').trim();
+  if (!raw.startsWith(GESTION_PERMISSION_PREFIX)) return null;
+  return raw.slice(GESTION_PERMISSION_PREFIX.length).trim() || null;
+};
+
+const permissionDirectlyHeld = (userPermissions, permission) => {
+  const list = Array.isArray(userPermissions) ? userPermissions : [];
+  return getEquivalentPermissionsForGrant(permission).some((candidate) => list.includes(candidate));
+};
+
+const gestionBundleFullyGranted = (userPermissions, gestionId) => {
+  const bundle = GESTION_BUNDLES_BY_ID[gestionId];
+  if (!bundle || bundle.length === 0) return false;
+  return bundle.every((perm) => permissionDirectlyHeld(userPermissions, perm));
+};
+
+const userHasGestionAccess = (userPermissions, gestionId) => {
+  const list = Array.isArray(userPermissions) ? userPermissions : [];
+  const id = String(gestionId || '').trim();
+  if (!id) return false;
+
+  if (list.some((p) => parseGestionMarker(p) === id)) return true;
+
+  if (isModuleId(id)) {
+    const mod = STAFF_MODULE_CATALOG.find((m) => m.id === id);
+    if (!mod) return false;
+    return mod.subGestiones.some((sub) => userHasGestionAccess(list, sub.id));
+  }
+
+  if (gestionBundleFullyGranted(list, id)) return true;
+
+  const moduleId = MODULE_BY_SUB_ID[id];
+  if (moduleId && list.some((p) => parseGestionMarker(p) === moduleId)) return true;
+
+  return false;
+};
+
+const userHasModuleAccess = (userPermissions, moduleId) => userHasGestionAccess(userPermissions, moduleId);
+
+const roleGrantsPermission = (userPermissions, requiredPermission) => {
+  if (permissionDirectlyHeld(userPermissions, requiredPermission)) return true;
+
+  // Solo sub-gestiones: el bundle del módulo es la unión de todas las subs y no debe
+  // otorgar permisos de áreas sin acceso cuando el rol tiene solo algunas subs marcadas.
+  for (const gestionId of Object.keys(GESTION_BUNDLES_BY_ID)) {
+    if (isModuleId(gestionId)) continue;
+    if (!userHasGestionAccess(userPermissions, gestionId)) continue;
+    const bundle = GESTION_BUNDLES_BY_ID[gestionId] || [];
+    const granted = bundle.some((bundlePerm) =>
+      getEquivalentPermissionsForGrant(bundlePerm).some(
+        (candidate) =>
+          candidate === requiredPermission ||
+          getEquivalentPermissionsForGrant(requiredPermission).includes(candidate)
+      )
+    );
+    if (granted) return true;
+  }
+
+  return false;
+};
+
+const expandRolePermissionsForStorage = (permissions) => {
+  const input = Array.isArray(permissions) ? permissions : [];
+  const granular = new Set();
+  const subMarkers = new Set();
+
+  for (const raw of input) {
+    const trimmed = String(raw || '').trim();
+    if (!trimmed) continue;
+
+    const gestionFromMarker = parseGestionMarker(trimmed);
+    if (gestionFromMarker) {
+      for (const targetId of resolveExpansionTargets(gestionFromMarker)) {
+        subMarkers.add(targetId);
+      }
+      if (isModuleId(gestionFromMarker)) {
+        granular.add(gestionMarker(gestionFromMarker));
+      }
+      continue;
+    }
+
+    for (const targetId of resolveExpansionTargets(trimmed)) {
+      subMarkers.add(targetId);
+    }
+
+    if (!SUB_GESTION_BY_ID[trimmed] && !isModuleId(trimmed)) {
+      granular.add(trimmed);
+    }
+  }
+
+  for (const subId of subMarkers) {
+    granular.add(gestionMarker(subId));
+    const bundle = GESTION_BUNDLES_BY_ID[subId] || [];
+    for (const perm of bundle) {
+      granular.add(perm);
+      for (const alias of PERMISSION_ALIASES_FOR_GRANTS[perm] || []) {
+        granular.add(alias);
+      }
+    }
+    const moduleId = MODULE_BY_SUB_ID[subId];
+    if (moduleId) {
+      const mod = STAFF_MODULE_CATALOG.find((m) => m.id === moduleId);
+      const allSubsMarked = mod?.subGestiones.every((s) => subMarkers.has(s.id));
+      if (allSubsMarked) {
+        granular.add(gestionMarker(moduleId));
+      }
+    }
+  }
+
+  return [...granular];
+};
+
+const collapseRolePermissionsToGestiones = (permissions) => {
+  const list = Array.isArray(permissions) ? permissions : [];
+  const selected = new Set();
+
+  for (const raw of list) {
+    const markerId = parseGestionMarker(raw);
+    if (!markerId) continue;
+    if (isModuleId(markerId)) {
+      const mod = STAFF_MODULE_CATALOG.find((m) => m.id === markerId);
+      if (mod) {
+        for (const sub of mod.subGestiones) selected.add(sub.id);
+      }
+      continue;
+    }
+    if (SUB_GESTION_BY_ID[markerId]) selected.add(markerId);
+  }
+
+  for (const sub of GESTION_DEFINITIONS) {
+    if (gestionBundleFullyGranted(list, sub.id)) {
+      selected.add(sub.id);
+    }
+  }
+
+  return [...selected];
+};
 
 const normalizePermissions = (permissions) => {
   if (!Array.isArray(permissions)) return [];
+
+  const hasGestionInput = permissions.some((permission) => {
+    const trimmed = String(permission || '').trim();
+    return (
+      parseGestionMarker(trimmed) ||
+      SUB_GESTION_BY_ID[trimmed] ||
+      isModuleId(trimmed)
+    );
+  });
+
+  if (hasGestionInput) {
+    return expandRolePermissionsForStorage(permissions);
+  }
 
   const normalized = permissions
     .filter((permission) => typeof permission === 'string')
@@ -888,11 +1516,14 @@ module.exports = {
   ensureVentasMoneyColumns,
   ensureProductoImageColumn,
   ensureProductoTipoColumn,
+  ensureProductoInsumoMedidaColumns,
   ensureProductoInsumosTable,
+  ensureEntregasInsumoProductoCatalogo,
   ensureCategoriaProductCountColumn,
   syncCategoriaProductCount,
   // helpers genericos
-  nextNumeroVenta,
+  formatPrefixedCode,
+  reserveEntityIdAndCode,
   normalizeProductoTipoValue,
   groupRowsBy,
   ensureMotivoEstado,
@@ -913,6 +1544,7 @@ module.exports = {
   ensureUserPasswordHistoryTable,
   ensureUserPasswordResetTable,
   ensureUserLoginAttemptsTable,
+  ensureUsuariosPasswordEmailExpiresColumn,
   // helpers usuarios
   registerUserSession,
   getPasswordHistory,
@@ -925,7 +1557,11 @@ module.exports = {
   isLoginBlocked,
   getLoginBlockInfo,
   revokeUserSession,
+  revokeAllUserSessions,
+  isUserSessionActive,
+  touchUserSession,
   getActiveUserSessionCount,
+  getLatestUserStatusReason,
   getLinkedClienteForUsuario,
   getUserDeletionBlockers,
   buildUserFilterQuery,
@@ -938,6 +1574,17 @@ module.exports = {
   CLIENT_ROLE_NAME,
   CLIENT_ALLOWED_PERMISSIONS,
   normalizePermissions,
+  GESTION_DEFINITIONS,
+  STAFF_MODULE_CATALOG,
+  GESTION_BUNDLES_BY_ID,
+  GESTION_PERMISSION_PREFIX,
+  gestionMarker,
+  parseGestionMarker,
+  expandRolePermissionsForStorage,
+  collapseRolePermissionsToGestiones,
+  roleGrantsPermission,
+  userHasGestionAccess,
+  userHasModuleAccess,
   isClientRoleName,
   validateRoleName,
   buildDuplicateRoleNameError,

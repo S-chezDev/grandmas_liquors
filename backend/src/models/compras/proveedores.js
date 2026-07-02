@@ -114,18 +114,26 @@ const getProveedorIdentifierValue = ({ tipoPersona, nit, numeroDocumento }) => {
   return String(numeroDocumento || '').trim();
 };
 
+const normalizeIdentifierDigits = (value) => String(value || '').replace(/\D/g, '');
+
 const findProveedorByIdentifier = async ({ nit, numeroDocumento, excludeId = null }) => {
   const whereParts = [];
   const values = [];
 
   if (nit) {
-    values.push(nit);
-    whereParts.push(`nit = $${values.length}`);
+    const normalizedNit = normalizeIdentifierDigits(nit);
+    if (normalizedNit) {
+      values.push(normalizedNit);
+      whereParts.push(`regexp_replace(COALESCE(nit, ''), '\\D', '', 'g') = $${values.length}`);
+    }
   }
 
   if (numeroDocumento) {
-    values.push(numeroDocumento);
-    whereParts.push(`numero_documento = $${values.length}`);
+    const normalizedDocumento = normalizeIdentifierDigits(numeroDocumento);
+    if (normalizedDocumento) {
+      values.push(normalizedDocumento);
+      whereParts.push(`regexp_replace(COALESCE(numero_documento, ''), '\\D', '', 'g') = $${values.length}`);
+    }
   }
 
   if (whereParts.length === 0) {
@@ -211,13 +219,14 @@ const Proveedores = {
   },
   getByNitOrDocumento: async (identifier) => {
     await ensureProveedorSchema();
-    const normalized = String(identifier || '').trim();
+    const normalized = normalizeIdentifierDigits(identifier);
     if (!normalized) return null;
 
     const result = await pool.query(
       `SELECT *
        FROM proveedores
-       WHERE nit = $1 OR numero_documento = $1
+       WHERE regexp_replace(COALESCE(nit, ''), '\\D', '', 'g') = $1
+          OR regexp_replace(COALESCE(numero_documento, ''), '\\D', '', 'g') = $1
        ORDER BY CASE WHEN estado = 'Activo' THEN 0 ELSE 1 END, id ASC
        LIMIT 1`,
       [normalized]
@@ -485,6 +494,13 @@ const Proveedores = {
     const reason = ensureMotivoEstado(data.motivo);
 
     if (currentProveedor.estado !== 'Inactivo' && nextEstado === 'Inactivo') {
+      const pendingPurchases = await getPendingComprasByProveedor(id);
+      if (pendingPurchases > 0) {
+        const error = new Error('No se puede desactivar el proveedor porque tiene ordenes de compra pendientes');
+        error.statusCode = 409;
+        error.details = { pendingPurchases };
+        throw error;
+      }
       await checkInactivacionDependencias('proveedor', id);
     }
 
@@ -523,6 +539,14 @@ const Proveedores = {
       const error = new Error('El motivo de eliminacion es obligatorio y debe tener entre 10 y 50 caracteres');
       error.statusCode = 400;
       error.details = { reasonLength: reason.length };
+      throw error;
+    }
+
+    const pendingPurchases = await getPendingComprasByProveedor(id);
+    if (pendingPurchases > 0) {
+      const error = new Error('No se puede eliminar el proveedor porque tiene ordenes de compra pendientes');
+      error.statusCode = 409;
+      error.details = { pendingPurchases };
       throw error;
     }
 

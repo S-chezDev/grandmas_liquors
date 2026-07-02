@@ -1,4 +1,4 @@
-﻿export interface HistorialCambio {
+export interface HistorialCambio {
   fecha: string;
   usuario: string;
   accion: string;
@@ -23,6 +23,8 @@ export interface Usuario {
   createdAt: string;
   updatedAt: string;
   historialCambios: HistorialCambio[];
+  ultimoInicioSesion?: string;
+  sesionesActivas?: number;
 }
 
 export interface Categoria {
@@ -42,7 +44,7 @@ export interface Producto {
   nombre: string;
   descripcion: string;
   categoriaId: number;
-  typo: 'terminado' | 'de preparacion';
+  typo: 'terminado' | 'de preparacion' | 'insumo';
   precioCompra: number;
   precioVenta: number;
   ganancia: number;
@@ -52,6 +54,11 @@ export interface Producto {
   createdAt: string;
   updatedAt: string;
   historialCambios: HistorialCambio[];
+  /** Solo tipo insumo: unidad de la presentación (Gramos, Kilogramos, etc.). */
+  insumoUnidadMedida?: string | null;
+  /** Solo tipo insumo: cantidad/volumen de la presentación. */
+  insumoCantidadMedida?: number | null;
+  imagenUrl?: string | null;
 }
 
 export interface Proveedor {
@@ -94,10 +101,18 @@ export interface Compra {
   updatedAt: string;
 }
 
+export interface ProduccionDetallePreparacionLine {
+  productoId: number;
+  cantidad: number;
+  productoNombre?: string;
+}
+
 export interface OrdenProduccion {
   id: number;
   idOrden: number;
   productoId: number;
+  pedidoId?: number;
+  pedidoNumero?: string;
   cantidad: number;
   productorId: number;
   fechaInicio: string;
@@ -106,6 +121,13 @@ export interface OrdenProduccion {
   motivoCancelacion?: string;
   createdAt: string;
   updatedAt: string;
+  detallePreparacion?: ProduccionDetallePreparacionLine[];
+  insumosGastados?: Array<{
+    insumo_nombre?: string;
+    cantidad?: number;
+    cantidad_descontada?: number;
+    unidad?: string;
+  }>;
 }
 
 export interface EntregaInsumo {
@@ -113,23 +135,19 @@ export interface EntregaInsumo {
   insumo: string;
   cantidad: number;
   unidad?: string;
+  /** Producto catálogo tipo insumo (entregas_insumos.producto_catalogo_id). */
+  productoCatalogoId?: number;
   /** ID del usuario con rol productor (columna operario_id en BD). */
   operarioId: number;
   fecha: string;
   hora: string;
   createdAt: string;
+  anulada?: boolean;
+  motivoAnulacion?: string | null;
 }
 
 /** Unidades válidas en POST/PUT de insumos (backend). */
-export const INSUMO_UNIDADES_API = [
-  'Litros',
-  'Kilogramos',
-  'Gramos',
-  'Unidades',
-  'Cajas',
-  'Botellas',
-  'Mililitros',
-] as const;
+export const INSUMO_UNIDADES_API = ['Unidades', 'Mililitros'] as const;
 
 export type InsumoUnidadApi = (typeof INSUMO_UNIDADES_API)[number];
 
@@ -148,6 +166,11 @@ export interface Insumo {
   operarioId?: number;
   fecha?: string;
   productoRelacionadoId?: number;
+  /** `catalogo` = tabla insumos; `producto_insumo` = producto tipo insumo. */
+  origenInventario?: string;
+  categoriaNombre?: string;
+  presentacionCantidad?: number | null;
+  presentacionUnidad?: string | null;
 }
 
 /** Línea de receta desde GET /api/producto-insumos/producto/:id */
@@ -163,6 +186,19 @@ export interface ProductoInsumoRecetaLine {
   stock_minimo?: number;
 }
 
+export interface FichaTecnicaInsumo {
+  insumo_id?: number | null;
+  producto_catalogo_id?: number | null;
+  insumo_nombre: string;
+  cantidad: number;
+  unidad?: string;
+}
+
+export interface FichaTecnica {
+  insumos: FichaTecnicaInsumo[];
+}
+
+
 export interface Cliente {
   id: number;
   nombre: string;
@@ -172,6 +208,7 @@ export interface Cliente {
   email: string;
   telefono: string;
   direccion: string;
+  foto?: string;
   estado: 'activo' | 'inactivo';
   comprasRealizadas: number;
   ultimaCompra?: string;
@@ -235,6 +272,8 @@ export interface Abono {
   estado: 'registrado' | 'verificado' | 'cancelado' | 'aplicado' | 'finalizado';
   /** Texto consolidado con la informacion de las partes del abono cuando se liquida al 100%. */
   detalle?: string;
+  /** Captura de transferencia subida al confirmar pedido desde la tienda. */
+  comprobanteUrl?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -246,6 +285,10 @@ export interface Domicilio {
   repartidorId: number;
   productos: PedidoProducto[];
   total: number;
+  /** Total del pedido (siempre monto completo); el listado puede mostrar monto distinto al repartidor según esquema. */
+  totalPedidoBase?: number;
+  /** Ej. 50% o 100% — viene del pedido asociado. */
+  esquemaAbonoPedido?: string;
   fechaPedido: string;
   fechaEntrega: string;
   estado: 'pendiente' | 'en ruta' | 'completado' | 'cancelado';

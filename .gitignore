@@ -8,6 +8,8 @@ node_modules/
 .env.development.local
 .env.test.local
 .env.production.local
+.env.production
+.env.development
 
 # Logs
 npm-debug.log*
@@ -15,11 +17,16 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+backend/logs/
+**/logs/
 
 # Build outputs
 dist/
 dist-ssr/
 *.local
+frontend/dist/
+
+
 
 # Editor directories and files
 .vscode/*
@@ -34,9 +41,3 @@ dist-ssr/
 
 # OS files
 Thumbs.db
-
-backend/historias-migraciones
-!backend/historias-migraciones/
-backend/historias-migraciones/*
-!backend/historias-migraciones/016_add_pedido_id_to_produccion.sql
-!backend/historias-migraciones/017_align_produccion_extended_columns.sql

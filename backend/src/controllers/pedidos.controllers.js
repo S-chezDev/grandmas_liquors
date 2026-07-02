@@ -1,8 +1,15 @@
 // Rewire: el modelo Abonos, Pedidos viene de archivos modulares.
 // entities.models.js queda como archivo intacto pero desconectado (sin importadores).
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+const sharp = require('sharp');
+const pool = require('../../db');
+const appConfig = require('../../config');
 const models = {
   Abonos: require('../models/ventas/abonos'),
   Pedidos: require('../models/ventas/pedidos'),
+  Domicilios: require('../models/ventas/domicilios'),
 };
 const {
   isClienteUser,
@@ -10,10 +17,92 @@ const {
   assertOwnClienteParam,
   assertOwnPedidoId,
 } = require('../utils/selfServiceAccess');
+const { sendPedidoCreatedEmail } = require('../services/email.service');
+const { normalizeMetodoPago } = require('./normalizador-http');
+
+const COMPROBANTE_URL_RE = /^\/uploads\/comprobantes\/[a-zA-Z0-9._-]+$/;
 
 const normalizeEstado = (value) => String(value || '').trim().toLowerCase();
+const PEDIDO_TRANSICIONES = {
+  Pendiente: ['En Proceso', 'Cancelado'],
+  'En Proceso': ['Completado', 'Cancelado'],
+  Completado: [],
+  Cancelado: [],
+};
 
-const buildDomicilioNumber = () => `DOM-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+const canTransitionPedido = (fromEstado, toEstado) =>
+  Boolean(PEDIDO_TRANSICIONES[String(fromEstado || '').trim()]?.includes(String(toEstado || '').trim()));
+
+const buildPedidoUpdatePayload = (currentPedido, body = {}) => ({
+  numero_pedido: currentPedido.numero_pedido,
+  fecha: body.fecha_pedido !== undefined ? body.fecha_pedido : (body.fecha !== undefined ? body.fecha : currentPedido.fecha),
+  fecha_entrega: body.fecha_entrega !== undefined ? body.fecha_entrega : currentPedido.fecha_entrega,
+  detalles: body.detalles !== undefined ? body.detalles : currentPedido.detalles,
+  direccion: body.direccion !== undefined ? body.direccion : currentPedido.direccion,
+  telefono: body.telefono !== undefined ? body.telefono : currentPedido.telefono,
+  total: body.total !== undefined ? body.total : currentPedido.total,
+  metodo_pago: body.metodo_pago !== undefined ? body.metodo_pago : currentPedido.metodo_pago,
+  esquema_abono: body.esquema_abono !== undefined ? body.esquema_abono : currentPedido.esquema_abono,
+  monto_abonado: body.monto_abonado !== undefined ? body.monto_abonado : currentPedido.monto_abonado,
+  estado: body.estado !== undefined ? body.estado : currentPedido.estado,
+});
+
+const recentPedidoCreateCache = new Map();
+const PEDIDO_DUPLICATE_WINDOW_MS = 15000;
+
+const buildPedidoFingerprint = (clienteId, body = {}) => {
+  const productos = Array.isArray(body.productos)
+    ? body.productos
+        .map((item) => ({
+          productoId: Number(item.productoId ?? item.producto_id ?? 0),
+          cantidad: Number(item.cantidad || 0),
+          precio: Number(item.precio ?? item.precioUnitario ?? 0),
+        }))
+        .sort((a, b) => a.productoId - b.productoId)
+    : [];
+
+  return JSON.stringify({
+    clienteId: Number(clienteId || 0),
+    fecha: String(body.fecha || ''),
+    fechaEntrega: String(body.fecha_entrega || ''),
+    direccion: String(body.direccion || '').trim(),
+    telefono: String(body.telefono || '').replace(/\D/g, ''),
+    metodoPago: String(body.metodo_pago || '').trim(),
+    esquemaAbono: String(body.esquema_abono || '').trim(),
+    total: Number(body.total || 0),
+    detalles: String(body.detalles || '').trim(),
+    productos,
+  });
+};
+
+const cleanupRecentPedidoCreateCache = () => {
+  const now = Date.now();
+  for (const [key, entry] of recentPedidoCreateCache.entries()) {
+    if (!entry || now - entry.createdAtMs >= PEDIDO_DUPLICATE_WINDOW_MS) {
+      recentPedidoCreateCache.delete(key);
+    }
+  }
+};
+
+const fechaHoyColombia = () =>
+  new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' });
+
+const validarFechaEntrega = (fechaEntrega, fechaPedido) => {
+  const hoy = fechaHoyColombia();
+  const fe = String(fechaEntrega || '').trim().split('T')[0];
+  if (!fe || !/^\d{4}-\d{2}-\d{2}$/.test(fe)) {
+    return 'La fecha de entrega es obligatoria y debe tener formato AAAA-MM-DD';
+  }
+  if (fe < hoy) {
+    return 'La fecha de entrega no puede ser una fecha pasada';
+  }
+  const fp = String(fechaPedido || hoy).trim().split('T')[0];
+  // Permitir que la fecha de entrega sea igual o mayor a la fecha del pedido (incluye entrega el mismo día)
+  if (fe < fp) {
+    return 'La fecha de entrega debe ser mayor o igual a la fecha del pedido';
+  }
+  return null;
+};
 
 module.exports = {
   getAll: async (req, res) => {
@@ -43,9 +132,28 @@ module.exports = {
       if (!pedido) return res.status(404).json({ success: false, message: 'Pedido no encontrado' });
       const notasPedido = pedido.detalles;
       const detalles = await models.Pedidos.getDetalles(req.params.id);
+      let domicilio = null;
+      try {
+        domicilio = await models.Domicilios.getByPedido(req.params.id);
+      } catch {
+        domicilio = null;
+      }
       return res.json({
         success: true,
-        data: { ...pedido, detalles, detalles_texto: notasPedido },
+        data: {
+          ...pedido,
+          detalles,
+          detalles_texto: notasPedido,
+          domicilio: domicilio
+            ? {
+                id: domicilio.id,
+                estado: domicilio.estado,
+                fecha: domicilio.fecha,
+                hora: domicilio.hora,
+                repartidor: domicilio.repartidor,
+              }
+            : null,
+        },
       });
     } catch (error) {
       return res.status(error.statusCode || 500).json({ success: false, message: error.message });
@@ -59,7 +167,13 @@ module.exports = {
       const pedidos = await models.Pedidos.getByCliente(req.params.clienteId);
       return res.json({ success: true, data: pedidos });
     } catch (error) {
-      return res.status(500).json({ success: false, message: error.message });
+      if (error?.code === '23505') {
+        return res.status(409).json({
+          success: false,
+          message: 'Ya existe un pedido con la misma referencia. Espere un momento e intente nuevamente.',
+        });
+      }
+      return res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
   },
   create: async (req, res) => {
@@ -88,6 +202,54 @@ module.exports = {
         body.total = totalCalc;
       }
 
+      const comprobanteUrl = String(body.comprobante_url || '').trim();
+      if (isClienteUser(req)) {
+        const metodoCliente = normalizeMetodoPago(body.metodo_pago) || 'Transferencia';
+        if (metodoCliente !== 'Transferencia') {
+          return res.status(400).json({
+            success: false,
+            message: 'Los pedidos desde la tienda solo admiten pago por transferencia bancaria.',
+          });
+        }
+        body.metodo_pago = 'Transferencia';
+        if (!comprobanteUrl || !COMPROBANTE_URL_RE.test(comprobanteUrl)) {
+          return res.status(400).json({
+            success: false,
+            message: 'Debe adjuntar la captura del comprobante de consignación para confirmar el pedido.',
+          });
+        }
+      } else if (comprobanteUrl && !COMPROBANTE_URL_RE.test(comprobanteUrl)) {
+        return res.status(400).json({
+          success: false,
+          message: 'URL de comprobante inválida.',
+        });
+      }
+
+      // La fecha del pedido se registra en servidor (no se confía en el reloj del cliente).
+      body.fecha = fechaHoyColombia();
+
+      const fechaEntregaError = validarFechaEntrega(body.fecha_entrega, body.fecha);
+      if (fechaEntregaError) {
+        return res.status(400).json({ success: false, message: fechaEntregaError });
+      }
+
+      if (body.cliente_id) {
+        cleanupRecentPedidoCreateCache();
+        const fingerprint = buildPedidoFingerprint(body.cliente_id, body);
+        const cacheKey = `cliente:${body.cliente_id}`;
+        const cached = recentPedidoCreateCache.get(cacheKey);
+        if (cached && cached.fingerprint === fingerprint && Date.now() - cached.createdAtMs < PEDIDO_DUPLICATE_WINDOW_MS) {
+          return res.status(409).json({
+            success: false,
+            message: 'Ya se está procesando o ya se creó un pedido igual hace un momento. Evite reenviar la solicitud.',
+          });
+        }
+        recentPedidoCreateCache.set(cacheKey, {
+          fingerprint,
+          createdAtMs: Date.now(),
+        });
+      }
+
       const id = await models.Pedidos.create(body);
 
       if (productos && productos.length > 0) {
@@ -109,37 +271,106 @@ module.exports = {
         }
       }
 
-      // Si esquema es 50% crear registro inicial en abonos y actualizar monto_abonado en pedido
+      // Abono inicial: 50 % siempre; 100 % cuando el cliente adjunta comprobante de transferencia
       try {
         const esquema = String(body.esquema_abono || '').trim() || '100%';
-        if (esquema === '50%') {
-          const pedidoRow = await models.Pedidos.getById(id);
-          if (pedidoRow) {
-            const clienteId = Number(pedidoRow.cliente_id);
-            const total = Number(pedidoRow.total || 0);
-            const monto = Math.round(total * 0.5);
-            const numero_abono = `ABO-${Date.now()}`;
+        const pedidoRow = await models.Pedidos.getById(id);
+        if (pedidoRow) {
+          const clienteId = Number(pedidoRow.cliente_id);
+          const total = Number(pedidoRow.total || 0);
+          const pct = esquema === '50%' ? 50 : 100;
+          const crearAbonoInicial =
+            esquema === '50%' || (esquema === '100%' && isClienteUser(req) && Boolean(comprobanteUrl));
+          if (crearAbonoInicial && total > 0) {
+            const monto = Math.round((total * pct) / 100);
             await models.Abonos.create({
-              numero_abono,
               pedido_id: id,
               cliente_id: clienteId,
               monto,
               fecha: new Date().toISOString().split('T')[0],
-              metodo_pago: pedidoRow.metodo_pago || 'Efectivo',
+              metodo_pago: pedidoRow.metodo_pago || 'Transferencia',
               estado: 'Registrado',
-              porcentaje_abonado: 50,
+              porcentaje_abonado: pct,
+              comprobante_url: comprobanteUrl || null,
             });
-            // actualizar monto_abonado en pedido
-            await models.Pedidos.update(id, { monto_abonado: monto, esquema_abono: '50%' });
+            await models.Pedidos.update(id, { monto_abonado: monto, esquema_abono: esquema });
           }
         }
       } catch (e) {
         console.error('No se pudo crear abono inicial para pedido', id, e.message);
       }
 
+      const pedidoIdCreado = id;
+      setImmediate(() => {
+        void (async () => {
+          try {
+            const pedidoCreado = await models.Pedidos.getById(pedidoIdCreado);
+            const detallesPedido = await models.Pedidos.getDetalles(pedidoIdCreado);
+            const abonosPedido = await models.Abonos.getByPedido(pedidoIdCreado);
+            const abonoInicial = Array.isArray(abonosPedido) && abonosPedido.length > 0 ? abonosPedido[0] : null;
+            const totalDetalle = detallesPedido.reduce(
+              (sum, item) => sum + Number(item.subtotal ?? Number(item.precio_unitario || 0) * Number(item.cantidad || 0)),
+              0
+            );
+            const totalPedido = Number(pedidoCreado?.total || 0) > 0 ? Number(pedidoCreado.total) : totalDetalle;
+            const montoAbonado = Number(pedidoCreado?.monto_abonado ?? abonoInicial?.monto ?? 0);
+            let clienteDocumento = null;
+            try {
+              const clienteRes = await pool.query(
+                'SELECT numero_documento FROM clientes WHERE id = $1 LIMIT 1',
+                [pedidoCreado.cliente_id]
+              );
+              const doc = clienteRes.rows[0]?.numero_documento;
+              if (doc) clienteDocumento = String(doc).trim();
+            } catch {
+              /* documento opcional en PDF */
+            }
+            if (pedidoCreado?.email) {
+              await sendPedidoCreatedEmail({
+                to: pedidoCreado.email,
+                clienteNombre: pedidoCreado.cliente,
+                numeroPedido: pedidoCreado.numero_pedido,
+                pedidoId: pedidoIdCreado,
+                clienteDocumento,
+                fechaPedido: pedidoCreado.fecha,
+                fechaEntrega: pedidoCreado.fecha_entrega,
+                estado: pedidoCreado.estado,
+                metodoPago: pedidoCreado.metodo_pago,
+                esquemaAbono: pedidoCreado.esquema_abono,
+                total: totalPedido,
+                montoAbonado,
+                saldoPendiente: Math.max(0, totalPedido - montoAbonado),
+                direccion: pedidoCreado.direccion,
+                telefono: pedidoCreado.telefono,
+                detalles: pedidoCreado.detalles,
+                productos: detallesPedido.map((item) => ({
+                  nombre: item.producto_nombre,
+                  cantidad: item.cantidad,
+                  precioUnitario: item.precio_unitario,
+                  subtotal: item.subtotal ?? Number(item.precio_unitario || 0) * Number(item.cantidad || 0),
+                })),
+                abono: abonoInicial,
+              });
+            }
+          } catch (mailError) {
+            console.error(
+              'No se pudo enviar confirmación de pedido por correo',
+              pedidoIdCreado,
+              mailError?.message
+            );
+          }
+        })();
+      });
+
       return res.status(201).json({ success: true, id, message: 'Pedido creado exitosamente' });
     } catch (error) {
-      return res.status(500).json({ success: false, message: error.message });
+      if (error?.code === '23505') {
+        return res.status(409).json({
+          success: false,
+          message: 'Ya existe un pedido con la misma referencia. Espere un momento e intente nuevamente.',
+        });
+      }
+      return res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
   },
   addProducto: async (req, res) => {
@@ -166,14 +397,6 @@ module.exports = {
         return res.status(404).json({ success: false, message: 'Pedido no encontrado' });
       }
 
-      // Definir transiciones permitidas de estado
-      const transiciones = {
-        'Pendiente': ['En Proceso', 'Completado', 'Cancelado'],
-        'En Proceso': ['Completado', 'Cancelado', 'Pendiente'],
-        'Completado': [], // Final
-        'Cancelado': [] // Final
-      };
-
       // CLIENTE: Solo puede editar si el pedido está en Pendiente
       if (isClienteUser(req)) {
         const estado = String(pedido?.estado || '');
@@ -187,14 +410,22 @@ module.exports = {
           fecha_entrega: req.body.fecha_entrega,
           detalles: req.body.detalles,
         };
-        const merged = {
-          numero_pedido: pedido.numero_pedido,
+        if (allowed.fecha_entrega !== undefined) {
+          const fechaEntregaError = validarFechaEntrega(
+            allowed.fecha_entrega,
+            req.body.fecha_pedido || req.body.fecha || pedido.fecha || fechaHoyColombia()
+          );
+          if (fechaEntregaError) {
+            return res.status(400).json({ success: false, message: fechaEntregaError });
+          }
+        }
+        const merged = buildPedidoUpdatePayload(pedido, {
           fecha: pedido.fecha,
-          fecha_entrega: allowed.fecha_entrega !== undefined ? allowed.fecha_entrega : pedido.fecha_entrega,
-          detalles: allowed.detalles !== undefined ? allowed.detalles : pedido.detalles,
+          fecha_entrega: allowed.fecha_entrega,
+          detalles: allowed.detalles,
           total: pedido.total,
           estado: pedido.estado,
-        };
+        });
         await models.Pedidos.update(req.params.id, merged);
         return res.json({ success: true, message: 'Pedido actualizado exitosamente' });
       }
@@ -204,32 +435,41 @@ module.exports = {
         const estadoActual = String(pedido.estado || '').trim();
         const estadoNuevo = String(req.body.estado).trim();
 
-        // Validar transición
-        if (!transiciones[estadoActual]?.includes(estadoNuevo)) {
+        if (!canTransitionPedido(estadoActual, estadoNuevo)) {
           return res.status(400).json({
             success: false,
-            message: `Transición no permitida: ${estadoActual} ��� ${estadoNuevo}`,
-            permitidas: transiciones[estadoActual] || []
+            message: `Transición no permitida: ${estadoActual} -> ${estadoNuevo}`,
+            permitidas: PEDIDO_TRANSICIONES[estadoActual] || [],
           });
         }
 
-        // ASESOR: Puede cambiar estado, pero sin editar otros campos
-        if (rol === 'Asesor') {
-          const merged = {
-            numero_pedido: pedido.numero_pedido,
-            fecha: pedido.fecha,
-            fecha_entrega: pedido.fecha_entrega,
-            detalles: pedido.detalles,
-            total: pedido.total,
-            estado: estadoNuevo, // Solo cambiar estado
-          };
-          await models.Pedidos.update(req.params.id, merged);
-          
-          return res.json({ success: true, message: 'Pedido actualizado exitosamente' });
+        if (estadoNuevo === 'Completado') {
+          const prodOrdenPut = await pool.query(
+            `SELECT id, estado FROM produccion WHERE pedido_id = $1 LIMIT 1`,
+            [req.params.id]
+          );
+          const ordenPut = prodOrdenPut.rows[0];
+          if (ordenPut && String(ordenPut.estado || '').trim() !== 'Orden Lista') {
+            return res.status(409).json({
+              success: false,
+              message:
+                'No puede completar el pedido mientras la orden de producción no esté completada. Complete la orden de producción primero; el pedido pasará a Completado automáticamente.',
+            });
+          }
         }
 
-        // ADMIN: Puede cambiar todo
-        await models.Pedidos.update(req.params.id, req.body);
+        const bodyPatch = { ...req.body, estado: estadoNuevo };
+        if (Array.isArray(bodyPatch.productos)) {
+          if (estadoActual !== 'Pendiente') {
+            return res.status(409).json({
+              success: false,
+              message: 'Solo puede actualizar productos del pedido cuando está en estado Pendiente',
+            });
+          }
+          await models.Pedidos.replaceDetalles(req.params.id, bodyPatch.productos);
+          delete bodyPatch.productos;
+        }
+        await models.Pedidos.update(req.params.id, buildPedidoUpdatePayload(pedido, bodyPatch));
         return res.json({ success: true, message: 'Pedido actualizado exitosamente' });
       }
 
@@ -241,7 +481,21 @@ module.exports = {
         });
       }
 
-      await models.Pedidos.update(req.params.id, req.body);
+      if (Array.isArray(req.body.productos)) {
+        await models.Pedidos.replaceDetalles(req.params.id, req.body.productos);
+      }
+      const updateBody = { ...req.body };
+      delete updateBody.productos;
+      if (updateBody.fecha_entrega !== undefined) {
+        const fechaEntregaError = validarFechaEntrega(
+          updateBody.fecha_entrega,
+          updateBody.fecha_pedido || updateBody.fecha || pedido.fecha || fechaHoyColombia()
+        );
+        if (fechaEntregaError) {
+          return res.status(400).json({ success: false, message: fechaEntregaError });
+        }
+      }
+      await models.Pedidos.update(req.params.id, buildPedidoUpdatePayload(pedido, updateBody));
       return res.json({ success: true, message: 'Pedido actualizado exitosamente' });
     } catch (error) {
       return res.status(error.statusCode || 500).json({ success: false, message: error.message });
@@ -252,11 +506,17 @@ module.exports = {
       if (isClienteUser(req)) {
         return res.status(403).json({ success: false, message: 'No autorizado' });
       }
-
-      await models.Pedidos.delete(req.params.id);
+      const motivo = typeof req.body?.motivo === 'string' ? req.body.motivo.trim() : '';
+      if (!motivo || motivo.length < 10 || motivo.length > 50) {
+        return res.status(400).json({
+          success: false,
+          message: 'El motivo de eliminacion es obligatorio y debe tener entre 10 y 50 caracteres',
+        });
+      }
+      await models.Pedidos.delete(req.params.id, { actor_id: req.user?.id || null, reason: motivo });
       return res.json({ success: true, message: 'Pedido eliminado exitosamente' });
     } catch (error) {
-      return res.status(500).json({ success: false, message: error.message });
+      return res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
   },
   updateStatus: async (req, res) => {
@@ -279,19 +539,29 @@ module.exports = {
         return res.status(404).json({ success: false, message: 'Pedido no encontrado' });
       }
 
-      // Validar transiciones de estado permitidas
-      const transicionesPermitidas = {
-        'Pendiente': ['En Proceso', 'Cancelado'],
-        'En Proceso': ['Completado', 'Cancelado'],
-        'Completado': [],
-        'Cancelado': []
-      };
-
-      if (!transicionesPermitidas[pedidoActual.estado]?.includes(estado)) {
+      if (!canTransitionPedido(pedidoActual.estado, estado)) {
         return res.status(400).json({ 
           success: false, 
           message: `No se puede cambiar de ${pedidoActual.estado} a ${estado}` 
         });
+      }
+
+      if (estado === 'Completado') {
+        const prodOrden = await pool.query(
+          `SELECT id, estado FROM produccion WHERE pedido_id = $1 LIMIT 1`,
+          [req.params.id]
+        );
+        const orden = prodOrden.rows[0];
+        if (orden) {
+          const estOrden = String(orden.estado || '').trim();
+          if (estOrden !== 'Orden Lista') {
+            return res.status(409).json({
+              success: false,
+              message:
+                'No puede completar el pedido mientras la orden de producción no esté completada. Complete la orden de producción primero; el pedido pasará a Completado automáticamente.',
+            });
+          }
+        }
       }
 
       // Si se cancela, motivo obligatorio (10-50)
@@ -307,10 +577,59 @@ module.exports = {
         datosActualizar.detalles = `${pedidoActual.detalles || ''} [CANCELADO: ${motivoLimpio}]`.trim();
       }
 
-      await models.Pedidos.update(req.params.id, datosActualizar);
+      await models.Pedidos.update(req.params.id, buildPedidoUpdatePayload(pedidoActual, datosActualizar));
       return res.json({ success: true, message: 'Estado actualizado exitosamente' });
     } catch (error) {
       return res.status(500).json({ success: false, message: error.message });
+    }
+  },
+  uploadComprobante: async (req, res) => {
+    try {
+      if (!isClienteUser(req)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Solo el cliente autenticado puede subir comprobantes de transferencia.',
+        });
+      }
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: 'Seleccione la captura del comprobante de consignación (JPG, PNG o WEBP).',
+        });
+      }
+
+      const uploadsDir = appConfig.uploads.comprobantesDir;
+      fs.mkdirSync(uploadsDir, { recursive: true });
+
+      const extension = path.extname(req.file.originalname || '').toLowerCase() || '.jpg';
+      const own = getOwnClienteId(req);
+      const filename = `comprobante_${own || 'cliente'}_${Date.now()}_${crypto.randomBytes(6).toString('hex')}${extension}`;
+      const absolutePath = path.join(uploadsDir, filename);
+      const relativeUrl = `/uploads/comprobantes/${filename}`;
+
+      // Optimizar imagen con Sharp
+      const optimizedBuffer = await sharp(req.file.buffer)
+        .resize(1200, 1200, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 85, progressive: true })
+        .toBuffer();
+
+      fs.writeFileSync(absolutePath, optimizedBuffer);
+
+      return res.json({
+        success: true,
+        message: 'Comprobante cargado correctamente.',
+        data: { comprobante_url: relativeUrl },
+      });
+    } catch (error) {
+      console.error('Error al subir comprobante de pedido', error?.message || error);
+      const message =
+        error?.code === 'EACCES' || error?.code === 'EROFS'
+          ? 'No se pudo escribir el comprobante en el servidor. Revise permisos o UPLOADS_ROOT en Elastic Beanstalk.'
+          : error.message || 'No fue posible guardar el comprobante.';
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        message,
+      });
     }
   },
 };

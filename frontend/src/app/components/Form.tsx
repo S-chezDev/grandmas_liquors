@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { AlertCircle, Info, CheckCircle2 } from 'lucide-react';
+import { AlertCircle, Info, CheckCircle2, Eye, EyeOff } from 'lucide-react';
+import { formatProperCase, shouldFormatTextFieldKey } from '../services/mappers';
 
 /* ------------------------------------------------------------------
  * Primitivas estandarizadas para validación inline.
@@ -80,8 +81,10 @@ interface FormFieldProps {
   helperText?: React.ReactNode;
   /** Deshabilita el control. */
   disabled?: boolean;
-  /** Solo dígitos: teléfono 10, documento/NIT 12 (validación en vivo) o NIT/Documento 6–12 (sin error en vivo). */
-  inputDigitRule?: 'telefono10' | 'documento12' | 'documento6to12';
+  /** Solo dígitos: teléfono 10, documento/NIT 12, NIT/Documento 6–12 o 6–15. */
+  inputDigitRule?: 'telefono10' | 'documento12' | 'documento6to12' | 'documento6to15';
+  /** Oculta los textos auxiliares automáticos generados por reglas internas. */
+  hideAutoHelper?: boolean;
 }
 
 // Devuelve la fecha actual en formato YYYY-MM-DD (zona horaria local).
@@ -96,6 +99,15 @@ const getNowDateTimeString = (): string => {
   const now = new Date();
   const offset = now.getTimezoneOffset() * 60000;
   return new Date(now.getTime() - offset).toISOString().slice(0, 16);
+};
+
+const seemsLikeGibberish = (raw: string): boolean => {
+  const normalized = String(raw || '').trim().toLowerCase();
+  if (!normalized) return false;
+  const letters = normalized.match(/[a-záéíóúñ]/g) || [];
+  if (letters.length < 6) return false;
+  const vowels = normalized.match(/[aeiouáéíóú]/g) || [];
+  return vowels.length / letters.length < 0.2;
 };
 
 export function FormField({
@@ -120,15 +132,48 @@ export function FormField({
   helperText,
   disabled = false,
   inputDigitRule,
+  hideAutoHelper = false,
 }: FormFieldProps) {
   const [internalError, setInternalError] = useState<string>('');
   const [touched, setTouched] = useState(false);
+  const [showPasswordPlain, setShowPasswordPlain] = useState(false);
   const error = externalError !== undefined && externalError !== '' ? externalError : internalError;
   const setError = setInternalError;
   const digitStr = inputDigitRule ? String(value ?? '').replace(/\D/g, '') : '';
-  // documento6to12 NO muestra el error mientras se escribe; sólo tras blur o submit (touched).
+  const normalizedName = String(name || '').toLowerCase();
+  const isEmailLikeField =
+    type === 'email' || normalizedName.includes('email') || normalizedName.includes('correo');
+  const autoCapAtSixty =
+    maxLength === undefined &&
+    !inputDigitRule &&
+    isEmailLikeField;
+  const isDireccionField = normalizedName.includes('direccion');
+  const autoCapAtTwoFiftyFive =
+    maxLength === undefined &&
+    !inputDigitRule &&
+    (type === 'text' || type === 'textarea') &&
+    isDireccionField;
+  const autoCapAtThirty =
+    maxLength === undefined &&
+    !inputDigitRule &&
+    (type === 'text' || type === 'textarea') &&
+    (
+      normalizedName.includes('nombre') ||
+      normalizedName.includes('apellido') ||
+      normalizedName.includes('razonsocial')
+    );
+  const autoCapAtDefault =
+    maxLength === undefined &&
+    !inputDigitRule &&
+    (type === 'text' || type === 'textarea' || type === 'email' || type === 'password');
+  const effectiveMaxLength =
+    autoCapAtTwoFiftyFive ? 255 : autoCapAtSixty ? 60 : autoCapAtThirty ? 30 : autoCapAtDefault ? 60 : maxLength;
+  // Los identificadores flexibles no muestran error parcial mientras se escribe; sólo tras blur/submit.
   const showDigitPartial = Boolean(
-    inputDigitRule && inputDigitRule !== 'documento6to12' && digitStr.length > 0
+    inputDigitRule &&
+      inputDigitRule !== 'documento6to12' &&
+      inputDigitRule !== 'documento6to15' &&
+      digitStr.length > 0
   );
   const showError =
     externalError !== undefined && externalError !== ''
@@ -150,6 +195,7 @@ export function FormField({
       ? 'border-destructive ring-1 ring-destructive/20 focus:ring-destructive'
       : 'border-border focus:ring-ring'
   } ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`;
+  const baseSelectClasses = `${baseInputClasses} bg-white text-sm pr-10 appearance-none cursor-pointer`;
 
   const validateField = (val: string | number) => {
     const strVal = val === undefined || val === null ? '' : String(val);
@@ -206,6 +252,23 @@ export function FormField({
       return;
     }
 
+    if (inputDigitRule === 'documento6to15') {
+      if (required && digits.length === 0) {
+        setError(touched ? 'Este campo es obligatorio' : '');
+        return;
+      }
+      if (!required && digits.length === 0) {
+        setError('');
+        return;
+      }
+      if (digits.length < 6 || digits.length > 15) {
+        setError('El NIT/Documento debe tener entre 6 y 15 dígitos');
+        return;
+      }
+      setError('');
+      return;
+    }
+
     if (!touched) return;
 
     // Validaciones básicas
@@ -215,11 +278,17 @@ export function FormField({
     }
 
     // Validaciones por tipo
-    if (type === 'email' && val) {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(val.toString())) {
-        setError('Ingresa un correo electrónico válido');
+    if (type === 'email') {
+      if (required && !String(val ?? '').trim()) {
+        setError('Este campo es obligatorio');
         return;
+      }
+      if (val) {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(val.toString())) {
+          setError('Ingresa un correo electrónico válido');
+          return;
+        }
       }
     }
 
@@ -233,16 +302,56 @@ export function FormField({
         setError(`El valor no puede ser mayor a ${max}`);
         return;
       }
+
+      const numberName = normalizedName;
+      const decimalLen = String(val).includes('.') ? String(val).split('.')[1]?.length ?? 0 : 0;
+      const looksPrice = numberName.includes('precio') || numberName.includes('monto') || numberName.includes('total');
+      const looksCount = numberName.includes('cantidad') || numberName.includes('stock');
+
+      if (looksPrice) {
+        if (decimalLen > 2) {
+          setError('Solo se permiten 2 decimales en valores monetarios');
+          return;
+        }
+        if (numVal > 100_000_000) {
+          setError('El valor monetario no puede superar $100.000.000 COP');
+          return;
+        }
+      }
+
+      if (looksCount) {
+        if (!Number.isInteger(numVal)) {
+          setError('La cantidad debe ser un número entero');
+          return;
+        }
+        if (numVal > 9999) {
+          setError('La cantidad no puede ser mayor a 9999');
+          return;
+        }
+      }
     }
 
-    if ((type === 'text' || type === 'textarea' || type === 'email') && (minLength || maxLength)) {
+    if ((type === 'text' || type === 'textarea' || type === 'email' || type === 'password') && (minLength || effectiveMaxLength)) {
       const len = String(val ?? '').trim().length;
       if (minLength && len > 0 && len < minLength) {
         setError(`Debe tener al menos ${minLength} caracteres (lleva ${len}).`);
         return;
       }
-      if (maxLength && len > maxLength) {
-        setError(`Excede el máximo de ${maxLength} caracteres (lleva ${len}).`);
+      if (effectiveMaxLength && len > effectiveMaxLength) {
+        setError(`Excede el máximo de ${effectiveMaxLength} caracteres (lleva ${len}).`);
+        return;
+      }
+    }
+
+    if (type === 'text' || type === 'textarea') {
+      const raw = String(val ?? '');
+      const isNameLike =
+        normalizedName.includes('nombre') ||
+        normalizedName.includes('apellido') ||
+        normalizedName.includes('razon') ||
+        normalizedName.includes('direccion');
+      if (isNameLike && raw.trim() && seemsLikeGibberish(raw)) {
+        setError('El texto no parece válido. Revisa el contenido ingresado.');
         return;
       }
     }
@@ -272,11 +381,21 @@ export function FormField({
     let next: string | number = newValue;
     if (inputDigitRule) {
       const d = String(newValue).replace(/\D/g, '');
-      next = inputDigitRule === 'telefono10' ? d.slice(0, 10) : d.slice(0, 12);
-      // documento6to12: NO marcamos `touched` al escribir para que el mensaje no aparezca todavía.
-      if (inputDigitRule !== 'documento6to12') {
+      next =
+        inputDigitRule === 'telefono10'
+          ? d.slice(0, 10)
+          : inputDigitRule === 'documento6to15'
+            ? d.slice(0, 15)
+            : d.slice(0, 12);
+      if (
+        inputDigitRule === 'documento6to12' || inputDigitRule === 'documento6to15'
+          ? d.length > 0
+          : true
+      ) {
         setTouched(true);
       }
+    } else if (type === 'email' || type === 'password') {
+      setTouched(true);
     }
     onChange?.(next);
     validateField(next);
@@ -284,7 +403,19 @@ export function FormField({
 
   const handleBlur = () => {
     setTouched(true);
-    validateField(value ?? '');
+    let nextValue: string | number = value ?? '';
+    if (
+      (type === 'text' || type === 'textarea') &&
+      !inputDigitRule &&
+      shouldFormatTextFieldKey(name)
+    ) {
+      const formatted = formatProperCase(String(nextValue));
+      if (formatted !== String(nextValue)) {
+        nextValue = formatted;
+        onChange?.(formatted);
+      }
+    }
+    validateField(nextValue);
   };
 
   return (
@@ -304,7 +435,7 @@ export function FormField({
           required={required}
           rows={rows}
           disabled={disabled}
-          maxLength={maxLength}
+          maxLength={effectiveMaxLength}
           minLength={minLength}
           className={baseInputClasses}
         />
@@ -317,7 +448,7 @@ export function FormField({
           onBlur={handleBlur}
           required={required}
           disabled={disabled}
-          className={baseInputClasses}
+          className={baseSelectClasses}
         >
           {selectPlaceholder ? <option value="">Seleccionar...</option> : null}
           {options.map((option) => (
@@ -343,6 +474,35 @@ export function FormField({
           disabled={disabled}
           className={baseInputClasses}
         />
+      ) : type === 'password' ? (
+        <div className="relative">
+          <input
+            id={name}
+            name={name}
+            type={showPasswordPlain ? 'text' : 'password'}
+            value={value}
+            onChange={(e) => handleChange(e.target.value)}
+            onBlur={handleBlur}
+            placeholder={placeholder}
+            required={required}
+            disabled={disabled}
+            maxLength={effectiveMaxLength}
+            minLength={minLength}
+            pattern={pattern}
+            autoComplete={name === 'password' || String(name || '').includes('Password') ? 'current-password' : undefined}
+            className={`${baseInputClasses} pr-11`}
+          />
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={() => setShowPasswordPlain((v) => !v)}
+            disabled={disabled}
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-40"
+            aria-label={showPasswordPlain ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+          >
+            {showPasswordPlain ? <EyeOff className="h-4 w-4" aria-hidden /> : <Eye className="h-4 w-4" aria-hidden />}
+          </button>
+        </div>
       ) : (
         <input
           id={name}
@@ -361,9 +521,11 @@ export function FormField({
           maxLength={
             inputDigitRule === 'telefono10'
               ? 10
-              : inputDigitRule === 'documento12' || inputDigitRule === 'documento6to12'
+              : inputDigitRule === 'documento6to15'
+                ? 15
+                : inputDigitRule === 'documento12' || inputDigitRule === 'documento6to12'
                 ? 12
-                : maxLength
+                : effectiveMaxLength
           }
           minLength={minLength}
           className={baseInputClasses}
@@ -374,18 +536,20 @@ export function FormField({
         <FieldError>{error}</FieldError>
       ) : helperText ? (
         <FieldHelper>{helperText}</FieldHelper>
-      ) : inputDigitRule === 'telefono10' ? (
+      ) : !hideAutoHelper && inputDigitRule === 'telefono10' ? (
         <FieldHelper>Exactamente 10 dígitos (solo números).</FieldHelper>
-      ) : inputDigitRule === 'documento12' ? (
+      ) : !hideAutoHelper && inputDigitRule === 'documento12' ? (
         <FieldHelper>Exactamente 12 dígitos (solo números).</FieldHelper>
-      ) : inputDigitRule === 'documento6to12' ? (
+      ) : !hideAutoHelper && inputDigitRule === 'documento6to12' ? (
         <FieldHelper>Entre 6 y 12 dígitos (solo números).</FieldHelper>
-      ) : (minLength || maxLength) && (type === 'text' || type === 'textarea') ? (
+      ) : !hideAutoHelper && inputDigitRule === 'documento6to15' ? (
+        <FieldHelper>Entre 6 y 15 dígitos (solo números).</FieldHelper>
+      ) : (minLength || effectiveMaxLength) && (type === 'text' || type === 'textarea' || type === 'password' || type === 'email') ? (
         <FieldHelper>
           {(() => {
             const len = String(value ?? '').length;
-            if (minLength && maxLength) return `Entre ${minLength} y ${maxLength} caracteres (${len}/${maxLength}).`;
-            if (maxLength) return `Máximo ${maxLength} caracteres (${len}/${maxLength}).`;
+            if (minLength && effectiveMaxLength) return `Entre ${minLength} y ${effectiveMaxLength} caracteres (${len}/${effectiveMaxLength}).`;
+            if (effectiveMaxLength) return `Máximo ${effectiveMaxLength} caracteres (${len}/${effectiveMaxLength}).`;
             if (minLength) return `Mínimo ${minLength} caracteres (lleva ${len}).`;
             return null;
           })()}

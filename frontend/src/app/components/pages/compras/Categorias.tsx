@@ -1,12 +1,15 @@
-﻿import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect, useMemo } from 'react';
 import { DataTable, Column } from '../../DataTable';
 import { Modal } from '../../Modal';
 import { Form, FormField, FormActions, FieldError, FieldHelper } from '../../Form';
+import { formatProperCase } from '../../../services/mappers';
 import { Button } from '../../Button';
 import { Plus, Eye, Edit, Trash2 } from 'lucide-react';
 import { api } from '../../../services/api';
 import type { Categoria } from '../../../services/types';
 import { toast } from '../../AlertDialog';
+
+const getEstadoPriority = (estado: string) => (String(estado || '').trim().toLowerCase() === 'activo' ? 0 : 1);
 
 export function Categorias() {
   const [categorias, setCategorias] = useState<Categoria[]>([]);
@@ -61,17 +64,25 @@ export function Categorias() {
   };
 
   // Filtrar categorías
-  const categoriasFiltradas = categorias.filter(c => {
-    const matchBusqueda = searchQuery.length < 2 ||
-      c.nombre.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.descripcion.toLowerCase().includes(searchQuery.toLowerCase());
+  const categoriasFiltradas = useMemo(() => (
+    [...categorias]
+      .filter(c => {
+        const matchBusqueda = searchQuery.length < 2 ||
+          c.nombre.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          c.descripcion.toLowerCase().includes(searchQuery.toLowerCase());
 
-    const matchEstado = filtroEstado === 'Todos' ||
-      (filtroEstado === 'Activo' && c.estado === 'activo') ||
-      (filtroEstado === 'Inactivo' && c.estado === 'inactivo');
+        const matchEstado = filtroEstado === 'Todos' ||
+          (filtroEstado === 'Activo' && c.estado === 'activo') ||
+          (filtroEstado === 'Inactivo' && c.estado === 'inactivo');
 
-    return matchBusqueda && matchEstado;
-  });
+        return matchBusqueda && matchEstado;
+      })
+      .sort((a, b) => {
+        const estadoDiff = getEstadoPriority(a.estado) - getEstadoPriority(b.estado);
+        if (estadoDiff !== 0) return estadoDiff;
+        return Number(b.id) - Number(a.id);
+      })
+  ), [categorias, searchQuery, filtroEstado]);
 
   const columns: Column[] = [
     { key: 'nombre', label: 'Categoría' },
@@ -328,7 +339,7 @@ export function Categorias() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar... (mín. 2, máx. 50 caracteres)"
+              placeholder="Buscar ..."
               className="w-full px-4 py-2.5 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
               maxLength={50}
             />
@@ -399,6 +410,12 @@ export function Categorias() {
               type="text"
               value={formData.nombre}
               onChange={(e) => setFormData({ ...formData, nombre: e.target.value })}
+              onBlur={(e) => {
+                const formatted = formatProperCase(e.target.value);
+                if (formatted !== formData.nombre) {
+                  setFormData((prev) => ({ ...prev, nombre: formatted }));
+                }
+              }}
               placeholder="Ej: Licores Artesanales (3 a 50 caracteres)"
               maxLength={50}
               minLength={3}
@@ -429,7 +446,7 @@ export function Categorias() {
             type="textarea"
             value={formData.descripcion}
             onChange={(value) => setFormData({ ...formData, descripcion: value as string })}
-            placeholder="Descripción de la categoría (10-50 caracteres)"
+            placeholder="Descripción de la categoría"
             required
             minLength={10}
             maxLength={50}

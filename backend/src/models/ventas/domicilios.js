@@ -6,6 +6,7 @@
  * lo importa. La fuente activa es este archivo modular.
  */
 const pool = require('../../../db');
+const { reserveEntityIdAndCode } = require('../shared/auditoria');
 
 let domiciliosSchemaEnsured = false;
 let domiciliosSchemaPromise = null;
@@ -38,12 +39,18 @@ const ensureDomiciliosSchema = async () => {
 };
 
 const Domicilios = {
-  getAll: async () => {
+  getAll: async (options = {}) => {
     await ensureDomiciliosSchema();
-    const result = await pool.query(`
+    const repId = Number(options.repartidorUserId);
+    const filterRepartidor = Number.isFinite(repId) && repId > 0;
+    const params = filterRepartidor ? [repId] : [];
+    const whereRep = filterRepartidor ? ' WHERE d.repartidor_id = $1 ' : '';
+    const result = await pool.query(
+      `
       SELECT d.*,
              p.numero_pedido as pedido,
              p.total as total_pedido,
+             p.esquema_abono as esquema_abono_pedido,
              p.fecha as fecha_pedido,
              p.fecha_entrega as fecha_entrega_pedido,
              p.direccion as direccion_pedido,
@@ -69,8 +76,11 @@ const Domicilios = {
       FROM domicilios d
       JOIN pedidos p ON d.pedido_id = p.id
       JOIN clientes c ON d.cliente_id = c.id
+      ${whereRep}
       ORDER BY d.fecha DESC, d.hora DESC
-    `);
+    `,
+      params
+    );
     return result.rows;
   },
   getById: async (id) => {
@@ -78,6 +88,7 @@ const Domicilios = {
       SELECT d.*,
              p.numero_pedido as pedido,
              p.total as total_pedido,
+             p.esquema_abono as esquema_abono_pedido,
              p.fecha as fecha_pedido,
              p.fecha_entrega as fecha_entrega_pedido,
              p.direccion as direccion_pedido,
@@ -165,6 +176,7 @@ const Domicilios = {
   },
   create: async (data) => {
     await ensureDomiciliosSchema();
+    const reserved = await reserveEntityIdAndCode(pool, 'public.domicilios', 'D');
     const blocking = await pool.query(
       `SELECT id FROM domicilios
        WHERE pedido_id = $1
@@ -186,10 +198,11 @@ const Domicilios = {
     try {
       const result = await pool.query(
         `INSERT INTO domicilios (
-         numero_domicilio, pedido_id, cliente_id, direccion, repartidor, repartidor_id, fecha, hora, estado, detalle
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+         id, numero_domicilio, pedido_id, cliente_id, direccion, repartidor, repartidor_id, fecha, hora, estado, detalle
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
         [
-          data.numero_domicilio,
+          reserved.id,
+          reserved.code,
           data.pedido_id,
           data.cliente_id,
           data.direccion,
@@ -236,6 +249,29 @@ const Domicilios = {
       throw error;
     }
 
+    const nextEstado = String(data.estado !== undefined ? data.estado : current.estado)
+      .trim()
+      .toLowerCase();
+    const requierePedidoCompletado = nextEstado === 'en camino' || nextEstado === 'entregado';
+    if (requierePedidoCompletado) {
+      const pedidoEstadoRes = await pool.query('SELECT estado FROM pedidos WHERE id = $1 LIMIT 1', [
+        current.pedido_id,
+      ]);
+      const pedidoEstado = String(pedidoEstadoRes.rows?.[0]?.estado || '')
+        .trim()
+        .toLowerCase();
+      if (!pedidoEstadoRes.rows?.[0] || pedidoEstado !== 'completado') {
+        const estadoActual = pedidoEstadoRes.rows?.[0]?.estado
+          ? String(pedidoEstadoRes.rows[0].estado).trim()
+          : 'No disponible';
+        const error = new Error(
+          `No se puede cambiar el domicilio a ${nextEstado === 'en camino' ? 'En Ruta' : 'Completado'} porque el pedido asociado está en estado "${estadoActual}". El pedido debe estar en estado "Completado". Comuníquese con el asesor para actualizar el pedido.`
+        );
+        error.statusCode = 409;
+        throw error;
+      }
+    }
+
     await pool.query(
       `UPDATE domicilios SET
          repartidor = COALESCE($1, repartidor),
@@ -244,7 +280,8 @@ const Domicilios = {
          hora = COALESCE($4, hora),
          estado = COALESCE($5, estado),
          detalle = COALESCE($6, detalle),
-         motivo_cancelacion = COALESCE($7, motivo_cancelacion)
+         motivo_cancelacion = COALESCE($7, motivo_cancelacion),
+         updated_at = CURRENT_TIMESTAMP
        WHERE id = $8`,
       [
         data.repartidor !== undefined ? data.repartidor : current.repartidor,
@@ -259,7 +296,13 @@ const Domicilios = {
     );
     return true;
   },
-  delete: async (id) => {
+  delete: async (id, options = {}) => {
+    const reason = typeof options.reason === 'string' ? options.reason.trim() : '';
+    if (!reason || reason.length < 10 || reason.length > 50) {
+      const error = new Error('El motivo de eliminacion es obligatorio y debe tener entre 10 y 50 caracteres');
+      error.statusCode = 400;
+      throw error;
+    }
     await pool.query('DELETE FROM domicilios WHERE id = $1', [id]);
     return true;
   }
