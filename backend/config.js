@@ -72,6 +72,12 @@ const config = {
     comprobantesDir: path.join(uploadsRoot, 'comprobantes'),
     perfilesDir: path.join(uploadsRoot, 'perfiles'),
     productosDir: path.join(uploadsRoot, 'productos'),
+    productosPreparacionDir: process.env.UPLOADS_PRODUCTOS_PREPARACION 
+      ? path.resolve(process.env.UPLOADS_PRODUCTOS_PREPARACION)
+      : path.join(uploadsRoot, 'Productos', 'de preparacion'),
+    productosTerminadosDir: process.env.UPLOADS_PRODUCTOS_TERMINADOS
+      ? path.resolve(process.env.UPLOADS_PRODUCTOS_TERMINADOS)
+      : path.join(uploadsRoot, 'Productos', 'terminados'),
   },
   auth: {
     jwtSecret: process.env.JWT_SECRET || (isProduction ? '' : 'dev_only_change_me'),

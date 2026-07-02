@@ -158,13 +158,21 @@ module.exports = {
         return res.status(404).json({ success: false, message: 'Producto no encontrado' });
       }
 
-      const uploadsDir = appConfig.uploads.productosDir;
+      // Determinar directorio según tipo de producto
+      const tipoProducto = String(producto.tipo_producto || 'terminado').toLowerCase();
+      const uploadsDir = tipoProducto === 'insumo' 
+        ? appConfig.uploads.productosPreparacionDir 
+        : appConfig.uploads.productosTerminadosDir;
+      
       fs.mkdirSync(uploadsDir, { recursive: true });
 
       const extension = path.extname(req.file.originalname || '').toLowerCase() || '.jpg';
       const filename = `producto_${req.params.id}_${Date.now()}_${crypto.randomBytes(6).toString('hex')}${extension}`;
       const absolutePath = path.join(uploadsDir, filename);
-      const relativeUrl = `/uploads/productos/${filename}`;
+      
+      // Generar URL relativa basada en el tipo de producto
+      const subdirectory = tipoProducto === 'insumo' ? 'de preparacion' : 'terminados';
+      const relativeUrl = `/uploads/Productos/${subdirectory}/${filename}`;
 
       // Optimizar imagen con Sharp
       const optimizedBuffer = await sharp(req.file.buffer)
